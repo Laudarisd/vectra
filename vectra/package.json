@@ -248,8 +248,8 @@
         },
         "vectra.supportDeveloperUrl": {
           "type": "string",
-          "default": "https://github.com/Laudarisd/vectra",
-          "description": "Project page opened by Support Developer."
+          "default": "https://github.com/Laudarisd/vectra.git",
+          "description": "Vectra repository opened by Support Developer."
         },
         "vectra.showDiagnosticsInContext": {
           "type": "boolean",
@@ -368,7 +368,7 @@
   "private": true,
   "icon": "media/vectra-icon.png",
   "funding": {
-    "url": "https://github.com/Laudarisd/vectra"
+    "url": "https://github.com/Laudarisd/vectra.git"
   },
   "extensionKind": [
     "workspace",

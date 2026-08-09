@@ -152,7 +152,7 @@ function activateVectra(context, output) {
     }), vscode.commands.registerCommand('vectra.openSettings', async () => {
         await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:laudarisd.vectra');
     }), vscode.commands.registerCommand('vectra.supportDeveloper', async () => {
-        const url = 'https://github.com/Laudarisd/vectra.git';
+        const url = (0, config_1.getConfig)().supportDeveloperUrl.trim();
         if (!url) {
             void vscode.window.showInformationMessage('No developer support URL is configured. Set vectra.supportDeveloperUrl first.');
             return;

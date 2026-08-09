@@ -1,4 +1,8 @@
-# Vectra
+<p align="center">
+  <img src="vectra/media/vectra-icon.png" alt="Vectra logo" width="128" height="128">
+</p>
+
+<h1 align="center">Vectra</h1>
 
 [![VS Code](https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode)](./vectra)
 [![Local AI](https://img.shields.io/badge/AI-Local--first-2ea44f)](https://github.com/ggml-org/llama.cpp)

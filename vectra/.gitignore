@@ -1,0 +1,5 @@
+node_modules/
+*.vsix
+*.zip
+.DS_Store
+web/.cache/

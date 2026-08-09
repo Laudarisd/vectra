@@ -1,0 +1,8 @@
+# Packaged archives
+*.zip
+
+# macOS metadata
+.DS_Store
+
+# ingnore .vscode settings folder
+.vscode/

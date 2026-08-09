@@ -1,0 +1,21 @@
+Vectra Proprietary Software License
+
+Copyright © 2026 Sudip Laudari. All rights reserved.
+
+Vectra, including its source code, compiled code, user interface, designs,
+documentation, branding, and associated materials, is proprietary software.
+
+Permission is granted to an authorized user to install and use an authorized
+copy of Vectra for its intended purpose. No ownership rights are transferred.
+
+Except where expressly authorized in writing by the copyright holder, you may
+not copy, redistribute, republish, sublicense, resell, reverse engineer for the
+purpose of creating a competing product, modify and redistribute, or create a
+substantially similar derivative product from Vectra. You may not remove or
+alter copyright, ownership, license, or branding notices.
+
+Third-party components, APIs, models, runtimes, and libraries used with or
+included in Vectra remain governed by their respective licenses and terms.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW.

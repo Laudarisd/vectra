@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Vectra</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="mark">V</div><span>Vectra</span></div>
+    <button id="newChat" class="new-chat">＋ New chat</button>
+    <div class="side-note">Web chat</div>
+    <div class="privacy">Cloud API keys stay in this browser session. Local GGUF models stay on your computer and are served by your local llama.cpp runtime.</div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="model-area">
+        <select id="provider" aria-label="Provider">
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Claude</option>
+          <option value="gemini">Gemini</option>
+          <option value="llamaCpp">Local llama.cpp</option>
+          <option value="openaiCompatible">OpenAI-compatible</option>
+        </select>
+        <select id="model" aria-label="Model"><option value="">Select model</option></select>
+        <button id="modelAction" class="ghost">Model</button>
+        <span id="localStatusPill" class="status-pill" hidden>Stopped</span>
+      </div>
+      <button id="settings" class="ghost web-settings-button">⚙ Settings</button>
+    </header>
+
+    <section id="messages" class="messages">
+      <div class="welcome"><div class="hero-mark">V</div><h1>How can Vectra help?</h1><p>Chat, analyze code and documents, or run a local GGUF model with llama.cpp.</p></div>
+    </section>
+
+    <section class="composer-zone">
+      <div id="attachments" class="attachments"></div>
+      <div id="dropZone" class="composer">
+        <button id="attach" class="attach" title="Attach files">＋</button>
+        <textarea id="prompt" rows="1" placeholder="Message Vectra"></textarea>
+        <button id="send" class="send" title="Send">↑</button>
+        <input id="fileInput" type="file" multiple hidden />
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog id="settingsDialog">
+  <form method="dialog" class="settings-card">
+    <div class="settings-title"><strong>Cloud / endpoint settings</strong><button value="cancel" class="icon-close">×</button></div>
+    <label>Provider
+      <select id="settingsProvider">
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic / Claude</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="llamaCpp">Local llama.cpp</option>
+        <option value="openaiCompatible">OpenAI-compatible</option>
+      </select>
+    </label>
+    <div id="localSettingsHint" class="settings-hint" hidden>Local llama.cpp is configured from the <strong>Model</strong> panel. No API key is required.</div>
+    <div id="apiFields">
+      <label>API key<input id="apiKey" type="password" autocomplete="off" placeholder="Kept only in this browser session" /></label>
+      <label>Base URL<input id="baseUrl" type="text" placeholder="Leave blank for provider default" /></label>
+      <label>Model ID<input id="modelId" type="text" placeholder="e.g. model ID" /></label>
+    </div>
+    <section class="support-box"><strong>General information</strong><div class="support-grid"><span>Email</span><b>test@gmail.com</b><span>Contact</span><b>+0000000000</b><span>GitHub</span><b>test</b></div></section>
+    <div class="settings-actions"><button value="cancel" class="ghost">Cancel</button><button id="saveSettings" value="default" class="primary">Use settings</button></div>
+  </form>
+</dialog>
+
+<dialog id="localDialog" class="local-dialog">
+  <form method="dialog" class="settings-card local-card">
+    <div class="settings-title">
+      <div><strong>Local llama.cpp model</strong><div class="settings-subtitle">Run a GGUF directly from this computer. The model is never uploaded.</div></div>
+      <button value="cancel" class="icon-close">×</button>
+    </div>
+
+    <div class="runtime-banner">
+      <span id="localDialogStatus" class="status-dot"></span>
+      <div><strong id="localDialogStatusText">Stopped</strong><div id="localDialogDetail" class="settings-subtitle">Choose a GGUF model to begin.</div></div>
+    </div>
+
+    <label>GGUF model
+      <div class="path-row"><input id="localModelPath" type="text" placeholder="/path/to/model.gguf" /><button id="chooseLocalModel" type="button" class="ghost">Choose GGUF</button></div>
+      <span class="field-help">Sharded models are supported; selecting any shard is normalized to shard 1.</span>
+    </label>
+
+    <label>Vision projector (optional)
+      <div class="path-row"><input id="localMmprojPath" type="text" placeholder="Auto-detect mmproj*.gguf beside model" /><button id="chooseMmproj" type="button" class="ghost">Choose mmproj</button></div>
+      <span class="field-help">Required only for compatible multimodal/vision GGUF models.</span>
+    </label>
+
+    <label>llama-server executable
+      <div class="path-row"><input id="localServerPath" type="text" placeholder="Auto-detect llama-server on PATH" /><button id="chooseLlamaServer" type="button" class="ghost">Choose server</button></div>
+    </label>
+
+    <div class="settings-grid four">
+      <label>Port<input id="localPort" type="number" min="1024" max="65535" value="8080" /></label>
+      <label>Context<input id="localContext" type="number" min="1024" max="1048576" value="16384" /></label>
+      <label>GPU layers<input id="localGpuLayers" type="text" value="auto" placeholder="auto / all / number" /></label>
+      <label>Split mode<select id="localSplitMode"><option value="layer">layer</option><option value="none">none</option><option value="row">row</option><option value="tensor">tensor</option></select></label>
+    </div>
+
+    <div class="settings-grid two">
+      <label>Load timeout (seconds)<input id="localTimeout" type="number" min="30" max="3600" value="600" /></label>
+      <label>Extra llama.cpp args<input id="localExtraArgs" type="text" placeholder="e.g. --threads 8 --parallel 2" /></label>
+    </div>
+
+    <div class="checkbox-row">
+      <label class="check-label"><input id="localCpuMoe" type="checkbox" /> Keep MoE weights on CPU</label>
+      <label class="check-label"><input id="localNoMmap" type="checkbox" /> Disable mmap</label>
+    </div>
+
+    <details class="runtime-logs"><summary>llama.cpp logs</summary><pre id="localLogs">No logs yet.</pre></details>
+
+    <div class="settings-actions local-actions">
+      <button id="stopLocalModel" type="button" class="danger-ghost">Stop</button>
+      <span class="spacer"></span>
+      <button value="cancel" class="ghost">Close</button>
+      <button id="startLocalModel" type="button" class="primary">Start model</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>

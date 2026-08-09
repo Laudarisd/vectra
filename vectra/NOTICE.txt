@@ -1,0 +1,12 @@
+Vectra
+Copyright © 2026 Sudip Laudari. All rights reserved.
+
+Vectra is proprietary software. The Vectra name, product identity, source code,
+compiled code, documentation, and original visual assets may not be copied,
+redistributed, or used to create a competing derivative product without written
+permission from the copyright holder.
+
+Vectra interoperates with third-party services and runtimes including VS Code,
+llama.cpp, OpenAI, Anthropic, Google Gemini, Ollama and OpenAI-compatible
+servers. Those third-party products remain subject to their own licenses and
+terms and are not owned by Vectra.

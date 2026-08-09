@@ -4,10 +4,12 @@
 
 <h1 align="center">Vectra</h1>
 
-[![VS Code](https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode)](./vectra)
-[![Local AI](https://img.shields.io/badge/AI-Local--first-2ea44f)](https://github.com/ggml-org/llama.cpp)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](./vectra/CHANGELOG.md)
-[![License](https://img.shields.io/badge/license-Proprietary-orange)](./LICENSE)
+<p align="center">
+  <a href="./vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
+  <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
+  <a href="./vectra/CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version 1.0.0"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
+</p>
 
 Vectra is a local-first AI coding agent for VS Code and the web. It understands your workspace, helps create and review changes, works with documents, and can run approved tools—without forcing every conversation through a paid cloud model.
 

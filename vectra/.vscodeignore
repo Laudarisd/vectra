@@ -4,6 +4,6 @@ src/**
 test/**
 node_modules/**
 *.vsix
-*.map
+**/*.map
 tsconfig.json
 web/**

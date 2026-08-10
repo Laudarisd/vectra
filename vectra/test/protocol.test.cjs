@@ -60,3 +60,25 @@ test('agent exposes workspace discovery and language-aware execution tools', () 
   assert.equal(parsed.actions[0].type, 'workspace_summary');
   assert.equal(parsed.actions[1].type, 'run_file');
 });
+
+test('agent exposes multi-file context and complete project batch tools', () => {
+  const prompt = buildSystemPrompt('agent');
+  assert.match(prompt, /read_files/);
+  assert.match(prompt, /propose_files/);
+  assert.match(prompt, /complete file set/i);
+  assert.match(prompt, /No ellipses, TODO-only bodies, placeholder comments, or one-line stubs/i);
+
+  const parsed = parseAgentEnvelope(JSON.stringify({
+    message: 'building project',
+    actions: [{
+      type: 'propose_files',
+      files: [
+        { path: 'package.json', content: '{"private":true}' },
+        { path: 'src/index.ts', content: 'export const ready = true;\n' }
+      ]
+    }],
+    done: true
+  }));
+  assert.equal(parsed.actions[0].type, 'propose_files');
+  assert.equal(parsed.actions[0].files.length, 2);
+});

@@ -1,4 +1,4 @@
-# Vectra 2.0 Architecture
+# Vectra Extension Architecture
 
 ## Products
 

@@ -110,7 +110,7 @@ function activateVectra(context, output) {
         if (!requireTrustedWorkspace('launch a local model'))
             return;
         try {
-            const modelId = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Vectra: loading local GGUF model…' }, () => localLlama.selectAndStartModel());
+            const modelId = await localLlama.chooseLocalModel();
             if (modelId) {
                 await chat.refresh();
                 void vscode.window.showInformationMessage(`Vectra local model ready: ${modelId}`);

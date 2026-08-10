@@ -34,10 +34,11 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatViewProvider = void 0;
-const vscode = __importStar(require("vscode"));
 const node_crypto_1 = require("node:crypto");
 const path = __importStar(require("node:path"));
+const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
+/** Coordinates the sidebar webview with extension-owned session state. */
 class ChatViewProvider {
     extensionUri;
     controller;
@@ -50,6 +51,7 @@ class ChatViewProvider {
     view;
     messages = [];
     pendingAttachments = [];
+    messageAttachments = new Map();
     abortController;
     busy = false;
     pendingSelectionCheck = false;
@@ -62,27 +64,49 @@ class ChatViewProvider {
         this.localLlama = localLlama;
         this.attachmentService = attachmentService;
     }
-    resolveWebviewView(webviewView) { this.view = webviewView; webviewView.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')] }; webviewView.webview.html = this.getHtml(webviewView.webview); webviewView.webview.onDidReceiveMessage((m) => void this.handleMessage(m)); webviewView.onDidDispose(() => { this.view = undefined; }); void this.postState(); if (this.pendingSelectionCheck) {
-        this.pendingSelectionCheck = false;
-        void this.runPrompt('selection', defaultSelectionPrompt());
-    } }
-    async reveal() { await vscode.commands.executeCommand('workbench.view.extension.vectraSidebar'); }
-    async checkSelection() { await this.reveal(); if (!this.view) {
-        this.pendingSelectionCheck = true;
-        return;
-    } await this.runPrompt('selection', defaultSelectionPrompt()); }
-    async refresh() { await this.postState(); }
-    async attachFiles() { try {
-        const files = await this.attachmentService.pick();
-        for (const f of files) {
-            if (!this.pendingAttachments.some(x => x.name === f.name && x.size === f.size))
-                this.pendingAttachments.push(f);
+    resolveWebviewView(webviewView) {
+        this.view = webviewView;
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'media')]
+        };
+        webviewView.webview.html = this.getHtml(webviewView.webview);
+        webviewView.webview.onDidReceiveMessage((message) => void this.handleMessage(message));
+        webviewView.onDidDispose(() => { this.view = undefined; });
+        void this.postState();
+        if (this.pendingSelectionCheck) {
+            this.pendingSelectionCheck = false;
+            void this.runPrompt('selection', defaultSelectionPrompt());
         }
+    }
+    async reveal() {
+        await vscode.commands.executeCommand('workbench.view.extension.vectraSidebar');
+    }
+    async checkSelection() {
+        await this.reveal();
+        if (!this.view) {
+            this.pendingSelectionCheck = true;
+            return;
+        }
+        await this.runPrompt('selection', defaultSelectionPrompt());
+    }
+    async refresh() {
         await this.postState();
     }
-    catch (e) {
-        void vscode.window.showErrorMessage(`Vectra attachment failed: ${messageOf(e)}`);
-    } }
+    async attachFiles() {
+        try {
+            const files = await this.attachmentService.pick();
+            for (const file of files) {
+                if (!this.pendingAttachments.some((item) => item.name === file.name && item.size === file.size)) {
+                    this.pendingAttachments.push(file);
+                }
+            }
+            await this.postState();
+        }
+        catch (error) {
+            void vscode.window.showErrorMessage(`Vectra attachment failed: ${messageOf(error)}`);
+        }
+    }
     async handleMessage(message) {
         try {
             switch (message.type) {
@@ -90,8 +114,9 @@ class ChatViewProvider {
                     await this.postState();
                     break;
                 case 'send':
-                    if (message.text?.trim() && message.mode)
-                        await this.runPrompt(message.mode, message.text.trim());
+                    if (message.text?.trim() && message.mode) {
+                        await this.runPrompt(message.mode, message.text.trim(), message.editMessageId);
+                    }
                     break;
                 case 'stop':
                     this.abortController?.abort();
@@ -101,9 +126,9 @@ class ChatViewProvider {
                     break;
                 case 'removeAttachment':
                     if (message.id) {
-                        const i = this.pendingAttachments.findIndex(x => x.id === message.id);
-                        if (i >= 0)
-                            this.pendingAttachments.splice(i, 1);
+                        const index = this.pendingAttachments.findIndex((item) => item.id === message.id);
+                        if (index >= 0)
+                            this.pendingAttachments.splice(index, 1);
                         await this.postState();
                     }
                     break;
@@ -138,6 +163,7 @@ class ChatViewProvider {
                 case 'clearChat':
                     this.messages.splice(0);
                     this.pendingAttachments.splice(0);
+                    this.messageAttachments.clear();
                     await this.postState();
                     break;
                 case 'setApiKey':
@@ -169,28 +195,122 @@ class ChatViewProvider {
             await this.post({ type: 'error', message: text });
         }
     }
-    async runPrompt(mode, text) { if (this.busy) {
-        void vscode.window.showInformationMessage('Vectra is already working. Stop the current request first.');
-        return;
-    } const config = (0, config_1.getConfig)(); if (config.provider === 'llamaCpp' && !this.localLlama.isRunning) {
-        const started = await this.localLlama.startConfiguredModel();
-        if (!started)
-            throw new Error('No local GGUF model selected. Click Local Model first, or API Key for cloud.');
-    } const attachments = this.pendingAttachments.splice(0); this.messages.push({ id: (0, node_crypto_1.randomUUID)(), role: 'user', content: text, createdAt: Date.now(), attachments: attachments.map(toAttachmentMeta) }); this.busy = true; this.abortController = new AbortController(); await this.postState(); await this.post({ type: 'progress', message: 'Analyzing…' }); try {
-        const result = await this.controller.run({ mode, userText: text, history: this.messages.slice(0, -1), attachments, signal: this.abortController.signal, onProgress: (progress) => void this.post({ type: 'progress', message: progress }) });
-        this.messages.push({ id: (0, node_crypto_1.randomUUID)(), role: 'assistant', content: result.text, createdAt: Date.now() });
-    }
-    catch (error) {
-        const t = messageOf(error);
-        this.messages.push({ id: (0, node_crypto_1.randomUUID)(), role: 'assistant', content: this.abortController.signal.aborted ? 'Request stopped.' : `Error: ${t}`, createdAt: Date.now() });
-    }
-    finally {
-        this.busy = false;
-        this.abortController = undefined;
+    async runPrompt(mode, text, editMessageId) {
+        if (this.busy) {
+            void vscode.window.showInformationMessage('Vectra is already working. Stop the current request first.');
+            return;
+        }
+        const config = (0, config_1.getConfig)();
+        if (config.provider === 'llamaCpp' && !this.localLlama.isRunning) {
+            const started = await this.localLlama.startConfiguredModel();
+            if (!started)
+                throw new Error('No local GGUF model selected. Click Local Model first, or API Key for cloud.');
+        }
+        const attachments = editMessageId
+            ? this.branchFromEditedMessage(editMessageId)
+            : this.pendingAttachments.splice(0);
+        const userMessage = {
+            id: (0, node_crypto_1.randomUUID)(),
+            role: 'user',
+            content: text,
+            createdAt: Date.now(),
+            mode,
+            attachments: attachments.map(toAttachmentMeta)
+        };
+        this.messages.push(userMessage);
+        this.rememberAttachments(userMessage.id, attachments);
+        this.busy = true;
+        this.abortController = new AbortController();
         await this.postState();
-    } }
-    async postState() { const c = (0, config_1.getConfig)(); const local = c.provider === 'llamaCpp' || c.provider === 'ollama'; const hasKey = local || c.provider === 'openaiCompatible' || await this.credentials.has(c.provider); await this.post({ type: 'state', messages: this.messages, proposals: this.patches.list().map(toWebviewProposal), attachments: this.pendingAttachments.map(toAttachmentMeta), busy: this.busy, provider: c.provider, model: c.model, localModelName: c.localModelPath ? path.basename(c.localModelPath) : '', localModelRunning: c.provider === 'llamaCpp' && this.localLlama.isRunning, visionEnabled: c.provider === 'llamaCpp' && this.localLlama.visionEnabled, hasKey, isLocal: local, workspaceTrusted: vscode.workspace.isTrusted }); }
-    async post(payload) { await this.view?.webview.postMessage(payload); }
+        await this.post({ type: 'progress', message: 'Analyzing…' });
+        try {
+            const result = await this.controller.run({
+                mode,
+                userText: text,
+                history: this.messages.slice(0, -1),
+                attachments,
+                signal: this.abortController.signal,
+                onProgress: (progress) => void this.post({ type: 'progress', message: progress })
+            });
+            this.messages.push({
+                id: (0, node_crypto_1.randomUUID)(),
+                role: 'assistant',
+                content: result.text,
+                createdAt: Date.now()
+            });
+        }
+        catch (error) {
+            this.messages.push({
+                id: (0, node_crypto_1.randomUUID)(),
+                role: 'assistant',
+                content: this.abortController.signal.aborted ? 'Request stopped.' : `Error: ${messageOf(error)}`,
+                createdAt: Date.now()
+            });
+        }
+        finally {
+            this.busy = false;
+            this.abortController = undefined;
+            await this.postState();
+        }
+    }
+    /**
+     * Remove the abandoned conversation branch and reuse the original message's
+     * in-memory attachments. Pending proposals belong to the abandoned answer,
+     * so they are rejected before the edited prompt runs again.
+     */
+    branchFromEditedMessage(messageId) {
+        const index = this.messages.findIndex((message) => message.id === messageId && message.role === 'user');
+        if (index < 0)
+            throw new Error('The message being edited is no longer available in this chat session.');
+        const originalAttachments = this.messageAttachments.get(messageId) ?? [];
+        const removed = this.messages.splice(index);
+        for (const message of removed)
+            this.messageAttachments.delete(message.id);
+        this.patches.rejectAllPending();
+        // Attachments added while editing are included alongside the original set.
+        const newlyAttached = this.pendingAttachments.splice(0);
+        return deduplicateAttachments([...originalAttachments, ...newlyAttached]);
+    }
+    /** Retain a bounded number of attachment payloads for session-only resend. */
+    rememberAttachments(messageId, attachments) {
+        if (!attachments.length)
+            return;
+        this.messageAttachments.set(messageId, [...attachments]);
+        while (this.messageAttachments.size > 8) {
+            const oldest = this.messageAttachments.keys().next().value;
+            if (!oldest)
+                break;
+            this.messageAttachments.delete(oldest);
+        }
+    }
+    async postState() {
+        const config = (0, config_1.getConfig)();
+        const isLocal = config.provider === 'llamaCpp' || config.provider === 'ollama';
+        const hasKey = isLocal || config.provider === 'openaiCompatible' || await this.credentials.has(config.provider);
+        const localModelName = config.provider === 'llamaCpp'
+            ? (config.localModelPath ? path.basename(config.localModelPath) : '')
+            : config.provider === 'ollama'
+                ? config.model
+                : '';
+        await this.post({
+            type: 'state',
+            messages: this.messages,
+            proposals: this.patches.list().map(toWebviewProposal),
+            attachments: this.pendingAttachments.map(toAttachmentMeta),
+            busy: this.busy,
+            provider: config.provider,
+            model: config.model,
+            localModelName,
+            localModelRunning: config.provider === 'llamaCpp' && this.localLlama.isRunning,
+            visionEnabled: config.provider === 'llamaCpp' && this.localLlama.visionEnabled,
+            hasKey,
+            isLocal,
+            workspaceTrusted: vscode.workspace.isTrusted
+        });
+    }
+    async post(payload) {
+        await this.view?.webview.postMessage(payload);
+    }
     getHtml(webview) {
         const nonce = (0, node_crypto_1.randomBytes)(16).toString('hex');
         const script = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'main.js'));
@@ -209,8 +329,33 @@ class ChatViewProvider {
     }
 }
 exports.ChatViewProvider = ChatViewProvider;
-function defaultSelectionPrompt() { return 'Explain and review the EXACT current selection in detail. Walk through the selected lines/fields, what they do, how they relate, assumptions, bugs or edge cases, and improvements. Do not edit files.'; }
-function toWebviewProposal(p) { const { baseContent: _b, proposedContent: _p, baseHash: _h, binaryOutputBase64: _bin, ...safe } = p; return safe; }
-function toAttachmentMeta(a) { return { id: a.id, name: a.name, mime: a.mime, size: a.size, kind: a.kind }; }
-function messageOf(e) { return e instanceof Error ? e.message : String(e); }
+function defaultSelectionPrompt() {
+    return 'Explain and review the EXACT current selection in detail. Walk through the selected lines/fields, what they do, how they relate, assumptions, bugs or edge cases, and improvements. Do not edit files.';
+}
+function toWebviewProposal(proposal) {
+    const { baseContent: _baseContent, proposedContent: _proposedContent, baseHash: _baseHash, binaryOutputBase64: _binaryOutput, ...safe } = proposal;
+    return safe;
+}
+function toAttachmentMeta(attachment) {
+    return {
+        id: attachment.id,
+        name: attachment.name,
+        mime: attachment.mime,
+        size: attachment.size,
+        kind: attachment.kind
+    };
+}
+function deduplicateAttachments(attachments) {
+    const seen = new Set();
+    return attachments.filter((attachment) => {
+        const key = `${attachment.path || attachment.name}:${attachment.size}`;
+        if (seen.has(key))
+            return false;
+        seen.add(key);
+        return true;
+    });
+}
+function messageOf(error) {
+    return error instanceof Error ? error.message : String(error);
+}
 //# sourceMappingURL=ChatViewProvider.js.map

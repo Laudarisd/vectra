@@ -2,7 +2,7 @@
   "name": "vectra",
   "displayName": "Vectra",
   "description": "A local-first AI coding agent for VS Code. Run GGUF models with llama.cpp, understand repositories, review edits, and execute approved tools.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -314,7 +314,7 @@
     "check": "tsc --noEmit -p .",
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
-    "test": "npm run compile && node --test test/*.test.cjs",
+    "test": "npm run compile && node --test test",
     "package": "npm run test && vsce package --no-dependencies",
     "build:web": "node web/scripts/build.mjs",
     "web": "node web/server.mjs",

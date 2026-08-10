@@ -6,3 +6,8 @@
 
 # ingnore .vscode settings folder
 .vscode/
+
+# Local Vectra Web chat databases
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

@@ -12,7 +12,8 @@
   <aside class="sidebar">
     <div class="brand"><div class="mark">V</div><span>Vectra</span></div>
     <button id="newChat" class="new-chat">＋ New chat</button>
-    <div class="side-note">Web chat</div>
+    <div class="history-heading"><span>Chats</span><button id="refreshHistory" class="history-refresh" title="Refresh history">↻</button></div>
+    <div id="chatHistory" class="chat-history" aria-label="Chat history"></div>
     <div class="privacy">Cloud API keys stay in this browser session. Local GGUF models stay on your computer and are served by your local llama.cpp runtime.</div>
   </aside>
 
@@ -23,6 +24,7 @@
           <option value="openai">OpenAI</option>
           <option value="anthropic">Claude</option>
           <option value="gemini">Gemini</option>
+          <option value="localAuto">Auto-detect local</option>
           <option value="llamaCpp">Local llama.cpp</option>
           <option value="openaiCompatible">OpenAI-compatible</option>
         </select>
@@ -57,6 +59,7 @@
         <option value="openai">OpenAI</option>
         <option value="anthropic">Anthropic / Claude</option>
         <option value="gemini">Google Gemini</option>
+        <option value="localAuto">Auto-detect local runtime</option>
         <option value="llamaCpp">Local llama.cpp</option>
         <option value="openaiCompatible">OpenAI-compatible</option>
       </select>
@@ -88,6 +91,8 @@
       <div class="path-row"><input id="localModelPath" type="text" placeholder="/path/to/model.gguf" /><button id="chooseLocalModel" type="button" class="ghost">Choose GGUF</button></div>
       <span class="field-help">Sharded models are supported; selecting any shard is normalized to shard 1.</span>
     </label>
+    <div class="model-search-row"><input id="localModelSearch" type="search" placeholder="Search downloaded GGUF models" /><button id="searchLocalModels" type="button" class="ghost">Search computer</button></div>
+    <div id="localModelResults" class="model-search-results" hidden></div>
 
     <label>Vision projector (optional)
       <div class="path-row"><input id="localMmprojPath" type="text" placeholder="Auto-detect mmproj*.gguf beside model" /><button id="chooseMmproj" type="button" class="ghost">Choose mmproj</button></div>

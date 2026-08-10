@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://code.visualstudio.com/"><img src="https://img.shields.io/badge/VS_Code-1.90%2B-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version 1.0.0"></a>
+  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.1-blue" alt="Version 1.0.1"></a>
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
@@ -18,6 +18,7 @@ Vectra is a local-first coding agent that works inside VS Code. Use a downloaded
 - **Reviewed edits:** inspect proposed file changes before they are applied.
 - **Approved execution:** run files, projects, tests, or commands with confirmation.
 - **Three workflows:** use Agent, Ask, or Check Selection from the Vectra sidebar.
+- **Edit and resend:** revise a previous prompt or restart a stopped request without copying and pasting it.
 - **Documents and images:** work with PDF, DOCX, PPTX, XLSX, RTF, text, code, and supported visual inputs.
 - **Provider choice:** optionally use OpenAI, Anthropic, Gemini, Ollama, or an OpenAI-compatible endpoint.
 
@@ -31,6 +32,8 @@ Vectra currently uses the llama.cpp server for local inference.
 4. Pick the downloaded `.gguf` file.
 5. If the model supports vision, select its matching `mmproj*.gguf` projector.
 6. Let Vectra start the local server, then select **Test** to confirm the connection.
+
+The **Local Model** control can also detect GGUF files in common model folders and models from a running local Ollama installation. Detected results appear in a searchable picker.
 
 The screenshot above shows Qwen3 4B loaded locally. A larger context size improves capacity but uses more memory; adjust it under **Settings → Extensions → Vectra** if needed.
 
@@ -47,7 +50,7 @@ The screenshot above shows Qwen3 4B loaded locally. A larger context size improv
 | Field | Value |
 | --- | --- |
 | Name | Vectra |
-| Version | 1.0.0 |
+| Version | 1.0.1 |
 | Publisher | `laudarisd` |
 | Author | [Sudip Laudari](https://github.com/Laudarisd) |
 | Runtime | VS Code 1.90+; llama.cpp for local GGUF models |

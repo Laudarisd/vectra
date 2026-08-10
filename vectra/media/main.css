@@ -11,7 +11,7 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .brand-icon{width:22px;height:22px;max-width:22px;max-height:22px;display:block;object-fit:contain;flex:0 0 22px}
 .brand{font-size:14px;font-weight:700;white-space:nowrap}
 .settings-button{width:34px;height:34px;min-width:34px;min-height:34px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;background:transparent;color:var(--vscode-foreground);font-size:18px;display:grid;place-items:center;padding:0}
-.settings-button:hover,.connection-button:hover,.secondary:hover,.danger-outline:hover{background:var(--vscode-list-hoverBackground)}
+.settings-button:hover,.connection-button:hover,.secondary:hover,.danger-outline:hover,.message-action:hover{background:var(--vscode-list-hoverBackground)}
 .connection-bar{display:grid;grid-template-columns:1fr 1fr .62fr;gap:5px;padding:2px 10px 8px;border-bottom:1px solid var(--vscode-sideBar-border,transparent);flex:0 0 auto}
 .connection-button,.secondary,.danger-outline{border:1px solid var(--vscode-widget-border,var(--vscode-input-border));color:var(--vscode-foreground);background:transparent;border-radius:6px}
 .connection-button{min-width:0;padding:6px 6px;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -25,7 +25,10 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .message{margin:8px 0;padding:9px 10px;border-radius:8px;border:1px solid var(--vscode-widget-border,transparent)}
 .message.user{background:var(--vscode-input-background)}
 .message.assistant{background:var(--vscode-editorWidget-background)}
+.message-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .message-meta{font-weight:600;font-size:.86em;margin-bottom:6px;opacity:.78}
+.message-action{border:0;background:transparent;color:var(--vscode-textLink-foreground);border-radius:4px;padding:1px 4px;font-size:.78em;white-space:nowrap}
+.message-action:disabled{cursor:default;opacity:.45}
 .message-content{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.48}
 .empty-state{border:1px dashed var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;padding:14px;margin-top:8px;opacity:.87;line-height:1.45}
 .empty-title{font-weight:700;margin-bottom:5px}

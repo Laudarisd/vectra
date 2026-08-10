@@ -210,6 +210,11 @@ class WorkspaceTools {
         }
         return `FILES ${pathInput || '.'} count=${results.length}${results.length >= safeMax ? ` (capped at ${safeMax})` : ''}\n${(0, text_1.safeJson)(results.sort())}`;
     }
+    /**
+     * Read a bounded, line-numbered text window. This method is public so the
+     * agent tool registry can compose efficient multi-file reads without
+     * duplicating workspace security and size checks.
+     */
     async readFile(pathInput, startLine = 1, endLine) {
         const { exists, content } = await this.readWholeFile(pathInput);
         if (!exists)
@@ -219,6 +224,22 @@ class WorkspaceTools {
         const end = clamp(endLine ?? Math.min(lines.length, start + 399), start, lines.length);
         const numbered = lines.slice(start - 1, end).map((line, index) => `${start + index}: ${line}`);
         return `FILE ${(0, path_1.normalizeAgentPath)(pathInput)} lines ${start}-${end} of ${lines.length}\n${numbered.join('\n')}`;
+    }
+    /** Read several related files in one tool call while keeping each result bounded. */
+    async readFiles(paths, startLine = 1, endLine) {
+        const uniquePaths = [...new Set(paths.map(path_1.normalizeAgentPath).filter(Boolean))].slice(0, 20);
+        if (!uniquePaths.length)
+            throw new Error('read_files requires at least one workspace-relative path.');
+        const results = [];
+        for (const filePath of uniquePaths) {
+            try {
+                results.push(await this.readFile(filePath, startLine, endLine));
+            }
+            catch (error) {
+                results.push(`FILE ${filePath}\nERROR: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+        return results.join('\n\n');
     }
     async searchText(query, pathInput = '', glob = '**/*', maxResults = 30, caseSensitive = false) {
         if (!query)

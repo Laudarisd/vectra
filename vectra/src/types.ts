@@ -20,6 +20,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt: number;
+  mode?: AgentMode;
   attachments?: Array<Pick<Attachment, 'id' | 'name' | 'mime' | 'size' | 'kind'>>;
 }
 
@@ -27,17 +28,26 @@ export interface ModelInfo { id: string; label?: string; detail?: string }
 export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; signal?: AbortSignal }
 export interface TextProvider { readonly id: ProviderId; complete(request: ProviderRequest): Promise<string>; listModels(signal?: AbortSignal): Promise<ModelInfo[]>; testConnection(signal?: AbortSignal): Promise<string> }
 
+/** A complete file included in one reviewed, multi-file proposal batch. */
+export interface ProposedFileInput {
+  path: string;
+  content: string;
+  reason?: string;
+}
+
 export type AgentAction =
   | { type: 'workspace_summary'; path?: string }
   | { type: 'list_directory'; path?: string; maxResults?: number; maxDepth?: number }
   | { type: 'list_files'; path?: string; glob?: string; maxResults?: number }
   | { type: 'read_file'; path: string; startLine?: number; endLine?: number }
+  | { type: 'read_files'; paths: string[]; startLine?: number; endLine?: number }
   | { type: 'read_document'; path: string }
   | { type: 'inspect_file'; path: string }
   | { type: 'search_text'; query: string; path?: string; glob?: string; maxResults?: number; caseSensitive?: boolean }
   | { type: 'get_diagnostics'; path?: string }
   | { type: 'create_file'; path: string; content: string; reason?: string }
   | { type: 'propose_file'; path: string; content: string; reason?: string }
+  | { type: 'propose_files'; files: ProposedFileInput[]; reason?: string }
   | { type: 'replace_lines'; path: string; startLine: number; endLine: number; content: string; reason?: string }
   | { type: 'delete_lines'; path: string; startLine: number; endLine: number; reason?: string }
   | { type: 'insert_lines'; path: string; line: number; content: string; position?: 'before' | 'after'; reason?: string }

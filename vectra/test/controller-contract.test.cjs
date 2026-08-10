@@ -5,11 +5,19 @@ const fs = require('node:fs');
 test('controller preloads workspace evidence for Ask/Agent', () => {
   const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
   assert.match(src, /request\.mode !== 'selection'/);
-  assert.match(src, /this\.tools\.workspaceSummary\(\)/);
+  assert.match(src, /type: 'workspace_summary'/);
+  assert.match(src, /this\.toolRegistry\.execute/);
 });
 
-test('controller performs a post-tool synthesis turn instead of returning provisional tool-call message', () => {
+test('controller continues after tools and keeps multi-file proposals in one run', () => {
   const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
-  assert.match(src, /Actions produce evidence\. Always give the model another turn/);
-  assert.doesNotMatch(src, /if \(envelope\.done\) return \{ text: envelope\.message/);
+  assert.match(src, /for \(let step = 1; step <= config\.maxAgentSteps; step\+\+\)/);
+  assert.match(src, /proposalIds = new Set<string>/);
+  assert.doesNotMatch(src, /if \(createdProposalThisStep\)/);
+});
+
+test('controller sends parsed text once and reserves provider attachments for media', () => {
+  const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
+  assert.match(src, /providerMediaAttachments\(mediaAttachments\)/);
+  assert.match(src, /attachment\.kind === 'image' \|\| attachment\.kind === 'pdf'/);
 });

@@ -34,15 +34,17 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalLlamaCppService = void 0;
-const vscode = __importStar(require("vscode"));
 const node_child_process_1 = require("node:child_process");
 const node_fs_1 = require("node:fs");
-const path = __importStar(require("node:path"));
 const os = __importStar(require("node:os"));
+const path = __importStar(require("node:path"));
 const node_util_1 = require("node:util");
-const config_1 = require("../utils/config");
+const vscode = __importStar(require("vscode"));
 const OpenAICompatibleProvider_1 = require("../providers/OpenAICompatibleProvider");
+const config_1 = require("../utils/config");
+const LocalModelDiscovery_1 = require("./LocalModelDiscovery");
 const execFileAsync = (0, node_util_1.promisify)(node_child_process_1.execFile);
+/** Owns local model selection and the llama.cpp child-process lifecycle. */
 class LocalLlamaCppService {
     process;
     output = vscode.window.createOutputChannel('Vectra · llama.cpp');
@@ -53,6 +55,31 @@ class LocalLlamaCppService {
     get modelPath() { return this.currentModelPath || (0, config_1.getConfig)().localModelPath; }
     get mmprojPath() { return this.currentMmprojPath || (0, config_1.getConfig)().llamaCppMmprojPath; }
     get visionEnabled() { return Boolean(this.mmprojPath); }
+    /**
+     * Present the two user-facing local workflows: manually search/select a GGUF
+     * file, or detect installed GGUF and Ollama models automatically.
+     */
+    async chooseLocalModel() {
+        const choice = await vscode.window.showQuickPick([
+            {
+                id: 'browse',
+                label: '$(search) Search or choose a GGUF model',
+                description: 'Browse your computer for a llama.cpp-compatible model file'
+            },
+            {
+                id: 'detect',
+                label: '$(sparkle) Detect installed local models',
+                description: 'Find common GGUF locations and models from a running Ollama installation'
+            }
+        ], {
+            title: 'Vectra: Local Model',
+            placeHolder: 'Choose how Vectra should find your local model'
+        });
+        if (!choice)
+            return undefined;
+        return choice.id === 'browse' ? this.selectAndStartModel() : this.detectAndSelectModel();
+    }
+    /** Use VS Code's native searchable file dialog to select a GGUF model. */
     async selectAndStartModel() {
         const config = (0, config_1.getConfig)();
         let defaultUri;
@@ -62,22 +89,92 @@ class LocalLlamaCppService {
                 await node_fs_1.promises.access(candidate);
                 defaultUri = vscode.Uri.file(candidate);
             }
-            catch { /* default */ }
+            catch {
+                // Let VS Code choose the platform default location.
+            }
         }
-        const picked = await vscode.window.showOpenDialog({ title: 'Vectra: Select local GGUF model', defaultUri, canSelectFiles: true, canSelectFolders: false, canSelectMany: false, filters: { 'GGUF models': ['gguf'] }, openLabel: 'Use this model' });
+        const picked = await vscode.window.showOpenDialog({
+            title: 'Vectra: Search or select local GGUF model',
+            defaultUri,
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            filters: { 'GGUF models': ['gguf'] },
+            openLabel: 'Load this model'
+        });
         if (!picked?.[0])
             return undefined;
-        let modelPath = normalizeShardPath(picked[0].fsPath);
-        if (!modelPath.toLowerCase().endsWith('.gguf'))
-            throw new Error('Vectra local models must be GGUF files for llama.cpp.');
+        return this.loadModelWithProgress(picked[0].fsPath);
+    }
+    /** Scan bounded common folders and query a local Ollama server. */
+    async detectAndSelectModel() {
+        const config = (0, config_1.getConfig)();
+        const extraRoots = [
+            config.localModelDirectory,
+            config.localModelPath ? path.dirname(config.localModelPath) : ''
+        ].filter(Boolean);
+        const [ggufModels, ollamaModels] = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Vectra: detecting installed local models…'
+        }, () => Promise.all([
+            (0, LocalModelDiscovery_1.discoverGgufModels)(extraRoots),
+            (0, LocalModelDiscovery_1.discoverOllamaModels)(config.ollamaBaseUrl)
+        ]));
+        const detected = [
+            ...ggufModels.map((model) => ({
+                label: `$(file-binary) ${model.label}`,
+                description: 'GGUF · llama.cpp',
+                detail: model.detail,
+                model
+            })),
+            ...ollamaModels.map((model) => ({
+                label: `$(server-process) ${model.label}`,
+                description: 'Ollama',
+                detail: model.detail,
+                model
+            }))
+        ];
+        if (!detected.length) {
+            const fallback = await vscode.window.showWarningMessage('Vectra did not find a GGUF file in common model folders or a running local Ollama model.', 'Search manually');
+            return fallback === 'Search manually' ? this.selectAndStartModel() : undefined;
+        }
+        const picked = await vscode.window.showQuickPick(detected, {
+            title: `Vectra: ${detected.length} local model${detected.length === 1 ? '' : 's'} detected`,
+            placeHolder: 'Type to search detected local models',
+            matchOnDescription: true,
+            matchOnDetail: true
+        });
+        if (!picked)
+            return undefined;
+        if (picked.model.kind === 'ollama') {
+            await this.stop();
+            await (0, config_1.updateProvider)('ollama');
+            await (0, config_1.updateModel)(picked.model.id);
+            return picked.model.id;
+        }
+        return this.loadModelWithProgress(picked.model.id);
+    }
+    async loadModelWithProgress(modelPath) {
+        return vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Vectra: loading ${path.basename(modelPath)}…`
+        }, () => this.configureAndStartModel(modelPath));
+    }
+    async configureAndStartModel(selectedPath) {
+        const config = (0, config_1.getConfig)();
+        const modelPath = (0, LocalModelDiscovery_1.normalizeShardPath)(selectedPath);
+        if (!modelPath.toLowerCase().endsWith('.gguf')) {
+            throw new Error('Vectra local llama.cpp models must be GGUF files.');
+        }
         await node_fs_1.promises.access(modelPath);
         const previousModel = config.localModelPath;
         await (0, config_1.updateLocalModel)(modelPath);
-        const detected = await this.detectMmproj(modelPath);
+        const detectedProjector = await this.detectMmproj(modelPath);
         if (previousModel !== modelPath)
-            await (0, config_1.updateLlamaMmprojPath)(detected ?? '');
-        else if (detected && !(0, config_1.getConfig)().llamaCppMmprojPath)
-            await (0, config_1.updateLlamaMmprojPath)(detected);
+            await (0, config_1.updateLlamaMmprojPath)(detectedProjector ?? '');
+        else if (detectedProjector && !(0, config_1.getConfig)().llamaCppMmprojPath) {
+            await (0, config_1.updateLlamaMmprojPath)(detectedProjector);
+        }
         await this.start(modelPath);
         await (0, config_1.updateProvider)('llamaCpp');
         const provider = new OpenAICompatibleProvider_1.OpenAICompatibleProvider(this.baseUrl);
@@ -86,33 +183,57 @@ class LocalLlamaCppService {
             const models = await provider.listModels();
             modelId = models[0]?.id || modelId;
         }
-        catch { /* single model */ }
+        catch {
+            // A single-model llama.cpp server may not expose model metadata.
+        }
         await (0, config_1.updateModel)(modelId);
         return modelId;
     }
     async selectMmproj() {
-        const cfg = (0, config_1.getConfig)();
-        const modelDir = cfg.localModelPath ? path.dirname(cfg.localModelPath) : os.homedir();
-        const picked = await vscode.window.showOpenDialog({ title: 'Vectra: Select multimodal projector (mmproj GGUF)', defaultUri: vscode.Uri.file(modelDir), canSelectFiles: true, canSelectFolders: false, canSelectMany: false, filters: { 'GGUF projector': ['gguf'] }, openLabel: 'Use projector' });
+        const config = (0, config_1.getConfig)();
+        const modelDirectory = config.localModelPath ? path.dirname(config.localModelPath) : os.homedir();
+        const picked = await vscode.window.showOpenDialog({
+            title: 'Vectra: Select multimodal projector (mmproj GGUF)',
+            defaultUri: vscode.Uri.file(modelDirectory),
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            filters: { 'GGUF projector': ['gguf'] },
+            openLabel: 'Use projector'
+        });
         if (!picked?.[0])
             return undefined;
         await (0, config_1.updateLlamaMmprojPath)(picked[0].fsPath);
         return picked[0].fsPath;
     }
-    async startConfiguredModel() { const modelPath = (0, config_1.getConfig)().localModelPath; if (!modelPath)
-        return false; try {
-        await node_fs_1.promises.access(modelPath);
+    async startConfiguredModel() {
+        const modelPath = (0, config_1.getConfig)().localModelPath;
+        if (!modelPath)
+            return false;
+        try {
+            await node_fs_1.promises.access(modelPath);
+        }
+        catch {
+            return false;
+        }
+        await this.start(modelPath);
+        return true;
     }
-    catch {
-        return false;
-    } await this.start(modelPath); return true; }
     async start(modelPath) {
         await this.stop();
         const executable = await this.resolveServerExecutable();
         const config = (0, config_1.getConfig)();
-        const normalized = normalizeShardPath(modelPath);
+        const normalized = (0, LocalModelDiscovery_1.normalizeShardPath)(modelPath);
         const mmproj = await this.resolveMmproj(normalized);
-        const args = ['-m', normalized, '--host', '127.0.0.1', '--port', String(config.llamaCppPort), '-c', String(config.llamaCppContextSize), '--fit', 'on', '--gpu-layers', config.llamaCppGpuLayers, '--split-mode', config.llamaCppSplitMode];
+        const args = [
+            '-m', normalized,
+            '--host', '127.0.0.1',
+            '--port', String(config.llamaCppPort),
+            '-c', String(config.llamaCppContextSize),
+            '--fit', 'on',
+            '--gpu-layers', config.llamaCppGpuLayers,
+            '--split-mode', config.llamaCppSplitMode
+        ];
         if (config.llamaCppCpuMoe)
             args.push('--cpu-moe');
         if (config.llamaCppNoMmap)
@@ -133,95 +254,182 @@ class LocalLlamaCppService {
         this.process = child;
         this.currentModelPath = normalized;
         this.currentMmprojPath = mmproj || '';
-        child.stdout?.on('data', (d) => this.output.append(d.toString()));
-        child.stderr?.on('data', (d) => this.output.append(d.toString()));
-        child.on('exit', (code, signal) => { this.output.appendLine(`\n[Vectra] llama-server exited (${code ?? 'no code'}${signal ? `, ${signal}` : ''}).`); if (this.process === child)
-            this.process = undefined; });
+        child.stdout?.on('data', (data) => this.output.append(data.toString()));
+        child.stderr?.on('data', (data) => this.output.append(data.toString()));
+        child.on('exit', (code, signal) => {
+            this.output.appendLine(`\n[Vectra] llama-server exited (${code ?? 'no code'}${signal ? `, ${signal}` : ''}).`);
+            if (this.process === child)
+                this.process = undefined;
+        });
         await this.waitUntilHealthy(child, config.llamaCppLoadTimeoutSeconds * 1000);
         this.output.appendLine(`[Vectra] Local model is ready${mmproj ? ' with multimodal vision' : ''}.`);
     }
-    async stop() { const child = this.process; this.process = undefined; this.currentModelPath = ''; this.currentMmprojPath = ''; if (!child || child.killed)
-        return; child.kill(); await new Promise((resolve) => { const timer = setTimeout(() => { try {
-        child.kill('SIGKILL');
+    async stop() {
+        const child = this.process;
+        this.process = undefined;
+        this.currentModelPath = '';
+        this.currentMmprojPath = '';
+        if (!child || child.killed)
+            return;
+        child.kill();
+        await new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch { /* Process already stopped. */ }
+                resolve();
+            }, 3_000);
+            child.once('exit', () => {
+                clearTimeout(timer);
+                resolve();
+            });
+        });
     }
-    catch { } resolve(); }, 3000); child.once('exit', () => { clearTimeout(timer); resolve(); }); }); }
-    async chooseServerExecutable() { const picked = await vscode.window.showOpenDialog({ title: 'Vectra: Select llama-server executable', canSelectFiles: true, canSelectFolders: false, canSelectMany: false, openLabel: 'Use llama-server' }); if (!picked?.[0])
-        return undefined; await (0, config_1.updateLlamaServerPath)(picked[0].fsPath); return picked[0].fsPath; }
-    dispose() { void this.stop(); this.output.dispose(); }
-    async resolveMmproj(modelPath) { const cfg = (0, config_1.getConfig)(); if (cfg.llamaCppMmprojPath) {
-        try {
-            await node_fs_1.promises.access(cfg.llamaCppMmprojPath);
-            return cfg.llamaCppMmprojPath;
-        }
-        catch { /* detect */ }
-    } const detected = await this.detectMmproj(modelPath); if (detected)
-        await (0, config_1.updateLlamaMmprojPath)(detected); return detected; }
-    async detectMmproj(modelPath) { try {
-        const dir = path.dirname(modelPath);
-        const names = await node_fs_1.promises.readdir(dir);
-        const candidates = names.filter(n => /^mmproj.*\.gguf$/i.test(n)).sort((a, b) => scoreMmproj(b) - scoreMmproj(a));
-        return candidates[0] ? path.join(dir, candidates[0]) : undefined;
+    async chooseServerExecutable() {
+        const picked = await vscode.window.showOpenDialog({
+            title: 'Vectra: Select llama-server executable',
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            openLabel: 'Use llama-server'
+        });
+        if (!picked?.[0])
+            return undefined;
+        await (0, config_1.updateLlamaServerPath)(picked[0].fsPath);
+        return picked[0].fsPath;
     }
-    catch {
-        return undefined;
-    } }
-    async resolveServerExecutable() { const configured = (0, config_1.getConfig)().llamaCppServerPath; if (configured) {
-        if (path.isAbsolute(configured)) {
+    dispose() {
+        void this.stop();
+        this.output.dispose();
+    }
+    async resolveMmproj(modelPath) {
+        const config = (0, config_1.getConfig)();
+        if (config.llamaCppMmprojPath) {
             try {
-                await node_fs_1.promises.access(configured);
+                await node_fs_1.promises.access(config.llamaCppMmprojPath);
+                return config.llamaCppMmprojPath;
+            }
+            catch {
+                // Fall back to automatic detection beside the selected model.
+            }
+        }
+        const detected = await this.detectMmproj(modelPath);
+        if (detected)
+            await (0, config_1.updateLlamaMmprojPath)(detected);
+        return detected;
+    }
+    async detectMmproj(modelPath) {
+        try {
+            const directory = path.dirname(modelPath);
+            const names = await node_fs_1.promises.readdir(directory);
+            const candidates = names
+                .filter((name) => /^mmproj.*\.gguf$/i.test(name))
+                .sort((left, right) => scoreMmproj(right) - scoreMmproj(left));
+            return candidates[0] ? path.join(directory, candidates[0]) : undefined;
+        }
+        catch {
+            return undefined;
+        }
+    }
+    async resolveServerExecutable() {
+        const configured = (0, config_1.getConfig)().llamaCppServerPath;
+        if (configured) {
+            if (path.isAbsolute(configured)) {
+                try {
+                    await node_fs_1.promises.access(configured);
+                    return configured;
+                }
+                catch {
+                    // Continue with PATH and common-location detection.
+                }
+            }
+            else if (await commandExists(configured)) {
                 return configured;
             }
-            catch { }
         }
-        else if (await commandExists(configured))
-            return configured;
-    } const command = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server'; if (await commandExists(command))
-        return command; const common = process.platform === 'darwin' ? ['/opt/homebrew/bin/llama-server', '/usr/local/bin/llama-server'] : process.platform === 'win32' ? [path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'llama.cpp', 'llama-server.exe'), path.join(os.homedir(), 'llama.cpp', 'build', 'bin', 'Release', 'llama-server.exe')] : ['/usr/local/bin/llama-server', '/usr/bin/llama-server', path.join(os.homedir(), '.local', 'bin', 'llama-server')]; for (const c of common) {
-        if (!c)
-            continue;
-        try {
-            await node_fs_1.promises.access(c);
-            await (0, config_1.updateLlamaServerPath)(c);
-            return c;
+        const command = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
+        if (await commandExists(command))
+            return command;
+        const common = process.platform === 'darwin'
+            ? ['/opt/homebrew/bin/llama-server', '/usr/local/bin/llama-server']
+            : process.platform === 'win32'
+                ? [
+                    path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'llama.cpp', 'llama-server.exe'),
+                    path.join(os.homedir(), 'llama.cpp', 'build', 'bin', 'Release', 'llama-server.exe')
+                ]
+                : [
+                    '/usr/local/bin/llama-server',
+                    '/usr/bin/llama-server',
+                    path.join(os.homedir(), '.local', 'bin', 'llama-server')
+                ];
+        for (const candidate of common) {
+            if (!candidate)
+                continue;
+            try {
+                await node_fs_1.promises.access(candidate);
+                await (0, config_1.updateLlamaServerPath)(candidate);
+                return candidate;
+            }
+            catch {
+                // Try the next platform-specific location.
+            }
         }
-        catch { }
-    } const choice = await vscode.window.showWarningMessage('Vectra found your GGUF model, but llama-server could not be found.', 'Select llama-server', 'Open llama.cpp'); if (choice === 'Open llama.cpp') {
-        await vscode.env.openExternal(vscode.Uri.parse('https://github.com/ggml-org/llama.cpp'));
-        throw new Error('Install llama.cpp, then select the local model again.');
-    } if (choice === 'Select llama-server') {
-        const s = await this.chooseServerExecutable();
-        if (s)
-            return s;
-    } throw new Error('llama-server executable is required to run local GGUF models.'); }
-    async waitUntilHealthy(child, timeout) { const health = `${this.baseUrl.replace(/\/v1$/, '')}/health`; const deadline = Date.now() + timeout; let last = ''; while (Date.now() < deadline) {
-        if (child.exitCode !== null || child.killed)
-            throw new Error('llama-server stopped before the model became ready. See “Vectra · llama.cpp” output.');
-        try {
-            const r = await fetch(health);
-            if (r.ok)
-                return;
-            last = `HTTP ${r.status}`;
+        const choice = await vscode.window.showWarningMessage('Vectra found your GGUF model, but llama-server could not be found.', 'Select llama-server', 'Open llama.cpp');
+        if (choice === 'Open llama.cpp') {
+            await vscode.env.openExternal(vscode.Uri.parse('https://github.com/ggml-org/llama.cpp'));
+            throw new Error('Install llama.cpp, then select the local model again.');
         }
-        catch (e) {
-            last = e instanceof Error ? e.message : String(e);
+        if (choice === 'Select llama-server') {
+            const selected = await this.chooseServerExecutable();
+            if (selected)
+                return selected;
         }
-        await delay(750);
-    } throw new Error(`Timed out waiting for llama-server. Large models may need a longer vectra.llamaCppLoadTimeoutSeconds. ${last}`.trim()); }
+        throw new Error('llama-server executable is required to run local GGUF models.');
+    }
+    async waitUntilHealthy(child, timeout) {
+        const healthUrl = `${this.baseUrl.replace(/\/v1$/, '')}/health`;
+        const deadline = Date.now() + timeout;
+        let lastError = '';
+        while (Date.now() < deadline) {
+            if (child.exitCode !== null || child.killed) {
+                throw new Error('llama-server stopped before the model became ready. See “Vectra · llama.cpp” output.');
+            }
+            try {
+                const response = await fetch(healthUrl);
+                if (response.ok)
+                    return;
+                lastError = `HTTP ${response.status}`;
+            }
+            catch (error) {
+                lastError = error instanceof Error ? error.message : String(error);
+            }
+            await delay(750);
+        }
+        throw new Error(`Timed out waiting for llama-server. Large models may need a longer ` +
+            `vectra.llamaCppLoadTimeoutSeconds. ${lastError}`.trim());
+    }
 }
 exports.LocalLlamaCppService = LocalLlamaCppService;
-function normalizeShardPath(p) { const m = p.match(/^(.*)-(\d{5})-of-(\d{5})\.gguf$/i); if (!m)
-    return p; return `${m[1]}-00001-of-${m[3]}.gguf`; }
-function scoreMmproj(n) { return /f16/i.test(n) ? 3 : /bf16/i.test(n) ? 2 : /q8/i.test(n) ? 1 : 0; }
-async function commandExists(command) { try {
-    if (process.platform === 'win32')
-        await execFileAsync('where', [command]);
-    else
-        await execFileAsync('which', [command]);
-    return true;
+function scoreMmproj(name) {
+    return /f16/i.test(name) ? 3 : /bf16/i.test(name) ? 2 : /q8/i.test(name) ? 1 : 0;
 }
-catch {
-    return false;
-} }
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-function shellQuote(v) { return /\s/.test(v) ? JSON.stringify(v) : v; }
+async function commandExists(command) {
+    try {
+        if (process.platform === 'win32')
+            await execFileAsync('where', [command]);
+        else
+            await execFileAsync('which', [command]);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function delay(milliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+function shellQuote(value) {
+    return /\s/.test(value) ? JSON.stringify(value) : value;
+}
 //# sourceMappingURL=LocalLlamaCppService.js.map

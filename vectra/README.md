@@ -19,7 +19,7 @@ Vectra is a local-first coding agent that works inside VS Code. Use a downloaded
 - **Approved execution:** run files, projects, tests, or commands with confirmation.
 - **Three workflows:** use Agent, Ask, or Check Selection from the Vectra sidebar.
 - **Edit and resend:** revise a previous prompt or restart a stopped request without copying and pasting it.
-- **Documents and images:** work with PDF, DOCX, PPTX, XLSX, RTF, text, code, and supported visual inputs.
+- **Documents and images:** work with PDF, DOCX, PPTX, XLSX, RTF, text, code, and supported visual inputs. Make sure your model supports vision if you want to use images.
 - **Provider choice:** optionally use OpenAI, Anthropic, Gemini, Ollama, or an OpenAI-compatible endpoint.
 - **GPU or CPU, your choice:** pick Auto, GPU, or CPU from the sidebar; Vectra detects available GPUs and keeps an already-loaded local model resident instead of reloading it on every request.
 
@@ -51,7 +51,7 @@ The screenshot above shows Qwen3 4B loaded locally. A larger context size improv
 | Field | Value |
 | --- | --- |
 | Name | Vectra |
-| Version | 2.0.0 |
+| Version | 1.0.2 |
 | Publisher | `laudarisd` |
 | Author | [Sudip Laudari](https://github.com/Laudarisd) |
 | Runtime | VS Code 1.90+; llama.cpp for local GGUF models |

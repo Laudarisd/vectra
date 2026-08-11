@@ -326,7 +326,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const nonce = randomBytes(16).toString('hex');
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'main.js'));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'main.css'));
-    const icon = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'vectra.svg'));
+    const icon = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'vectra-icon.png'));
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';"/><link rel="stylesheet" href="${style}"/><title>Vectra</title></head><body>
 <main id="app">
 <header class="topbar"><div class="brand-wrap"><img class="brand-icon" src="${icon}" alt=""/><span class="brand">Vectra</span></div><button id="settingsButton" class="settings-button" title="Vectra settings" aria-label="Vectra settings">⚙</button></header>

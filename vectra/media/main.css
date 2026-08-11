@@ -53,8 +53,8 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .small{padding:3px 6px;font-size:.85em}
 .wide{width:100%}
 .composer-wrap{flex:0 0 auto;padding:8px 10px 10px;background:var(--vscode-sideBar-background);border-top:1px solid var(--vscode-sideBar-border,var(--vscode-widget-border))}
-textarea{width:100%;resize:vertical;min-height:72px;max-height:220px;padding:9px;border:1.5px solid #e8720c;border-radius:7px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}
-textarea:focus-visible{outline:1px solid #e8720c;outline-offset:1px}
+textarea{width:100%;resize:vertical;min-height:72px;max-height:220px;padding:9px;border:1.5px solid #2563eb;border-radius:7px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}
+textarea:focus-visible{outline:1px solid #2563eb;outline-offset:1px}
 .composer-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:7px}
 .left-actions{display:flex;flex:1;gap:5px;min-width:0}
 .hidden{display:none!important}

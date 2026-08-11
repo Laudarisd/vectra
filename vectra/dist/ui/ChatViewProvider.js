@@ -47,6 +47,7 @@ class ChatViewProvider {
     credentials;
     localLlama;
     attachmentService;
+    extensionVersion;
     static viewType = 'vectra.chat';
     view;
     messages = [];
@@ -55,7 +56,7 @@ class ChatViewProvider {
     abortController;
     busy = false;
     pendingSelectionCheck = false;
-    constructor(extensionUri, controller, patches, diffs, credentials, localLlama, attachmentService) {
+    constructor(extensionUri, controller, patches, diffs, credentials, localLlama, attachmentService, extensionVersion = '') {
         this.extensionUri = extensionUri;
         this.controller = controller;
         this.patches = patches;
@@ -63,6 +64,7 @@ class ChatViewProvider {
         this.credentials = credentials;
         this.localLlama = localLlama;
         this.attachmentService = attachmentService;
+        this.extensionVersion = extensionVersion;
     }
     resolveWebviewView(webviewView) {
         this.view = webviewView;
@@ -324,7 +326,7 @@ class ChatViewProvider {
 <section id="messages" class="messages" aria-live="polite"></section><section id="proposals" class="proposals"></section>
 <section class="composer-wrap"><div id="attachments" class="attachment-list"></div><textarea id="prompt" rows="3" placeholder="Ask Vectra…"></textarea><div class="composer-actions"><div class="left-actions"><button id="attachButton" class="secondary">＋ File</button><button id="clearButton" class="secondary">Clear Chat</button></div><button id="sendButton" class="primary">Send</button><button id="stopButton" class="danger hidden">Stop</button></div></section>
 </main>
-<dialog id="settingsDialog" class="settings-dialog"><form method="dialog" class="settings-card"><div class="settings-title"><div><strong>Vectra Settings</strong><div class="settings-subtitle">Runtime, model capability and support</div></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div><section class="settings-section"><h3>Runtime</h3><div id="runtimeInfo" class="runtime-info"></div><div id="capabilityInfo" class="capability-info"></div></section><section class="settings-section"><h3>General information</h3><div class="contact-grid"><span>Email</span><strong>test@gmail.com</strong><span>Contact</span><strong>+0000000000</strong><span>GitHub</span><strong>test</strong></div></section><section class="settings-section"><h3>Support & advanced</h3><div class="settings-actions"><button id="advancedSettingsButton" type="button" class="secondary">Advanced Settings</button><button id="supportButton" type="button" class="secondary">Support Developer</button></div></section><div class="dialog-actions"><button value="cancel" class="primary">Done</button></div></form></dialog>
+<dialog id="settingsDialog" class="settings-dialog"><form method="dialog" class="settings-card"><div class="settings-title"><div><strong>Vectra Settings</strong><div class="settings-subtitle">Runtime, model capability and support</div></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div><section class="settings-section"><h3>Runtime</h3><div id="runtimeInfo" class="runtime-info"></div><div id="capabilityInfo" class="capability-info"></div></section><section class="settings-section"><h3>General information</h3><div class="contact-grid"><span>Version</span><strong>v${this.extensionVersion}</strong><span>Email</span><strong>test@gmail.com</strong><span>Contact</span><strong>+0000000000</strong><span>GitHub</span><strong>test</strong></div></section><section class="settings-section"><h3>Support & advanced</h3><div class="settings-actions"><button id="advancedSettingsButton" type="button" class="secondary">Advanced Settings</button><button id="supportButton" type="button" class="secondary">Support Developer</button></div></section><div class="dialog-actions"><button value="cancel" class="primary">Done</button></div></form></dialog>
 <script nonce="${nonce}" src="${script}"></script></body></html>`;
     }
 }

@@ -31,7 +31,8 @@ export class OllamaProvider implements TextProvider {
           { role: 'system', content: request.systemPrompt },
           { role: 'user', content: request.userPrompt }
         ],
-        format: AGENT_ENVELOPE_SCHEMA
+        // Conversational turns must not be forced into the tool envelope.
+        ...(request.structured === false ? {} : { format: AGENT_ENVELOPE_SCHEMA })
       }),
       signal: request.signal
     });

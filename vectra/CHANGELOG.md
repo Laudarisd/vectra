@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.3
+
+- Added a conversational fast path so greetings and questions about Vectra get a direct, natural reply instead of triggering a workspace scan or an invented task.
+- Fixed replies that surfaced bare engine status text ("action completed", "task completed") in place of a real answer.
+- Fixed local/OpenAI-compatible providers being forced into the tool JSON schema even for plain conversation, which prevented natural prose replies.
+- Removed internal loop-guard wording from user-facing messages in favor of plain explanations with a way forward.
+- Added a self-verification turn after a completed write batch: the agent now checks its own prepared files (directory listing, contents, references) before reporting the task finished.
+- Fixed the web app's false-attachment-refusal recovery not triggering for short (but valid) extracted document text.
+
+## 1.0.2
+
+- Prevented earlier malformed tool responses and stale actions from hijacking a new chat topic.
+- Made the current user task authoritative and suppressed repeated tool-action loops.
+- Recovered readable messages from truncated JSON tool responses without exposing incomplete actions.
+- Corrected Node test discovery for reliable development and VSIX packaging on Node 24.
+
 ## 1.0.1
 
 - Added session-only Edit & Resend for user prompts, including stopped requests and retained recent attachments.

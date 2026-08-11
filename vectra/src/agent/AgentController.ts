@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import { AgentRunRequest, AgentRunResult, Attachment, ChatMessage, WorkspaceContext } from '../types';
+import { AgentRunRequest, AgentRunResult, Attachment, ChatMessage, TextProvider, WorkspaceContext } from '../types';
 import { ProviderManager } from '../providers/ProviderManager';
-import { getConfig } from '../utils/config';
+import { AgentConfiguration, getConfig } from '../utils/config';
 import { truncateMiddle } from '../utils/text';
 import { ContextCollector } from '../services/ContextCollector';
 import { PatchManager } from '../services/PatchManager';
@@ -10,7 +10,8 @@ import { WorkspaceTools } from '../services/WorkspaceTools';
 import { CommandRunner } from '../services/CommandRunner';
 import { renderPdfPagesFromBuffer } from '../services/DocumentExtractor';
 import { AgentToolRegistry } from './AgentToolRegistry';
-import { buildSystemPrompt, parseAgentEnvelope } from './protocol';
+import { buildChatSystemPrompt, buildSystemPrompt, parseAgentEnvelope } from './protocol';
+import { classifyTurn, formatRecentHistory, isStatusOnlyReply } from './ConversationContext';
 
 /**
  * Runs the model/tool loop for one user request.
@@ -42,6 +43,16 @@ export class AgentController {
     if (!config.model) throw new Error('No model selected. Choose API Key or Local Model first.');
 
     const provider = await this.providers.getProvider();
+
+    // A greeting or a question about Vectra is answered as conversation, before
+    // any workspace I/O. Routing small talk through the tool loop is what made
+    // it trigger a repository scan and come back as invented tasks or bare
+    // status lines.
+    const hasAttachments = (request.attachments ?? []).length > 0;
+    if (classifyTurn(request.userText, request.mode, hasAttachments) === 'chat') {
+      return { text: await this.converse(provider, request, config), proposals: [] };
+    }
+
     const workspaceContext = await this.contextCollector.collect(request.mode);
     const mediaAttachments: Attachment[] = [...(request.attachments ?? [])];
     if (config.provider === 'llamaCpp' && config.llamaCppMmprojPath) {
@@ -50,6 +61,9 @@ export class AgentController {
 
     const observations: string[] = [];
     const proposalIds = new Set<string>();
+    const attemptedActions = new Set<string>();
+    let duplicateOnlySteps = 0;
+    let verificationTurnUsed = false;
     let lastMessage = '';
 
     // Ask and Agent begin with real workspace evidence. This makes a directory
@@ -92,12 +106,30 @@ export class AgentController {
 
       if (!envelope.actions.length) {
         request.onProgress?.('Producing…');
-        return this.finish(envelope.message || lastMessage || 'Done.', [...proposalIds]);
+        const answer = envelope.message || lastMessage;
+        return this.finish(
+          isStatusOnlyReply(answer)
+            ? 'I finished, but I do not have a useful summary to show for it. Could you rephrase what you need?'
+            : answer,
+          [...proposalIds]
+        );
       }
 
       let allActionsWereSuccessfulWrites = true;
+      let executedActionCount = 0;
       for (const action of envelope.actions.slice(0, 40)) {
         if (request.signal?.aborted) throw new Error('Request cancelled.');
+        const fingerprint = actionFingerprint(action);
+        if (attemptedActions.has(fingerprint)) {
+          observations.push(
+            `ERROR: Repeated tool action suppressed: ${action.type}. ` +
+            'Do not retry it. Follow the CURRENT USER TASK and either choose a different evidence-gathering action or finish with actions=[].'
+          );
+          allActionsWereSuccessfulWrites = false;
+          continue;
+        }
+        attemptedActions.add(fingerprint);
+        executedActionCount++;
         request.onProgress?.(this.toolRegistry.describe(action));
         const result = await this.toolRegistry.execute(action, {
           mode: request.mode,
@@ -110,16 +142,83 @@ export class AgentController {
         }
       }
 
-      // A model may submit a complete batch and explicitly mark it done. Safe
-      // successful writes need no extra synthesis call; read and error results
-      // always get another turn so the final answer is evidence-based.
+      duplicateOnlySteps = executedActionCount === 0 ? duplicateOnlySteps + 1 : 0;
+      if (duplicateOnlySteps >= 2) {
+        // The loop guard is an engine detail. The user gets a plain explanation
+        // and a way forward instead of the internal reason.
+        const progress = isStatusOnlyReply(lastMessage) ? '' : `${lastMessage}\n\n`;
+        return this.finish(
+          `${progress}I stopped because I kept repeating the same step without making progress. ` +
+          'Could you tell me a bit more about what you need, or point me at the file or folder to start from?',
+          [...proposalIds]
+        );
+      }
+
+      // A model may submit a complete batch and explicitly mark it done. Before
+      // accepting that, give it exactly one turn to check its own work against
+      // the real filesystem, so the final summary is evidence-based rather than
+      // an assertion. Read and error results always get another turn anyway.
       if (envelope.done && allActionsWereSuccessfulWrites) {
-        return this.finish(lastMessage || 'Project changes prepared.', [...proposalIds]);
+        if (verificationTurnUsed) {
+          return this.finish(lastMessage || 'Project changes prepared.', [...proposalIds]);
+        }
+        verificationTurnUsed = true;
+        request.onProgress?.('Verifying changes…');
+        observations.push(
+          'VERIFICATION STEP: Your files are prepared but not yet reviewed by the user. ' +
+          'Check your own work now: use list_directory to confirm the layout, read_file on the files you just prepared ' +
+          '(the pending overlay serves their new content), and search_text to confirm imports, names, and references line up. ' +
+          'Fix anything wrong with a new action. If everything is correct, reply with actions=[] and a final summary that ' +
+          'states what you created or changed and what you verified. Do not repeat an unchanged proposal.'
+        );
+        continue;
       }
     }
 
-    const stopped = `${lastMessage ? `${lastMessage}\n\n` : ''}Stopped after ${config.maxAgentSteps} agent steps.`;
-    return this.finish(stopped, [...proposalIds]);
+    const progress = isStatusOnlyReply(lastMessage) ? '' : `${lastMessage}\n\n`;
+    return this.finish(
+      `${progress}I reached my limit of ${config.maxAgentSteps} steps for this request, so this is as far as I got. ` +
+      'Ask me to continue, or narrow the request and I will pick it up from here.',
+      [...proposalIds]
+    );
+  }
+
+  /**
+   * Single plain-prose completion for a conversational turn. No tools, no
+   * workspace context, and no forced JSON schema.
+   */
+  private async converse(
+    provider: TextProvider,
+    request: AgentRunRequest,
+    config: AgentConfiguration
+  ): Promise<string> {
+    request.onProgress?.('Thinking…');
+    const history = formatRecentHistory(request.history);
+    const ask = (nudge = '') => provider.complete({
+      systemPrompt: buildChatSystemPrompt(),
+      userPrompt: truncateMiddle(
+        `${history ? `RECENT CHAT (finished history, for reference only)\n${history}\n\n` : ''}` +
+        `THE USER JUST SAID\n${request.userText}\n\n` +
+        `Reply to them directly and naturally.${nudge}`,
+        Math.min(config.maxContextCharacters, 24_000)
+      ),
+      model: config.model,
+      structured: false,
+      signal: request.signal
+    });
+
+    // Tool-tuned local models sometimes answer a greeting with an envelope or a
+    // status line anyway. Unwrap it, then retry once with an explicit nudge.
+    let reply = parseAgentEnvelope(await ask()).message.trim();
+    if (isStatusOnlyReply(reply)) {
+      if (request.signal?.aborted) throw new Error('Request cancelled.');
+      reply = parseAgentEnvelope(
+        await ask(' Do not reply with a status line such as "task completed" — the user asked you a question, so answer it in a friendly sentence.')
+      ).message.trim();
+    }
+    return isStatusOnlyReply(reply)
+      ? 'Hi! I am Vectra, your coding assistant in VS Code. What would you like to work on?'
+      : reply;
   }
 
   private finish(message: string, ids: string[]): AgentRunResult {
@@ -145,11 +244,7 @@ function buildUserPrompt(
   proposals: AgentRunResult['proposals'],
   maxCharacters: number
 ): string {
-  const recentHistory = history
-    .filter((message) => message.role !== 'system')
-    .slice(-12)
-    .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
-    .join('\n\n');
+  const recentHistory = formatRecentHistory(history);
   const observationsText = observations.length
     ? observations.slice(-32).map((observation, index) => `OBSERVATION ${index + 1}\n${observation}`).join('\n\n')
     : 'No tool observations yet.';
@@ -166,9 +261,15 @@ function buildUserPrompt(
     `RECENT CHAT\n${recentHistory || 'No previous chat.'}\n\n` +
     `PENDING REVIEW BATCH\n${pendingText}\n\n` +
     `TOOL OBSERVATIONS\n${observationsText}\n\n` +
+    `ACTIVE TASK REMINDER\n${task}\n` +
+    'This task replaces any conflicting or unfinished request in RECENT CHAT. Never repeat an old tool action unless this task explicitly requests it.\n\n' +
     'Return the next JSON action envelope. Finish the complete task in this run.',
     maxCharacters
   );
+}
+
+function actionFingerprint(action: unknown): string {
+  return JSON.stringify(action);
 }
 
 function formatWorkspaceContext(context: WorkspaceContext): string {

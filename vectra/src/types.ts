@@ -25,7 +25,11 @@ export interface ChatMessage {
 }
 
 export interface ModelInfo { id: string; label?: string; detail?: string }
-export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; signal?: AbortSignal }
+/**
+ * `structured` defaults to true. Set it to false for conversational turns so
+ * providers that can pin a JSON schema return natural prose instead.
+ */
+export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; structured?: boolean; signal?: AbortSignal }
 export interface TextProvider { readonly id: ProviderId; complete(request: ProviderRequest): Promise<string>; listModels(signal?: AbortSignal): Promise<ModelInfo[]>; testConnection(signal?: AbortSignal): Promise<string> }
 
 /** A complete file included in one reviewed, multi-file proposal batch. */

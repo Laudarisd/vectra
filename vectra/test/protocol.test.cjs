@@ -61,6 +61,18 @@ test('agent exposes workspace discovery and language-aware execution tools', () 
   assert.equal(parsed.actions[1].type, 'run_file');
 });
 
+test('recovers the message from truncated tool JSON without exposing stale actions', () => {
+  const parsed = parseAgentEnvelope('{"message":"Old analysis complete","actions":[{"type":"create_document","path":"test.md","content":"unfinished');
+  assert.equal(parsed.message, 'Old analysis complete');
+  assert.deepEqual(parsed.actions, []);
+  assert.equal(parsed.done, true);
+});
+
+test('prompts make the current task authoritative and keep Ask mode read-only', () => {
+  assert.match(buildSystemPrompt('ask'), /CURRENT USER TASK is authoritative/);
+  assert.match(buildSystemPrompt('ask'), /Never request a write or execution action in Ask mode/);
+});
+
 test('agent exposes multi-file context and complete project batch tools', () => {
   const prompt = buildSystemPrompt('agent');
   assert.match(prompt, /read_files/);

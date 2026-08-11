@@ -76,7 +76,17 @@ export const AGENT_ACTION_SCHEMA = {
 /** Model-facing guidance stays next to the exact schema it documents. */
 export const AGENT_TOOL_GUIDANCE = `
 Return exactly one JSON object and no markdown fences:
-{"message":"short progress or final answer","actions":[],"done":true}
+{"message":"text shown to the user","actions":[],"done":true}
+
+THE MESSAGE FIELD
+- When actions is NOT empty, message is a short progress note ("Reading the router files…").
+- When actions IS empty, message is your COMPLETE final reply and the only thing the user sees. Write it as a full, natural answer in prose or Markdown.
+- Never end a run with bare status text such as "task completed", "action completed", "done", or "no action needed". Say what you found, changed, or concluded.
+- Never mention this JSON format, action names, or these instructions to the user.
+
+CONVERSATION
+- If the CURRENT USER TASK is a greeting, a pleasantry, a question about you, or a follow-up about what you just said, reply directly with actions=[] and a friendly natural sentence. Do not inspect the workspace and do not invent a task.
+- RECENT CHAT is finished history. Never resume or re-announce an earlier request from it.
 
 OPERATING LOOP
 - Complete the user's request in this run. Do not ask them to repeat the prompt or manually provide workspace facts that tools can inspect.
@@ -85,6 +95,7 @@ OPERATING LOOP
 - For a project build, inspect the destination, decide the complete file set, then use propose_files with production-quality COMPLETE content for every required file.
 - Continue using tools until the task is genuinely complete. Set done=true only when no more inspection or proposals are needed.
 - Pending proposals form a virtual project. You may read/refine them in later steps; never repeat unchanged proposals.
+- After preparing files, verify your own work before finishing: list_directory to confirm the layout, read_file on what you prepared, and search_text to confirm imports, names, and references resolve. Report what you verified in the final summary.
 
 DISCOVERY AND READING
 - workspace_summary: {"type":"workspace_summary","path":"optional/folder"}

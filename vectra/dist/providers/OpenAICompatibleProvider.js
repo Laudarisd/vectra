@@ -17,7 +17,8 @@ class OpenAICompatibleProvider {
         const userContent = [{ type: 'text', text: request.userPrompt }];
         for (const f of request.attachments ?? [])
             append(userContent, f);
-        const data = await (0, http_1.fetchJson)(`${this.baseUrl}/chat/completions`, { method: 'POST', headers: this.headers(true), body: JSON.stringify({ model: request.model, messages: [{ role: 'system', content: request.systemPrompt }, { role: 'user', content: userContent }], temperature: 0.2, ...(this.structuredAgentJson ? { response_format: { type: 'json_schema', schema: protocol_1.AGENT_ENVELOPE_SCHEMA } } : {}) }), signal: request.signal });
+        const wantsEnvelope = this.structuredAgentJson && request.structured !== false;
+        const data = await (0, http_1.fetchJson)(`${this.baseUrl}/chat/completions`, { method: 'POST', headers: this.headers(true), body: JSON.stringify({ model: request.model, messages: [{ role: 'system', content: request.systemPrompt }, { role: 'user', content: userContent }], temperature: request.structured === false ? 0.6 : 0.2, ...(wantsEnvelope ? { response_format: { type: 'json_schema', schema: protocol_1.AGENT_ENVELOPE_SCHEMA } } : {}) }), signal: request.signal });
         const text = data.choices?.[0]?.message?.content?.trim();
         if (!text)
             throw new Error('OpenAI-compatible endpoint returned no text output.');

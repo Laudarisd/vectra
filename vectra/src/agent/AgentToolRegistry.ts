@@ -223,7 +223,10 @@ export class AgentToolRegistry {
   }
 
   private denied(action: AgentAction, reason: string): ToolExecutionResult {
-    return this.result(action, `Denied: ${reason}`);
+    const guidance = /read-only|only in Agent mode/i.test(reason)
+      ? ' Do not retry this or any other write/execute action in the current mode. Answer the CURRENT USER TASK with actions=[].'
+      : ' Do not repeat the identical action; correct it or finish the current task.';
+    return this.result(action, `Denied: ${reason}${guidance}`);
   }
 
   private result(

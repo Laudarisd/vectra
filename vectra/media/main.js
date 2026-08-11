@@ -7,7 +7,8 @@
   let state = {
     messages: [], proposals: [], attachments: [], busy: false,
     provider: 'llamaCpp', model: '', localModelName: '', localModelRunning: false,
-    visionEnabled: false, hasKey: true, isLocal: true, workspaceTrusted: true
+    visionEnabled: false, hasKey: true, isLocal: true, workspaceTrusted: true,
+    deviceMode: 'auto', gpuInfo: ''
   };
 
   const $ = (id) => document.getElementById(id);
@@ -16,7 +17,8 @@
     prompt: $('prompt'), send: $('sendButton'), stop: $('stopButton'), attach: $('attachButton'),
     clear: $('clearButton'), api: $('apiKeyButton'), local: $('localModelButton'), test: $('testButton'),
     settings: $('settingsButton'), dialog: $('settingsDialog'), runtime: $('runtimeInfo'),
-    capability: $('capabilityInfo'), advanced: $('advancedSettingsButton'), support: $('supportButton')
+    capability: $('capabilityInfo'), advanced: $('advancedSettingsButton'), support: $('supportButton'),
+    deviceMode: $('deviceMode'), gpuInfo: $('gpuInfo')
   };
 
   document.querySelectorAll('.mode').forEach((control) => control.addEventListener('click', () => {
@@ -40,6 +42,7 @@
     els.dialog.showModal();
   });
   els.advanced.addEventListener('click', () => vscode.postMessage({ type: 'openSettings' }));
+  els.deviceMode.addEventListener('change', () => vscode.postMessage({ type: 'setDeviceMode', value: els.deviceMode.value }));
   els.support.addEventListener('click', () => vscode.postMessage({ type: 'supportDeveloper' }));
   els.prompt.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && editingMessageId) {
@@ -293,6 +296,9 @@
       ? 'Vision enabled: images and visual PDF pages can be analyzed with the selected VLM/projector.'
       : 'Text/document mode: code, text files, extracted PDF text and Word documents are supported. Images, scans and visual PDF pages require a vision-capable GGUF with its matching mmproj.';
     els.capability.textContent = vision;
+    els.deviceMode.value = state.deviceMode || 'auto';
+    els.gpuInfo.textContent = state.gpuInfo || '';
+    els.gpuInfo.classList.toggle('hidden', !state.gpuInfo);
   }
 
   function row(key, value) {

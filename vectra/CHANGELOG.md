@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4
+
+- Added a Device setting (Auto/GPU/CPU) in the Vectra sidebar and in Vectra Web's local runtime settings, with automatic GPU detection so choosing GPU shows what was found.
+- Local GGUF models no longer stop and reload from disk when the same model and settings are already running.
+- Ollama requests now keep the model resident with `keep_alive` instead of hitting Ollama's default 5-minute unload, and CPU mode forces true CPU-only inference.
+- Shortened and clarified the Marketplace description and README.
+
 ## 1.0.3
 
 - Added a conversational fast path so greetings and questions about Vectra get a direct, natural reply instead of triggering a workspace scan or an invented task.

@@ -5,9 +5,11 @@ const protocol_1 = require("../agent/protocol");
 const http_1 = require("../utils/http");
 class OllamaProvider {
     baseUrl;
+    deviceMode;
     id = 'ollama';
-    constructor(baseUrl) {
+    constructor(baseUrl, deviceMode = 'auto') {
         this.baseUrl = baseUrl;
+        this.deviceMode = deviceMode;
     }
     async complete(request) {
         const data = await (0, http_1.fetchJson)(`${this.baseUrl}/api/chat`, {
@@ -20,6 +22,12 @@ class OllamaProvider {
                     { role: 'system', content: request.systemPrompt },
                     { role: 'user', content: request.userPrompt }
                 ],
+                // Keeping the model resident avoids Ollama's default 5-minute unload,
+                // which otherwise reloads the whole model from disk on the next turn.
+                keep_alive: '30m',
+                // 'cpu' forces every layer off the GPU; 'auto'/'gpu' leave Ollama's
+                // own (multi-)GPU auto-placement in charge, so no override is sent.
+                ...(this.deviceMode === 'cpu' ? { options: { num_gpu: 0 } } : {}),
                 // Conversational turns must not be forced into the tool envelope.
                 ...(request.structured === false ? {} : { format: protocol_1.AGENT_ENVELOPE_SCHEMA })
             }),

@@ -38,6 +38,7 @@ const node_crypto_1 = require("node:crypto");
 const path = __importStar(require("node:path"));
 const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
+const gpu_1 = require("../utils/gpu");
 /** Coordinates the sidebar webview with extension-owned session state. */
 class ChatViewProvider {
     extensionUri;
@@ -183,6 +184,12 @@ class ChatViewProvider {
                 case 'openSettings':
                     await vscode.commands.executeCommand('vectra.openSettings');
                     break;
+                case 'setDeviceMode':
+                    if (message.value === 'auto' || message.value === 'gpu' || message.value === 'cpu') {
+                        await (0, config_1.updateDeviceMode)(message.value);
+                        await this.postState();
+                    }
+                    break;
                 case 'testConnection':
                     await vscode.commands.executeCommand('vectra.testConnection');
                     break;
@@ -307,8 +314,24 @@ class ChatViewProvider {
             visionEnabled: config.provider === 'llamaCpp' && this.localLlama.visionEnabled,
             hasKey,
             isLocal,
-            workspaceTrusted: vscode.workspace.isTrusted
+            workspaceTrusted: vscode.workspace.isTrusted,
+            deviceMode: config.deviceMode,
+            gpuInfo: await this.describeGpus(config.deviceMode)
         });
+    }
+    /** Only shells out to probe hardware when the user is actually looking at GPU mode. */
+    async describeGpus(deviceMode) {
+        if (deviceMode === 'cpu')
+            return '';
+        try {
+            const gpus = await (0, gpu_1.detectGpus)();
+            if (!gpus.length)
+                return 'No GPU detected — falling back to CPU.';
+            return `${gpus.length} GPU${gpus.length > 1 ? 's' : ''} detected: ${gpus.map((gpu) => gpu.name).join(', ')}`;
+        }
+        catch {
+            return '';
+        }
     }
     async post(payload) {
         await this.view?.webview.postMessage(payload);
@@ -326,7 +349,7 @@ class ChatViewProvider {
 <section id="messages" class="messages" aria-live="polite"></section><section id="proposals" class="proposals"></section>
 <section class="composer-wrap"><div id="attachments" class="attachment-list"></div><textarea id="prompt" rows="3" placeholder="Ask Vectra…"></textarea><div class="composer-actions"><div class="left-actions"><button id="attachButton" class="secondary">＋ File</button><button id="clearButton" class="secondary">Clear Chat</button></div><button id="sendButton" class="primary">Send</button><button id="stopButton" class="danger hidden">Stop</button></div></section>
 </main>
-<dialog id="settingsDialog" class="settings-dialog"><form method="dialog" class="settings-card"><div class="settings-title"><div><strong>Vectra Settings</strong><div class="settings-subtitle">Runtime, model capability and support</div></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div><section class="settings-section"><h3>Runtime</h3><div id="runtimeInfo" class="runtime-info"></div><div id="capabilityInfo" class="capability-info"></div></section><section class="settings-section"><h3>General information</h3><div class="contact-grid"><span>Version</span><strong>v${this.extensionVersion}</strong><span>Email</span><strong>test@gmail.com</strong><span>Contact</span><strong>+0000000000</strong><span>GitHub</span><strong>test</strong></div></section><section class="settings-section"><h3>Support & advanced</h3><div class="settings-actions"><button id="advancedSettingsButton" type="button" class="secondary">Advanced Settings</button><button id="supportButton" type="button" class="secondary">Support Developer</button></div></section><div class="dialog-actions"><button value="cancel" class="primary">Done</button></div></form></dialog>
+<dialog id="settingsDialog" class="settings-dialog"><form method="dialog" class="settings-card"><div class="settings-title"><div><strong>Vectra Settings</strong><div class="settings-subtitle">Runtime, model capability and support</div></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div><section class="settings-section"><h3>Runtime</h3><div id="runtimeInfo" class="runtime-info"></div><div class="device-row"><span>Device</span><select id="deviceMode"><option value="auto">Auto</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select></div><div id="gpuInfo" class="capability-info hidden"></div><div id="capabilityInfo" class="capability-info"></div></section><section class="settings-section"><h3>General information</h3><div class="contact-grid"><span>Version</span><strong>v${this.extensionVersion}</strong><span>Email</span><strong>test@gmail.com</strong><span>Contact</span><strong>+0000000000</strong><span>GitHub</span><strong>test</strong></div></section><section class="settings-section"><h3>Support & advanced</h3><div class="settings-actions"><button id="advancedSettingsButton" type="button" class="secondary">Advanced Settings</button><button id="supportButton" type="button" class="secondary">Support Developer</button></div></section><div class="dialog-actions"><button value="cancel" class="primary">Done</button></div></form></dialog>
 <script nonce="${nonce}" src="${script}"></script></body></html>`;
     }
 }

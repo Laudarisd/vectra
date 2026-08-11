@@ -50,6 +50,7 @@ class LocalLlamaCppService {
     output = vscode.window.createOutputChannel('Vectra · llama.cpp');
     currentModelPath = '';
     currentMmprojPath = '';
+    lastArgsKey = '';
     get isRunning() { return Boolean(this.process && !this.process.killed); }
     get baseUrl() { return `http://127.0.0.1:${(0, config_1.getConfig)().llamaCppPort}/v1`; }
     get modelPath() { return this.currentModelPath || (0, config_1.getConfig)().localModelPath; }
@@ -220,18 +221,22 @@ class LocalLlamaCppService {
         return true;
     }
     async start(modelPath) {
-        await this.stop();
         const executable = await this.resolveServerExecutable();
         const config = (0, config_1.getConfig)();
         const normalized = (0, LocalModelDiscovery_1.normalizeShardPath)(modelPath);
         const mmproj = await this.resolveMmproj(normalized);
+        // Forcing CPU overrides whatever GPU layer count is configured; auto/gpu
+        // keep the configured value, which is what already gives multi-GPU
+        // placement for free (llama.cpp's layer split mode spreads offloaded
+        // layers across every visible CUDA device on its own).
+        const gpuLayers = config.deviceMode === 'cpu' ? '0' : config.llamaCppGpuLayers;
         const args = [
             '-m', normalized,
             '--host', '127.0.0.1',
             '--port', String(config.llamaCppPort),
             '-c', String(config.llamaCppContextSize),
             '--fit', 'on',
-            '--gpu-layers', config.llamaCppGpuLayers,
+            '--gpu-layers', gpuLayers,
             '--split-mode', config.llamaCppSplitMode
         ];
         if (config.llamaCppCpuMoe)
@@ -242,6 +247,14 @@ class LocalLlamaCppService {
             args.push('--mmproj', mmproj);
         if (config.llamaCppExtraArgs.length)
             args.push(...config.llamaCppExtraArgs);
+        // A model already running with the same executable/args is left alone
+        // instead of being stopped and reloaded from disk for no reason.
+        const argsKey = JSON.stringify({ executable, args });
+        if (this.isRunning && argsKey === this.lastArgsKey) {
+            this.output.appendLine('[Vectra] Reusing the already-running local model (unchanged settings).');
+            return;
+        }
+        await this.stop();
         this.output.show(true);
         this.output.appendLine('[Vectra] Starting llama.cpp');
         this.output.appendLine(`[Vectra] Server: ${executable}`);
@@ -254,6 +267,7 @@ class LocalLlamaCppService {
         this.process = child;
         this.currentModelPath = normalized;
         this.currentMmprojPath = mmproj || '';
+        this.lastArgsKey = argsKey;
         child.stdout?.on('data', (data) => this.output.append(data.toString()));
         child.stderr?.on('data', (data) => this.output.append(data.toString()));
         child.on('exit', (code, signal) => {
@@ -269,6 +283,7 @@ class LocalLlamaCppService {
         this.process = undefined;
         this.currentModelPath = '';
         this.currentMmprojPath = '';
+        this.lastArgsKey = '';
         if (!child || child.killed)
             return;
         child.kill();

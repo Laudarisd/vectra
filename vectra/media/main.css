@@ -72,8 +72,10 @@ textarea{width:100%;resize:vertical;min-height:72px;max-height:220px;padding:9px
 .settings-section{border-top:1px solid var(--vscode-widget-border,var(--vscode-input-border));padding-top:12px;margin-top:12px}
 .settings-section h3{font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.05em;opacity:.74}
 .runtime-info{display:grid;gap:6px}
-.runtime-row,.contact-grid{display:grid;grid-template-columns:82px minmax(0,1fr);gap:7px;font-size:12px}
+.runtime-row,.contact-grid,.device-row{display:grid;grid-template-columns:82px minmax(0,1fr);gap:7px;font-size:12px}
 .runtime-row strong,.contact-grid strong{overflow-wrap:anywhere}
+.device-row{align-items:center;margin-top:8px}
+.device-row select{background:var(--vscode-dropdown-background);color:var(--vscode-dropdown-foreground);border:1px solid var(--vscode-dropdown-border,var(--vscode-input-border));border-radius:5px;padding:3px 5px;font:inherit}
 .capability-info{margin-top:10px;padding:9px;border-radius:7px;background:var(--vscode-textCodeBlock-background);font-size:11px;line-height:1.45;opacity:.86}
 .contact-grid{row-gap:8px}
 .settings-actions{display:flex;gap:6px;flex-wrap:wrap}

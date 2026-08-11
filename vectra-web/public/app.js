@@ -28,6 +28,7 @@
     localDialog: $('localDialog'), localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
     localModelPath: $('localModelPath'), localMmprojPath: $('localMmprojPath'), localServerPath: $('localServerPath'), localPort: $('localPort'), localContext: $('localContext'),
     localGpuLayers: $('localGpuLayers'), localSplitMode: $('localSplitMode'), localTimeout: $('localTimeout'), localExtraArgs: $('localExtraArgs'), localCpuMoe: $('localCpuMoe'),
+    localDevice: $('localDevice'), localGpuInfo: $('localGpuInfo'),
     localNoMmap: $('localNoMmap'), chooseLocalModel: $('chooseLocalModel'), chooseMmproj: $('chooseMmproj'), chooseLlamaServer: $('chooseLlamaServer'), startLocalModel: $('startLocalModel'),
     stopLocalModel: $('stopLocalModel'), localLogs: $('localLogs'), localModelSearch: $('localModelSearch'), searchLocalModels: $('searchLocalModels'), localModelResults: $('localModelResults')
   };
@@ -137,9 +138,10 @@
   });
   els.startLocalModel.addEventListener('click', startLocalModel);
   els.stopLocalModel.addEventListener('click', stopLocalModel);
-  for (const input of [els.localModelPath, els.localMmprojPath, els.localServerPath, els.localPort, els.localContext, els.localGpuLayers, els.localSplitMode, els.localTimeout, els.localExtraArgs, els.localCpuMoe, els.localNoMmap]) {
+  for (const input of [els.localModelPath, els.localMmprojPath, els.localServerPath, els.localPort, els.localContext, els.localGpuLayers, els.localSplitMode, els.localTimeout, els.localExtraArgs, els.localCpuMoe, els.localNoMmap, els.localDevice]) {
     input.addEventListener('change', syncLocalStateFromForm);
   }
+  els.localDevice.addEventListener('change', () => refreshGpuInfo().catch(() => {}));
 
   setInterval(() => {
     if (state.provider === 'llamaCpp' || els.localDialog.open || ['starting', 'ready'].includes(state.localStatus.status)) void refreshLocalStatus().catch(() => {});
@@ -229,6 +231,19 @@
     syncLocalFormFromState();
     if (!els.localDialog.open) els.localDialog.showModal();
     await refreshLocalStatus().catch((error) => setLocalInlineError(error.message));
+    await refreshGpuInfo().catch(() => {});
+  }
+
+  /** Only probes hardware when the user is actually looking at the local runtime dialog. */
+  async function refreshGpuInfo() {
+    if (els.localDevice.value === 'cpu') { els.localGpuInfo.textContent = '—'; return; }
+    const response = await fetch('\api\local\gpu-info', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not detect GPUs.');
+    const gpus = data.gpus || [];
+    els.localGpuInfo.textContent = gpus.length
+      ? `${gpus.length} GPU${gpus.length > 1 ? 's' : ''}: ${gpus.map((gpu) => gpu.name).join(', ')}`
+      : 'No GPU detected — will use CPU.';
   }
   function syncSettingsFromState() {
     els.settingsProvider.value = state.provider;
@@ -395,6 +410,7 @@
       contextSize: Number(els.localContext.value || 16384),
       gpuLayers: els.localGpuLayers.value.trim() || 'auto',
       splitMode: els.localSplitMode.value,
+      device: els.localDevice.value,
       timeoutSeconds: Number(els.localTimeout.value || 600),
       extraArgs: els.localExtraArgs.value.trim(),
       cpuMoe: els.localCpuMoe.checked,
@@ -412,6 +428,7 @@
     set(els.localContext, state.local.contextSize || 16384);
     set(els.localGpuLayers, state.local.gpuLayers || 'auto');
     set(els.localSplitMode, state.local.splitMode || 'layer');
+    set(els.localDevice, state.local.device || 'auto');
     set(els.localTimeout, state.local.timeoutSeconds || 600);
     set(els.localExtraArgs, state.local.extraArgs || '');
     els.localCpuMoe.checked = Boolean(state.local.cpuMoe);
@@ -592,7 +609,7 @@
   function fileName(path) { return String(path || '').split(/[\\/]/).pop() || ''; }
 
   function loadLocalConfig() {
-    const defaults = { modelPath: '', mmprojPath: '', serverPath: '', port: 8080, contextSize: 16384, gpuLayers: 'auto', splitMode: 'layer', timeoutSeconds: 600, extraArgs: '', cpuMoe: false, noMmap: false };
+    const defaults = { modelPath: '', mmprojPath: '', serverPath: '', port: 8080, contextSize: 16384, gpuLayers: 'auto', splitMode: 'layer', device: 'auto', timeoutSeconds: 600, extraArgs: '', cpuMoe: false, noMmap: false };
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(LOCAL_CONFIG_KEY) || '{}') }; }
     catch { return defaults; }
   }

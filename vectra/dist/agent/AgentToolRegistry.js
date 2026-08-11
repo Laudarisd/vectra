@@ -44,6 +44,8 @@ class AgentToolRegistry {
         }
     }
     async execute(action, context) {
+        if (context.signal?.aborted)
+            throw new Error('Request cancelled.');
         try {
             return await this.executeTrusted(action, context);
         }
@@ -59,6 +61,8 @@ class AgentToolRegistry {
             const paths = validateStringArray(action.paths, 'read_files paths', 20);
             const outputs = [];
             for (const filePath of [...new Set(paths.map(path_1.normalizeAgentPath))]) {
+                if (context.signal?.aborted)
+                    throw new Error('Request cancelled.');
                 outputs.push(await this.readFileWithPendingOverlay(filePath, action.startLine, action.endLine));
             }
             return this.result(action, outputs.join('\n\n'));
@@ -101,6 +105,8 @@ class AgentToolRegistry {
             const paths = [];
             const errors = [];
             for (const file of batch) {
+                if (context.signal?.aborted)
+                    throw new Error('Request cancelled.');
                 try {
                     const proposal = await this.patches.proposeFile(file.path, file.content, file.reason || action.reason || 'Agent-proposed project file');
                     ids.push(proposal.id);
@@ -161,18 +167,18 @@ class AgentToolRegistry {
                 return this.denied(action, 'Pending proposals must be accepted or rejected before execution.');
             }
             if (action.type === 'run_file') {
-                return this.result(action, await this.commands.runFile(action.path, action.args ?? [], action.timeoutMs, action.reason));
+                return this.result(action, await this.commands.runFile(action.path, action.args ?? [], action.timeoutMs, action.reason, context.signal));
             }
             if (action.type === 'run_project') {
-                return this.result(action, await this.commands.runProject(action.path ?? '', action.timeoutMs, action.reason));
+                return this.result(action, await this.commands.runProject(action.path ?? '', action.timeoutMs, action.reason, context.signal));
             }
             if (action.type === 'run_tests') {
                 const output = action.command
-                    ? await this.commands.run(action.command, action.cwd, action.timeoutMs, action.reason, 'tests')
-                    : await this.commands.runTestsAuto(action.cwd ?? '', action.timeoutMs, action.reason);
+                    ? await this.commands.run(action.command, action.cwd, action.timeoutMs, action.reason, 'tests', context.signal)
+                    : await this.commands.runTestsAuto(action.cwd ?? '', action.timeoutMs, action.reason, context.signal);
                 return this.result(action, output);
             }
-            return this.result(action, await this.commands.run(action.command, action.cwd, action.timeoutMs, action.reason, 'command'));
+            return this.result(action, await this.commands.run(action.command, action.cwd, action.timeoutMs, action.reason, 'command', context.signal));
         }
         return this.result(action, await this.workspace.execute(action));
     }

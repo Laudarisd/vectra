@@ -8,7 +8,7 @@ import { resolveWorkspacePath } from '../utils/path';
 export class CommandRunner implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel('Vectra · Commands');
 
-  async run(command: string, cwdInput = '', timeoutMs = 120_000, reason = '', kind: 'command' | 'tests' | 'file' | 'project' = 'command'): Promise<string> {
+  async run(command: string, cwdInput = '', timeoutMs = 120_000, reason = '', kind: 'command' | 'tests' | 'file' | 'project' = 'command', signal?: AbortSignal): Promise<string> {
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before Vectra can run commands.');
     if (!command.trim()) throw new Error('Command is empty.');
     const cwd = this.resolveCwd(cwdInput);
@@ -16,37 +16,39 @@ export class CommandRunner implements vscode.Disposable {
     const detail = `${reason ? `${reason}\n\n` : ''}${command}\n\nWorking directory: ${cwd}`;
     const choice = await vscode.window.showWarningMessage(`Vectra wants to ${action.toLowerCase()}:`, { modal: true, detail }, action, 'Cancel');
     if (choice !== action) return 'DENIED BY USER: command was not run.';
+    if (signal?.aborted) throw new Error('Request cancelled.');
     const limit = Math.min(Math.max(Number(timeoutMs) || 120_000, 1_000), 15 * 60_000);
     this.output.show(true);
     this.output.appendLine(`\n$ ${command}\n[cwd] ${cwd}`);
-    const result = await spawnShell(command, cwd, limit, chunk => this.output.append(chunk));
-    this.output.appendLine(`\n[exit ${result.exitCode}${result.timedOut ? ', timed out' : ''}]`);
+    const result = await spawnShell(command, cwd, limit, chunk => this.output.append(chunk), signal);
+    this.output.appendLine(`\n[exit ${result.exitCode}${result.timedOut ? ', timed out' : ''}${result.cancelled ? ', stopped by user' : ''}]`);
+    if (result.cancelled) throw new Error('Request cancelled.');
     const joined = `${result.stdout}${result.stderr ? `\nSTDERR\n${result.stderr}` : ''}`.trim();
     const clipped = joined.length > 80_000 ? `${joined.slice(0, 40_000)}\n\n… output truncated …\n\n${joined.slice(-40_000)}` : joined;
     return `COMMAND ${JSON.stringify(command)}\nCWD ${cwd}\nEXIT ${result.exitCode}${result.timedOut ? ' (TIMEOUT)' : ''}\n${clipped || '(no output)'}`;
   }
 
-  async runFile(pathInput: string, args: string[] = [], timeoutMs = 120_000, reason = ''): Promise<string> {
+  async runFile(pathInput: string, args: string[] = [], timeoutMs = 120_000, reason = '', signal?: AbortSignal): Promise<string> {
     const resolved = resolveWorkspacePath(pathInput);
     const stat = await vscode.workspace.fs.stat(resolved.uri);
     if (!(stat.type & vscode.FileType.File)) throw new Error(`${pathInput} is not a file.`);
     const command = this.commandForFile(resolved.uri.fsPath, args);
     const cwdRel = path.posix.dirname(resolved.relativePath.replace(/\\/g, '/'));
-    return this.run(command, cwdRel === '.' ? '' : cwdRel, timeoutMs, reason || `Run ${resolved.relativePath}`, 'file');
+    return this.run(command, cwdRel === '.' ? '' : cwdRel, timeoutMs, reason || `Run ${resolved.relativePath}`, 'file', signal);
   }
 
-  async runProject(pathInput = '', timeoutMs = 180_000, reason = ''): Promise<string> {
+  async runProject(pathInput = '', timeoutMs = 180_000, reason = '', signal?: AbortSignal): Promise<string> {
     const cwd = this.resolveCwd(pathInput);
     const detection = await detectProject(cwd);
     if (!detection.runCommand) throw new Error(`Vectra could not determine how to run this project. Detected: ${detection.kind}. Use run_command with the project's documented command.`);
-    return this.run(detection.runCommand, pathInput, timeoutMs, reason || `Run detected ${detection.kind} project`, 'project');
+    return this.run(detection.runCommand, pathInput, timeoutMs, reason || `Run detected ${detection.kind} project`, 'project', signal);
   }
 
-  async runTestsAuto(cwdInput = '', timeoutMs = 180_000, reason = ''): Promise<string> {
+  async runTestsAuto(cwdInput = '', timeoutMs = 180_000, reason = '', signal?: AbortSignal): Promise<string> {
     const cwd = this.resolveCwd(cwdInput);
     const detection = await detectProject(cwd);
     if (!detection.testCommand) throw new Error(`Vectra could not determine a test command for this ${detection.kind} project. Provide run_tests.command explicitly.`);
-    return this.run(detection.testCommand, cwdInput, timeoutMs, reason || `Run detected ${detection.kind} tests`, 'tests');
+    return this.run(detection.testCommand, cwdInput, timeoutMs, reason || `Run detected ${detection.kind} tests`, 'tests', signal);
   }
 
   dispose(): void { this.output.dispose(); }
@@ -128,14 +130,31 @@ async function detectProject(cwd: string): Promise<ProjectDetection> {
 
 function cppCompiler(): string { return process.platform === 'win32' ? 'g++' : 'c++'; }
 function shellQuote(value: string): string { if (process.platform === 'win32') return `"${value.replace(/"/g, '\\"')}"`; return `'${value.replace(/'/g, `'"'"'`)}'`; }
-function spawnShell(command: string, cwd: string, timeoutMs: number, onData: (chunk: string) => void): Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }> {
+function spawnShell(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  onData: (chunk: string) => void,
+  signal?: AbortSignal
+): Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean; cancelled: boolean }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error('Request cancelled.')); return; }
     const child = spawn(command, { cwd, shell: true, windowsHide: true, env: process.env });
-    let stdout = ''; let stderr = ''; let timedOut = false; let settled = false;
+    let stdout = ''; let stderr = ''; let timedOut = false; let cancelled = false; let settled = false;
     const append = (target: 'stdout' | 'stderr', chunk: Buffer) => { const text = chunk.toString(); onData(text); if (target === 'stdout') stdout = cap(stdout + text); else stderr = cap(stderr + text); };
     child.stdout?.on('data', (d: Buffer) => append('stdout', d)); child.stderr?.on('data', (d: Buffer) => append('stderr', d)); child.on('error', reject);
-    const timer = setTimeout(() => { timedOut = true; try { child.kill('SIGTERM'); } catch { /* noop */ } setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* noop */ } }, 1500); }, timeoutMs);
-    child.on('exit', code => { if (settled) return; settled = true; clearTimeout(timer); resolve({ stdout, stderr, exitCode: code ?? (timedOut ? 124 : 1), timedOut }); });
+    const kill = () => { try { child.kill('SIGTERM'); } catch { /* noop */ } setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* noop */ } }, 1500); };
+    const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
+    // Stop must interrupt a running command immediately rather than waiting
+    // for the timeout ceiling (up to 15 minutes) or natural completion.
+    const onAbort = () => { cancelled = true; kill(); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    child.on('exit', code => {
+      if (settled) return; settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      resolve({ stdout, stderr, exitCode: code ?? (timedOut ? 124 : 1), timedOut, cancelled });
+    });
   });
 }
 function cap(value: string): string { return value.length > 120_000 ? value.slice(-120_000) : value; }

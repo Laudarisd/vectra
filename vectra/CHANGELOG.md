@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.0
+
+- Fixed Stop not interrupting a running tool action: the request's cancellation signal now reaches command execution (`run_command`, `run_file`, `run_project`, `run_tests`), which kills the running process immediately instead of waiting up to 15 minutes for its own timeout. Multi-file read/propose batches also stop between files as soon as Stop is pressed.
+
 ## 1.0.4
 
 - Added a Device setting (Auto/GPU/CPU) in the Vectra sidebar and in Vectra Web's local runtime settings, with automatic GPU detection so choosing GPU shows what was found.

@@ -93,7 +93,7 @@ class AgentController {
         // request discovery on its first turn.
         if (request.mode !== 'selection') {
             request.onProgress?.('Scanning workspace…');
-            const preload = await this.toolRegistry.execute({ type: 'workspace_summary' }, { mode: request.mode, mediaAttachments });
+            const preload = await this.toolRegistry.execute({ type: 'workspace_summary' }, { mode: request.mode, mediaAttachments, signal: request.signal });
             observations.push(preload.observation);
         }
         for (let step = 1; step <= config.maxAgentSteps; step++) {
@@ -136,7 +136,8 @@ class AgentController {
                 request.onProgress?.(this.toolRegistry.describe(action));
                 const result = await this.toolRegistry.execute(action, {
                     mode: request.mode,
-                    mediaAttachments
+                    mediaAttachments,
+                    signal: request.signal
                 });
                 observations.push(result.observation);
                 for (const id of result.proposalIds)

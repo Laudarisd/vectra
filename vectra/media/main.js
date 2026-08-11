@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const els = {
-    messages: $('messages'), proposals: $('proposals'), attachments: $('attachments'),
+    messages: $('messages'), attachments: $('attachments'),
     prompt: $('prompt'), send: $('sendButton'), stop: $('stopButton'), attach: $('attachButton'),
     clear: $('clearButton'), api: $('apiKeyButton'), local: $('localModelButton'), test: $('testButton'),
     settings: $('settingsButton'), dialog: $('settingsDialog'), runtime: $('runtimeInfo'),
@@ -123,7 +123,6 @@
     renderConnections();
     renderMessages();
     renderAttachments();
-    renderProposals();
     renderComposer();
     renderSettings();
     updatePlaceholder();
@@ -201,6 +200,8 @@
       card.append(meta, line);
       els.messages.appendChild(card);
     }
+
+    renderProposals(els.messages);
     requestAnimationFrame(() => { els.messages.scrollTop = els.messages.scrollHeight; });
   }
 
@@ -220,10 +221,13 @@
     }
   }
 
-  function renderProposals() {
-    els.proposals.replaceChildren();
-    const pending = state.proposals.filter((proposal) => proposal.status === 'pending');
+  /** Proposal review lives inline in the main chat scroll — no separate scrollable panel. */
+  function renderProposals(container) {
     if (!state.proposals.length) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'proposals';
+    const pending = state.proposals.filter((proposal) => proposal.status === 'pending');
+
     const header = document.createElement('div');
     header.className = 'proposal-section-header';
     const title = document.createElement('strong');
@@ -238,7 +242,7 @@
       );
       header.appendChild(actions);
     }
-    els.proposals.appendChild(header);
+    wrap.appendChild(header);
 
     for (const proposal of state.proposals) {
       const card = document.createElement('article');
@@ -263,13 +267,16 @@
           button('Accept', 'primary', () => vscode.postMessage({ type: 'accept', id: proposal.id })),
           button('Reject', 'danger-outline', () => vscode.postMessage({ type: 'reject', id: proposal.id }))
         );
+      } else if (proposal.status === 'accepted') {
+        actions.appendChild(button('Undo', 'danger-outline', () => vscode.postMessage({ type: 'undo', id: proposal.id })));
       }
       card.append(top, reason, actions);
-      els.proposals.appendChild(card);
+      wrap.appendChild(card);
     }
     if (!pending.length) {
-      els.proposals.appendChild(button('Clear reviewed changes', 'secondary wide', () => vscode.postMessage({ type: 'clearCompleted' })));
+      wrap.appendChild(button('Clear reviewed changes', 'secondary wide', () => vscode.postMessage({ type: 'clearCompleted' })));
     }
+    container.appendChild(wrap);
   }
 
   function renderComposer() {

@@ -188,6 +188,21 @@ export class AgentToolRegistry {
 
     if (action.type === 'delete_file') {
       if (context.mode !== 'agent') return this.denied(action, 'This mode is read-only.');
+
+      // A pending "create" proposal was never written to disk, so there is
+      // nothing there to delete yet. Cancel the pending creation instead of
+      // asking the filesystem to delete a file it has never seen.
+      const pending = this.patches.getPendingForPath(action.path);
+      if (pending && pending.kind === 'create') {
+        this.patches.reject(pending.id);
+        return this.result(
+          action,
+          `Cancelled the pending creation of ${pending.path}; it was never written to disk.`,
+          [],
+          true
+        );
+      }
+
       const proposal = await this.patches.proposeDelete(action.path, action.reason);
       return this.result(action, `Prepared reviewed deletion for ${proposal.path}.`, [proposal.id], true);
     }

@@ -36,11 +36,11 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .activity-line{display:flex;align-items:center;gap:8px;font-size:.92em;opacity:.86}
 .activity-spinner{width:12px;height:12px;border:2px solid var(--vscode-widget-border,currentColor);border-top-color:var(--vscode-progressBar-background,currentColor);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.proposals{flex:0 1 auto;padding:0 10px 8px;max-height:310px;overflow-y:auto}
-.proposal-section-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:5px 0 7px}
+.proposals{margin-top:6px;padding-top:2px;border-top:1px solid var(--vscode-sideBar-border,var(--vscode-widget-border))}
+.proposal-section-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:9px 0 7px}
 .proposal-batch-actions,.proposal-actions{display:flex;gap:5px;flex-wrap:wrap}
 .proposal{border:1px solid var(--vscode-widget-border,var(--vscode-input-border));background:var(--vscode-editorWidget-background);border-radius:8px;padding:9px;margin-bottom:7px}
-.proposal.accepted,.proposal.rejected,.proposal.stale{opacity:.65}
+.proposal.accepted,.proposal.rejected,.proposal.stale,.proposal.undone{opacity:.65}
 .proposal-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .proposal-path{font-family:var(--vscode-editor-font-family);font-size:.92em;overflow-wrap:anywhere}
 .badge{border:1px solid var(--vscode-widget-border,currentColor);border-radius:999px;padding:2px 6px;font-size:.75em;white-space:nowrap;opacity:.8}
@@ -53,7 +53,8 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .small{padding:3px 6px;font-size:.85em}
 .wide{width:100%}
 .composer-wrap{flex:0 0 auto;padding:8px 10px 10px;background:var(--vscode-sideBar-background);border-top:1px solid var(--vscode-sideBar-border,var(--vscode-widget-border))}
-textarea{width:100%;resize:vertical;min-height:72px;max-height:220px;padding:9px;border:1px solid var(--vscode-input-border,transparent);border-radius:7px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}
+textarea{width:100%;resize:vertical;min-height:72px;max-height:220px;padding:9px;border:1.5px solid #e8720c;border-radius:7px;color:var(--vscode-input-foreground);background:var(--vscode-input-background)}
+textarea:focus-visible{outline:1px solid #e8720c;outline-offset:1px}
 .composer-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:7px}
 .left-actions{display:flex;flex:1;gap:5px;min-width:0}
 .hidden{display:none!important}

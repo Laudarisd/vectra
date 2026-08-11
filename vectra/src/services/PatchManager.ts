@@ -204,6 +204,22 @@ export class PatchManager {
     proposal.status = 'rejected';
   }
 
+  /**
+   * Reverse an already-written change back to its pre-accept content. Only
+   * available for accepted text-file proposals, and only while the file on
+   * disk still matches what was written — otherwise a later edit would be
+   * silently clobbered.
+   */
+  async undo(id: string): Promise<void> {
+    const proposal = this.proposals.get(id);
+    if (!proposal) throw new Error('Edit proposal no longer exists.');
+    if (proposal.status !== 'accepted') throw new Error(`Only accepted changes can be undone (this one is ${proposal.status}).`);
+    if (proposal.contentType !== 'text') throw new Error('Undo is only supported for text file changes.');
+    await this.assertMatchesApplied(proposal);
+    await this.revertProposal(proposal);
+    proposal.status = 'undone';
+  }
+
   rejectAllPending(): void {
     for (const proposal of this.proposals.values()) {
       if (proposal.status === 'pending') proposal.status = 'rejected';
@@ -244,6 +260,45 @@ export class PatchManager {
     if (raw.exists !== shouldExist || sha256Bytes(raw.bytes) !== proposal.baseHash) {
       proposal.status = 'stale';
       throw new Error(`${proposal.path} changed after the proposal was created. Ask Vectra to regenerate it.`);
+    }
+  }
+
+  private async assertMatchesApplied(proposal: EditProposal): Promise<void> {
+    if (proposal.kind === 'delete') return;
+    const current = await this.tools.readWholeFile(proposal.path);
+    if (!current.exists || sha256(current.content) !== sha256(proposal.proposedContent)) {
+      throw new Error(`${proposal.path} changed since this was applied. Undo it manually.`);
+    }
+  }
+
+  /** Mirrors applyProposal in reverse: restores baseContent, or removes/recreates the file. */
+  private async revertProposal(proposal: EditProposal): Promise<void> {
+    const resolved = resolveWorkspacePath(proposal.path);
+    if (proposal.kind === 'create') {
+      await vscode.workspace.fs.delete(resolved.uri, { recursive: false, useTrash: false });
+      return;
+    }
+    if (proposal.kind === 'delete') {
+      await vscode.workspace.fs.createDirectory(resolved.uri.with({ path: path.posix.dirname(resolved.uri.path) }));
+      const edit = new vscode.WorkspaceEdit();
+      edit.createFile(resolved.uri, { ignoreIfExists: false, overwrite: false });
+      edit.insert(resolved.uri, new vscode.Position(0, 0), proposal.baseContent);
+      if (!await vscode.workspace.applyEdit(edit)) {
+        throw new Error(`VS Code could not restore ${proposal.path}.`);
+      }
+      return;
+    }
+
+    const document = await vscode.workspace.openTextDocument(resolved.uri);
+    const lastLine = Math.max(0, document.lineCount - 1);
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(
+      resolved.uri,
+      new vscode.Range(new vscode.Position(0, 0), document.lineAt(lastLine).range.end),
+      proposal.baseContent
+    );
+    if (!await vscode.workspace.applyEdit(edit)) {
+      throw new Error(`VS Code could not undo the change to ${proposal.path}.`);
     }
   }
 

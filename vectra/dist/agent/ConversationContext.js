@@ -74,6 +74,13 @@ const CONVERSATIONAL_PATTERNS = [
     /^(?:lol|haha|hmm+|wow|nice|cool|great|awesome)\b/
 ];
 /**
+ * A generic question about what the assistant can do ("do you also edit
+ * code?", "can you write code?") names a WORK_SIGNALS verb but has no actual
+ * target — no file, path, or concrete task. Checked before WORK_SIGNALS so it
+ * is answered directly instead of triggering a full workspace agent run.
+ */
+const CAPABILITY_QUESTION_PATTERN = /^(?:do|does|can|could|would|will)\s+(?:you|it|vectra)\s+(?:also\s+|even\s+)?(?:know how to\s+)?(?:edit|write|create|fix|build|generate|handle|support|read|analyz\w*|understand|run|execute|debug|test)\s+codes?\??$/;
+/**
  * Anything suggesting real repository work vetoes the conversational path.
  * A false "work" costs one extra scan; a false "chat" would silently skip the
  * user's actual request, so the veto list is deliberately broad.
@@ -99,6 +106,8 @@ function classifyTurn(task, mode, hasAttachments = false) {
     const value = String(task || '').trim().toLowerCase();
     if (!value || value.length > 200)
         return 'work';
+    if (CAPABILITY_QUESTION_PATTERN.test(value))
+        return 'chat';
     if (WORK_SIGNALS.some((pattern) => pattern.test(value)))
         return 'work';
     return CONVERSATIONAL_PATTERNS.some((pattern) => pattern.test(value)) ? 'chat' : 'work';

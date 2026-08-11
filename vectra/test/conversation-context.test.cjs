@@ -64,6 +64,18 @@ test('real requests never route to the conversational path', () => {
   }
 });
 
+test('generic capability questions route to chat even though they name a work verb', () => {
+  const chat = ['Do you also edit codes?', 'Can you write code?', 'does it edit code'];
+  for (const text of chat) {
+    assert.equal(classifyTurn(text, 'agent'), 'chat', `expected chat for: ${text}`);
+  }
+});
+
+test('capability-shaped phrasing with a concrete target still means work', () => {
+  assert.equal(classifyTurn('can you edit src/app.ts', 'agent'), 'work');
+  assert.equal(classifyTurn('do you also edit config.json', 'agent'), 'work');
+});
+
 test('selection mode and attachments always mean work', () => {
   assert.equal(classifyTurn('hello', 'selection'), 'work');
   assert.equal(classifyTurn('hello', 'ask', true), 'work');

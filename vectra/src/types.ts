@@ -65,7 +65,7 @@ export type AgentAction =
 
 export interface AgentEnvelope { message: string; actions: AgentAction[]; done: boolean }
 export type ProposalKind = 'modify' | 'create' | 'delete';
-export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'stale';
+export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'stale' | 'undone';
 
 export interface EditProposal {
   id: string;

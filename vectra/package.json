@@ -1,8 +1,8 @@
 {
   "name": "vectra",
   "displayName": "Vectra",
-  "description": "A local-first AI coding agent for VS Code. Run GGUF models with llama.cpp, understand repositories, review edits, and execute approved tools.",
-  "version": "1.0.3",
+  "description": "A fast, local-first AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
+  "version": "1.0.4",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -306,6 +306,21 @@
           },
           "default": [],
           "description": "Advanced extra arguments appended to llama-server."
+        },
+        "vectra.deviceMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "gpu",
+            "cpu"
+          ],
+          "enumDescriptions": [
+            "Let the local runtime decide. Uses GPU acceleration when available.",
+            "Prefer GPU acceleration, using every detected GPU when more than one is available.",
+            "Force CPU-only inference, even when a GPU is available."
+          ],
+          "default": "auto",
+          "description": "Device used for local model inference (llama.cpp and Ollama)."
         }
       }
     }
@@ -345,6 +360,7 @@
         "vectra.llamaCppNoMmap",
         "vectra.llamaCppMmprojPath",
         "vectra.llamaCppExtraArgs",
+        "vectra.deviceMode",
         "vectra.ollamaBaseUrl",
         "vectra.openaiCompatibleBaseUrl",
         "vectra.openaiBaseUrl",

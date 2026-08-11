@@ -13,6 +13,7 @@ export class LocalLlamaManager {
   constructor() {
     this.child = undefined;
     this.runtimeApiKey = '';
+    this.lastRequestKey = '';
     this.state = {
       status: 'stopped',
       modelPath: '',
@@ -80,22 +81,43 @@ export class LocalLlamaManager {
   async start(options = {}) {
     const modelPath = normalizeShardPath(String(options.modelPath || '').trim());
     if (!modelPath) throw new Error('Choose a GGUF model first.');
-    await ensureFile(modelPath);
 
     const requestedPort = clampInt(options.port, 1024, 65535, 8080);
-    const port = await findAvailablePort(requestedPort, 60);
     const contextSize = clampInt(options.contextSize, 1024, 1048576, 16384);
-    const gpuLayers = normalizeGpuLayers(options.gpuLayers);
+    // 'cpu' forces every layer off the GPU regardless of the configured
+    // gpuLayers value; 'auto'/'gpu' keep it, which already spreads offloaded
+    // layers across every visible GPU via --split-mode layer.
+    const device = ['auto', 'gpu', 'cpu'].includes(options.device) ? options.device : 'auto';
+    const gpuLayers = device === 'cpu' ? '0' : normalizeGpuLayers(options.gpuLayers);
     const splitMode = ['none', 'layer', 'row', 'tensor'].includes(options.splitMode) ? options.splitMode : 'layer';
-    const timeoutSeconds = clampInt(options.timeoutSeconds, 30, 3600, 600);
-    const serverPath = await resolveServerExecutable(String(options.serverPath || '').trim());
-    let mmprojPath = String(options.mmprojPath || '').trim();
-    if (mmprojPath) await ensureFile(mmprojPath);
-    else mmprojPath = (await detectMmproj(modelPath)) || '';
-
+    const serverPathInput = String(options.serverPath || '').trim();
+    const mmprojPathInput = String(options.mmprojPath || '').trim();
     const extraArgs = Array.isArray(options.extraArgs)
       ? options.extraArgs.map((value) => String(value)).filter(Boolean).slice(0, 80)
       : parseExtraArgs(String(options.extraArgs || ''));
+
+    // A request identical to the one already running is a no-op instead of a
+    // stop-and-reload from disk.
+    const requestKey = JSON.stringify({
+      modelPath, requestedPort, contextSize, gpuLayers, splitMode, serverPathInput, mmprojPathInput,
+      cpuMoe: options.cpuMoe === true, noMmap: options.noMmap === true, extraArgs
+    });
+    if (
+      requestKey === this.lastRequestKey &&
+      this.child && !this.child.killed && this.child.exitCode === null &&
+      this.state.status === 'ready'
+    ) {
+      this.log('[Vectra] Reusing the already-running local model (unchanged settings).');
+      return this.snapshot();
+    }
+
+    await ensureFile(modelPath);
+    const port = await findAvailablePort(requestedPort, 60);
+    const timeoutSeconds = clampInt(options.timeoutSeconds, 30, 3600, 600);
+    const serverPath = await resolveServerExecutable(serverPathInput);
+    let mmprojPath = mmprojPathInput;
+    if (mmprojPath) await ensureFile(mmprojPath);
+    else mmprojPath = (await detectMmproj(modelPath)) || '';
 
     await this.stop();
     this.runtimeApiKey = randomBytes(24).toString('base64url');
@@ -170,6 +192,7 @@ export class LocalLlamaManager {
       if (child.exitCode !== null || child.killed || this.child !== child) throw new Error('llama-server exited during startup verification.');
       this.state.status = 'ready';
       if (ids[0]) this.state.modelId = ids[0];
+      this.lastRequestKey = requestKey;
       this.log(`[Vectra] Local model ready: ${this.state.modelId}`);
       return this.snapshot();
     } catch (error) {
@@ -183,6 +206,7 @@ export class LocalLlamaManager {
   async stop({ preserveError = false } = {}) {
     const child = this.child;
     this.child = undefined;
+    this.lastRequestKey = '';
     if (!preserveError) {
       this.state.status = 'stopping';
       this.state.lastError = '';

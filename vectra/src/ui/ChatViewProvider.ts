@@ -3,7 +3,8 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { AgentController } from '../agent/AgentController';
 import { AgentMode, Attachment, ChatMessage, EditProposal } from '../types';
-import { getConfig } from '../utils/config';
+import { DeviceMode, getConfig, updateDeviceMode } from '../utils/config';
+import { detectGpus } from '../utils/gpu';
 import { AttachmentService } from '../services/AttachmentService';
 import { DiffContentProvider } from '../services/DiffContentProvider';
 import { LocalCredentialStore } from '../services/LocalCredentialStore';
@@ -16,6 +17,7 @@ interface WebviewMessage {
   mode?: AgentMode;
   id?: string;
   editMessageId?: string;
+  value?: string;
 }
 
 /** Coordinates the sidebar webview with extension-owned session state. */
@@ -160,6 +162,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'openSettings':
           await vscode.commands.executeCommand('vectra.openSettings');
           break;
+        case 'setDeviceMode':
+          if (message.value === 'auto' || message.value === 'gpu' || message.value === 'cpu') {
+            await updateDeviceMode(message.value);
+            await this.postState();
+          }
+          break;
         case 'testConnection':
           await vscode.commands.executeCommand('vectra.testConnection');
           break;
@@ -286,8 +294,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       visionEnabled: config.provider === 'llamaCpp' && this.localLlama.visionEnabled,
       hasKey,
       isLocal,
-      workspaceTrusted: vscode.workspace.isTrusted
+      workspaceTrusted: vscode.workspace.isTrusted,
+      deviceMode: config.deviceMode,
+      gpuInfo: await this.describeGpus(config.deviceMode)
     });
+  }
+
+  /** Only shells out to probe hardware when the user is actually looking at GPU mode. */
+  private async describeGpus(deviceMode: DeviceMode): Promise<string> {
+    if (deviceMode === 'cpu') return '';
+    try {
+      const gpus = await detectGpus();
+      if (!gpus.length) return 'No GPU detected — falling back to CPU.';
+      return `${gpus.length} GPU${gpus.length > 1 ? 's' : ''} detected: ${gpus.map((gpu) => gpu.name).join(', ')}`;
+    } catch {
+      return '';
+    }
   }
 
   private async post(payload: unknown): Promise<void> {
@@ -307,7 +329,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <section id="messages" class="messages" aria-live="polite"></section><section id="proposals" class="proposals"></section>
 <section class="composer-wrap"><div id="attachments" class="attachment-list"></div><textarea id="prompt" rows="3" placeholder="Ask Vectra…"></textarea><div class="composer-actions"><div class="left-actions"><button id="attachButton" class="secondary">＋ File</button><button id="clearButton" class="secondary">Clear Chat</button></div><button id="sendButton" class="primary">Send</button><button id="stopButton" class="danger hidden">Stop</button></div></section>
 </main>
-<dialog id="settingsDialog" class="settings-dialog"><form method="dialog" class="settings-card"><div class="settings-title"><div><strong>Vectra Settings</strong><div class="settings-subtitle">Runtime, model capability and support</div></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div><section class="settings-section"><h3>Runtime</h3><div id="runtimeInfo" class="runtime-info"></div><div id="capabilityInfo" class="capability-info"></div></section><section class="settings-section"><h3>General information</h3><div class="contact-grid"><span>Version</span><strong>v${this.extensionVersion}</strong><span>Email</span><strong>test@gmail.com</strong><span>Contact</span><strong>+0000000000</strong><span>GitHub</span><strong>test</strong></div></section><section class="settings-section"><h3>Support & advanced</h3><div class="settings-actions"><button id="advancedSettingsButton" type="button" class="secondary">Advanced Settings</button><button id="supportButton" type="button" class="secondary">Support Developer</button></div></section><div class="dialog-actions"><button value="cancel" class="primary">Done</button></div></form></dialog>
+<dialog id="settingsDialog" class="settings-dialog"><form method="dialog" class="settings-card"><div class="settings-title"><div><strong>Vectra Settings</strong><div class="settings-subtitle">Runtime, model capability and support</div></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div><section class="settings-section"><h3>Runtime</h3><div id="runtimeInfo" class="runtime-info"></div><div class="device-row"><span>Device</span><select id="deviceMode"><option value="auto">Auto</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select></div><div id="gpuInfo" class="capability-info hidden"></div><div id="capabilityInfo" class="capability-info"></div></section><section class="settings-section"><h3>General information</h3><div class="contact-grid"><span>Version</span><strong>v${this.extensionVersion}</strong><span>Email</span><strong>test@gmail.com</strong><span>Contact</span><strong>+0000000000</strong><span>GitHub</span><strong>test</strong></div></section><section class="settings-section"><h3>Support & advanced</h3><div class="settings-actions"><button id="advancedSettingsButton" type="button" class="secondary">Advanced Settings</button><button id="supportButton" type="button" class="secondary">Support Developer</button></div></section><div class="dialog-actions"><button value="cancel" class="primary">Done</button></div></form></dialog>
 <script nonce="${nonce}" src="${script}"></script></body></html>`;
   }
 }

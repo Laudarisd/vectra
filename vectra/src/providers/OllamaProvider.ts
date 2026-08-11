@@ -18,7 +18,10 @@ interface OllamaTagsResponse {
 export class OllamaProvider implements TextProvider {
   readonly id = 'ollama' as const;
 
-  constructor(private readonly baseUrl: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly deviceMode: 'auto' | 'gpu' | 'cpu' = 'auto'
+  ) {}
 
   async complete(request: ProviderRequest): Promise<string> {
     const data = await fetchJson<OllamaChatResponse>(`${this.baseUrl}/api/chat`, {
@@ -31,6 +34,12 @@ export class OllamaProvider implements TextProvider {
           { role: 'system', content: request.systemPrompt },
           { role: 'user', content: request.userPrompt }
         ],
+        // Keeping the model resident avoids Ollama's default 5-minute unload,
+        // which otherwise reloads the whole model from disk on the next turn.
+        keep_alive: '30m',
+        // 'cpu' forces every layer off the GPU; 'auto'/'gpu' leave Ollama's
+        // own (multi-)GPU auto-placement in charge, so no override is sent.
+        ...(this.deviceMode === 'cpu' ? { options: { num_gpu: 0 } } : {}),
         // Conversational turns must not be forced into the tool envelope.
         ...(request.structured === false ? {} : { format: AGENT_ENVELOPE_SCHEMA })
       }),

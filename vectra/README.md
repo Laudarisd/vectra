@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://code.visualstudio.com/"><img src="https://img.shields.io/badge/VS_Code-1.90%2B-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.2-blue" alt="Version 1.0.2"></a>
+  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.4-blue" alt="Version 1.0.4"></a>
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
@@ -21,6 +21,7 @@ Vectra is a local-first coding agent that works inside VS Code. Use a downloaded
 - **Edit and resend:** revise a previous prompt or restart a stopped request without copying and pasting it.
 - **Documents and images:** work with PDF, DOCX, PPTX, XLSX, RTF, text, code, and supported visual inputs.
 - **Provider choice:** optionally use OpenAI, Anthropic, Gemini, Ollama, or an OpenAI-compatible endpoint.
+- **GPU or CPU, your choice:** pick Auto, GPU, or CPU from the sidebar; Vectra detects available GPUs and keeps an already-loaded local model resident instead of reloading it on every request.
 
 ## Run a local model
 
@@ -50,23 +51,14 @@ The screenshot above shows Qwen3 4B loaded locally. A larger context size improv
 | Field | Value |
 | --- | --- |
 | Name | Vectra |
-| Version | 1.0.2 |
+| Version | 1.0.4 |
 | Publisher | `laudarisd` |
 | Author | [Sudip Laudari](https://github.com/Laudarisd) |
 | Runtime | VS Code 1.90+; llama.cpp for local GGUF models |
 | Repository and support | [github.com/Laudarisd/vectra](https://github.com/Laudarisd/vectra) |
 | License | Proprietary — see [LICENSE.txt](LICENSE.txt) |
 
-## Development
-
-```bash
-npm install
-npm run check
-npm test
-npm run package
-```
-
-Press `F5` to launch an Extension Development Host.
+Contributing? Build and test instructions are in [CONTRIBUTING.md](CONTRIBUTING.md) on GitHub.
 
 ## Privacy and safety
 

@@ -19,7 +19,7 @@ class ProviderManager {
             case 'llamaCpp':
                 return new LlamaCppProvider_1.LlamaCppProvider(`http://127.0.0.1:${config.llamaCppPort}/v1`);
             case 'ollama':
-                return new OllamaProvider_1.OllamaProvider(config.ollamaBaseUrl);
+                return new OllamaProvider_1.OllamaProvider(config.ollamaBaseUrl, config.deviceMode);
             case 'openai':
                 return new OpenAIProvider_1.OpenAIProvider(await this.requireKey('openai'), config.openaiBaseUrl);
             case 'anthropic':

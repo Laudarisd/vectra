@@ -44,7 +44,16 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
   const patches = new PatchManager(tools);
   const diffs = new DiffContentProvider(patches);
   const controller = new AgentController(providers, new ContextCollector(), tools, patches, commands);
-  const chat = new ChatViewProvider(context.extensionUri, controller, patches, diffs, credentials, localLlama, attachments);
+  const chat = new ChatViewProvider(
+    context.extensionUri,
+    controller,
+    patches,
+    diffs,
+    credentials,
+    localLlama,
+    attachments,
+    String(context.extension.packageJSON.version ?? '')
+  );
 
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   status.text = '$(sparkle) Vectra';

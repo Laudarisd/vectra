@@ -187,7 +187,10 @@ class AgentToolRegistry {
         return `PENDING FILE ${(0, path_1.normalizeAgentPath)(filePath)} lines ${start}-${end} of ${lines.length}\n${numbered.join('\n')}`;
     }
     denied(action, reason) {
-        return this.result(action, `Denied: ${reason}`);
+        const guidance = /read-only|only in Agent mode/i.test(reason)
+            ? ' Do not retry this or any other write/execute action in the current mode. Answer the CURRENT USER TASK with actions=[].'
+            : ' Do not repeat the identical action; correct it or finish the current task.';
+        return this.result(action, `Denied: ${reason}${guidance}`);
     }
     result(action, output, proposalIds = [], wrote = false) {
         return {

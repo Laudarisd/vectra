@@ -9,7 +9,8 @@ export class OpenAICompatibleProvider implements TextProvider{
   async complete(request:ProviderRequest):Promise<string>{
     const userContent:Array<Record<string,unknown>>=[{type:'text',text:request.userPrompt}];
     for(const f of request.attachments??[]) append(userContent,f);
-    const data=await fetchJson<ChatResponse>(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify({model:request.model,messages:[{role:'system',content:request.systemPrompt},{role:'user',content:userContent}],temperature:0.2,...(this.structuredAgentJson?{response_format:{type:'json_schema',schema:AGENT_ENVELOPE_SCHEMA}}:{})}),signal:request.signal});
+    const wantsEnvelope=this.structuredAgentJson&&request.structured!==false;
+    const data=await fetchJson<ChatResponse>(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify({model:request.model,messages:[{role:'system',content:request.systemPrompt},{role:'user',content:userContent}],temperature:request.structured===false?0.6:0.2,...(wantsEnvelope?{response_format:{type:'json_schema',schema:AGENT_ENVELOPE_SCHEMA}}:{})}),signal:request.signal});
     const text=data.choices?.[0]?.message?.content?.trim();if(!text)throw new Error('OpenAI-compatible endpoint returned no text output.');return text;
   }
   async listModels(signal?:AbortSignal):Promise<ModelInfo[]>{const d=await fetchJson<ModelsResponse>(`${this.baseUrl}/models`,{headers:this.headers(false),signal});return(d.data??[]).map(m=>({id:m.id,detail:m.owned_by}))}

@@ -20,7 +20,8 @@ class OllamaProvider {
                     { role: 'system', content: request.systemPrompt },
                     { role: 'user', content: request.userPrompt }
                 ],
-                format: protocol_1.AGENT_ENVELOPE_SCHEMA
+                // Conversational turns must not be forced into the tool envelope.
+                ...(request.structured === false ? {} : { format: protocol_1.AGENT_ENVELOPE_SCHEMA })
             }),
             signal: request.signal
         });

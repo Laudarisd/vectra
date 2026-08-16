@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="vectra/media/vectra-icon.png" alt="Vectra logo" width="128" height="128">
+  <img src="vectra/media/VectraLogo.png" alt="Vectra logo" width="128" height="128">
 </p>
 
 <h1 align="center">Vectra</h1>
@@ -7,7 +7,7 @@
 <p align="center">
   <a href="./vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="./vectra/CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version 1.0.0"></a>
+  <a href="./vectra/CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.4-blue" alt="Version 2.0.4"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
@@ -24,6 +24,14 @@ Download a GGUF model once, load it through llama.cpp, and run your coding agent
 | Vectra for VS Code | Repository-aware coding agent with local GGUF and optional cloud models | [Extension guide](vectra/README.md) |
 | Vectra Web | Browser-based local AI chat with file and document support | [Web guide](vectra-web/README.md) |
 
+## Requirements
+
+- macOS, Windows, or Linux
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) installed, with `llama-server` on your `PATH` — only needed to run a local model
+- A downloaded instruction-tuned `.gguf` model. A quantized 3B–4B model is a practical starting point; larger models need more RAM/VRAM
+- VS Code 1.90+ (extension) or Node.js 22.13+ (web)
+- Optional: an API key for OpenAI, Anthropic, Gemini, or an OpenAI-compatible endpoint if you'd rather use a cloud model instead of a local one
+
 ## Highlights
 
 - Run local `.gguf` models through llama.cpp and reduce API-token costs.
@@ -33,15 +41,12 @@ Download a GGUF model once, load it through llama.cpp, and run your coding agent
 - Read PDF, DOCX, PPTX, XLSX, RTF, code, text, and image attachments.
 - Optionally connect OpenAI, Anthropic, Gemini, Ollama, or compatible APIs.
 
-## Load a local model
+## Get started
 
-1. Install [llama.cpp](https://github.com/ggml-org/llama.cpp) and make `llama-server` available on your `PATH` (or set its path in Vectra settings).
-2. Download an instruction-tuned GGUF model. A quantized 3B–4B model is a practical starting point for many laptops.
-3. Open Vectra in VS Code and select **Local Model**.
-4. Choose the model's `.gguf` file. For a vision model, also choose its matching `mmproj*.gguf` file.
-5. Wait for the model to load, then select **Test**.
+Open the guide for the package you want:
 
-Vectra currently launches local models with the llama.cpp server. Model speed and memory use depend on the model, quantization, context size, and your hardware.
+- **VS Code**: install [llama.cpp](https://github.com/ggml-org/llama.cpp), open Vectra's sidebar, and select **Local Model** to load a `.gguf` file. Full steps in the [extension guide](vectra/README.md#quick-start).
+- **Web**: `cd vectra-web && npm start`, then choose **Local llama.cpp** in the browser UI. Full steps in the [web guide](vectra-web/README.md#quick-start).
 
 ## Development
 

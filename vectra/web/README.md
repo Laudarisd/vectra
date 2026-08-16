@@ -1,37 +1,42 @@
 # Vectra Web
 
 <p align="center">
-  <a href="https://code.visualstudio.com/"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
+  <a href="../vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Version 2.0.3"></a>
-  <a href="../LICENSE.txt"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
+  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-2.0.4-blue" alt="Version 2.0.4"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
-Vectra Web is the browser edition included with the VS Code extension source. It provides local GGUF chat through llama.cpp, optional cloud providers, file understanding, and downloadable generated documents.
+**ChatGPT-style AI chat, running entirely on your machine.**
 
-## Run
+Vectra Web is the browser edition of Vectra: local-first AI chat with document support, no server-side account, no cloud required.
+
+## Why Vectra Web
+
+- **Local-first** — run GGUF models through llama.cpp, or auto-detect Ollama, LM Studio, vLLM, and other OpenAI-compatible runtimes already on your machine.
+- **Any model, any time** — switch to OpenAI, Anthropic, Gemini, or an OpenAI-compatible endpoint whenever you want.
+- **Documents in and out** — parse PDF, DOCX, PPTX, XLSX, RTF, code, and images; generate downloadable PDF, DOCX, Markdown, JSON, CSV, HTML, and code files.
+- **Real history, kept local** — chats persist in a local SQLite file, with edit, resend, reopen, and delete.
+- **Nothing phones home** — cloud keys live only in your browser session; the local server binds to `127.0.0.1`.
+
+## Quick start
 
 ```bash
 npm start
 ```
 
-Open the localhost URL printed in the terminal. No runtime npm dependencies are required.
+Open the printed localhost URL, choose **Local llama.cpp**, pick a `.gguf` file (and its `mmproj*.gguf` for vision), then **Start model**.
 
-## Local llama.cpp
+Prefer a cloud model? Open **Settings** and pick a provider instead.
 
-1. Install [llama.cpp](https://github.com/ggml-org/llama.cpp).
-2. Choose **Local llama.cpp → Model** and select an instruction-tuned `.gguf` file.
-3. Optionally select a matching `mmproj*.gguf` file for vision.
-4. Select **Start model** and wait until it is ready.
+## Requirements
 
-Vectra binds the model server to `127.0.0.1`, chooses a free port when necessary, creates a private key for each launch, and disables llama.cpp's bundled web UI.
+Node.js 22.13+. llama.cpp only if you're running a model locally.
 
-## Files
+## Privacy
 
-Vectra can extract content from PDF, DOCX, PPTX, XLSX, RTF, text, code, CSV, Markdown, and JSON files. Compatible vision models can also inspect images and visual documents. Generated PDF, DOCX, text, data, web, and common code files can be downloaded from the conversation.
+Chat history stays in `vectra.sqlite` under your OS's local app-data directory (override with `VECTRA_DATA_DIR`) — nothing is sent anywhere unless you choose a cloud provider, and API keys are never written to that database.
 
-## Project
+---
 
-Created by [Sudip Laudari](https://github.com/Laudarisd). Support and source: [github.com/Laudarisd/vectra](https://github.com/Laudarisd/vectra).
-
-Vectra is proprietary software. See [LICENSE.txt](../LICENSE.txt).
+Created by [Sudip Laudari](https://github.com/Laudarisd). [Source & issues](https://github.com/Laudarisd/vectra) · Proprietary — see the repository [license](../LICENSE).

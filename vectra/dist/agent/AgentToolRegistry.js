@@ -12,10 +12,12 @@ class AgentToolRegistry {
     workspace;
     patches;
     commands;
-    constructor(workspace, patches, commands) {
+    git;
+    constructor(workspace, patches, commands, git) {
         this.workspace = workspace;
         this.patches = patches;
         this.commands = commands;
+        this.git = git;
     }
     describe(action) {
         switch (action.type) {
@@ -28,6 +30,8 @@ class AgentToolRegistry {
             case 'inspect_file': return `Inspecting ${action.path}…`;
             case 'search_text': return `Searching for “${action.query}”…`;
             case 'get_diagnostics': return 'Checking editor diagnostics…';
+            case 'git_status': return 'Checking git status…';
+            case 'git_diff': return 'Reading git diff…';
             case 'create_file': return `Producing ${action.path}…`;
             case 'propose_file': return `Editing ${action.path}…`;
             case 'propose_files': return `Producing ${Array.isArray(action.files) ? action.files.length : 0} project files…`;
@@ -80,6 +84,12 @@ class AgentToolRegistry {
                 ? `Attached ${attachment.name} (${attachment.mime}, ${attachment.size} bytes).\nExtracted text:\n${(0, text_1.truncateMiddle)(extracted, 20_000)}`
                 : `Attached ${attachment.name} (${attachment.mime}, ${attachment.size} bytes) for multimodal inspection. No reliable embedded text was found.`;
             return this.result(action, detail);
+        }
+        if (action.type === 'git_status') {
+            return this.result(action, await this.git.status());
+        }
+        if (action.type === 'git_diff') {
+            return this.result(action, await this.git.diff(action.path, action.staged === true));
         }
         if (action.type === 'propose_files') {
             if (context.mode !== 'agent')

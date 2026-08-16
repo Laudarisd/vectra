@@ -24,6 +24,9 @@ interface WebviewMessage {
 export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'vectra.chat';
 
+  private static readonly HISTORY_KEY = 'vectra.chatHistory';
+  private static readonly MAX_STORED_MESSAGES = 300;
+
   private view?: vscode.WebviewView;
   private readonly messages: ChatMessage[] = [];
   private readonly pendingAttachments: Attachment[] = [];
@@ -40,8 +43,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly credentials: LocalCredentialStore,
     private readonly localLlama: LocalLlamaCppService,
     private readonly attachmentService: AttachmentService,
+    private readonly workspaceState: vscode.Memento,
     private readonly extensionVersion: string = ''
-  ) {}
+  ) {
+    // Attachment payloads (base64/text) are deliberately not persisted here —
+    // ChatMessage only carries attachment metadata, so history survives a
+    // reload without workspaceState ballooning from re-stored file content.
+    const saved = this.workspaceState.get<ChatMessage[]>(ChatViewProvider.HISTORY_KEY, []);
+    if (Array.isArray(saved)) this.messages.push(...saved);
+  }
+
+  private persistMessages(): void {
+    const trimmed = this.messages.length > ChatViewProvider.MAX_STORED_MESSAGES
+      ? this.messages.slice(-ChatViewProvider.MAX_STORED_MESSAGES)
+      : this.messages;
+    void this.workspaceState.update(ChatViewProvider.HISTORY_KEY, trimmed);
+  }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
@@ -151,6 +168,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.messages.splice(0);
           this.pendingAttachments.splice(0);
           this.messageAttachments.clear();
+          this.persistMessages();
           await this.postState();
           break;
         case 'setApiKey':
@@ -179,6 +197,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'supportDeveloper':
           await vscode.commands.executeCommand('vectra.supportDeveloper');
+          break;
+        case 'openExternal':
+          if (message.value && /^https?:\/\//i.test(message.value)) {
+            await vscode.env.openExternal(vscode.Uri.parse(message.value));
+          }
           break;
       }
     } catch (error) {
@@ -213,12 +236,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     };
     this.messages.push(userMessage);
     this.rememberAttachments(userMessage.id, attachments);
+    this.persistMessages();
 
     this.busy = true;
     this.abortController = new AbortController();
     await this.postState();
     await this.post({ type: 'progress', message: 'Analyzing…' });
 
+    // Streamed deltas (chat/ask replies only — see AgentController.converse)
+    // are shown live under this id; the real message pushed below on
+    // completion is what actually persists and survives a reload.
+    const streamId = randomUUID();
     try {
       const result = await this.controller.run({
         mode,
@@ -226,17 +254,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         history: this.messages.slice(0, -1),
         attachments,
         signal: this.abortController.signal,
-        onProgress: (progress) => void this.post({ type: 'progress', message: progress })
+        onProgress: (progress) => void this.post({ type: 'progress', message: progress }),
+        onDelta: (delta) => void this.post({ type: 'chatDelta', id: streamId, delta })
       });
       this.messages.push({
-        id: randomUUID(),
+        id: streamId,
         role: 'assistant',
         content: result.text,
         createdAt: Date.now()
       });
     } catch (error) {
       this.messages.push({
-        id: randomUUID(),
+        id: streamId,
         role: 'assistant',
         content: this.abortController.signal.aborted ? 'Request stopped.' : `Error: ${messageOf(error)}`,
         createdAt: Date.now()
@@ -244,6 +273,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } finally {
       this.busy = false;
       this.abortController = undefined;
+      this.persistMessages();
       await this.postState();
     }
   }
@@ -326,7 +356,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const nonce = randomBytes(16).toString('hex');
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'main.js'));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'main.css'));
-    const icon = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'vectra-icon.png'));
+    const icon = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'VectraLogo.png'));
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';"/><link rel="stylesheet" href="${style}"/><title>Vectra</title></head><body>
 <main id="app">
 <header class="topbar"><div class="brand-wrap"><img class="brand-icon" src="${icon}" alt=""/><span class="brand">Vectra</span></div><button id="settingsButton" class="settings-button" title="Vectra settings" aria-label="Vectra settings">⚙</button></header>

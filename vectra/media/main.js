@@ -4,6 +4,8 @@
   let mode = saved.mode || 'agent';
   let editingMessageId = saved.editingMessageId || '';
   let activityText = 'Analyzing…';
+  let streamId = '';
+  let streamText = '';
   let state = {
     messages: [], proposals: [], attachments: [], busy: false,
     provider: 'llamaCpp', model: '', localModelName: '', localModelRunning: false,
@@ -61,6 +63,8 @@
     if (message.type === 'state') {
       state = { ...state, ...message };
       if (!state.busy) activityText = 'Analyzing…';
+      streamId = '';
+      streamText = '';
       if (editingMessageId && !state.messages.some((item) => item.id === editingMessageId)) {
         editingMessageId = '';
         persistComposerState();
@@ -68,6 +72,13 @@
       renderAll();
     } else if (message.type === 'progress') {
       activityText = cleanActivity(message.message);
+      renderMessages();
+    } else if (message.type === 'chatDelta') {
+      if (message.id !== streamId) {
+        streamId = message.id;
+        streamText = '';
+      }
+      streamText += message.delta || '';
       renderMessages();
     } else if (message.type === 'error') {
       activityText = 'Error';
@@ -171,7 +182,11 @@
 
       const content = document.createElement('div');
       content.className = 'message-content';
-      content.textContent = message.content;
+      if (message.role === 'assistant') {
+        renderMarkdownInto(content, message.content);
+      } else {
+        content.textContent = message.content;
+      }
       card.append(header, content);
       if (message.attachments?.length) {
         const row = document.createElement('div');
@@ -193,11 +208,24 @@
       const meta = document.createElement('div');
       meta.className = 'message-meta';
       meta.textContent = 'Vectra';
-      const line = document.createElement('div');
-      line.className = 'activity-line';
-      line.innerHTML = '<span class="activity-spinner"></span><span></span>';
-      line.lastElementChild.textContent = activityText;
-      card.append(meta, line);
+      if (streamText) {
+        // A conversational (Ask) reply streams live; tool/agent steps still
+        // only report progress text, since partial tool-call JSON isn't
+        // meaningful to show mid-generation.
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        renderMarkdownInto(content, streamText);
+        const cursor = document.createElement('span');
+        cursor.className = 'stream-cursor';
+        content.appendChild(cursor);
+        card.append(meta, content);
+      } else {
+        const line = document.createElement('div');
+        line.className = 'activity-line';
+        line.innerHTML = '<span class="activity-spinner"></span><span></span>';
+        line.lastElementChild.textContent = activityText;
+        card.append(meta, line);
+      }
       els.messages.appendChild(card);
     }
 
@@ -329,6 +357,168 @@
       : mode === 'ask'
         ? 'Ask about this repository or attach PDF, Word, code, or images…'
         : 'Ask Vectra to explain the exact selected code…';
+  }
+
+  /**
+   * Small dependency-free markdown-lite renderer. The VS Code webview CSP
+   * forbids remote scripts, so this stays hand-rolled instead of vendoring a
+   * markdown/highlight library — it covers what model output actually uses:
+   * fenced code, inline code, bold/italic, headings, lists, and links.
+   */
+  function renderMarkdownInto(container, text) {
+    const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+    let i = 0;
+    let listEl = null;
+    const closeList = () => { listEl = null; };
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      const fence = line.match(/^```\s*([\w+-]*)\s*$/);
+      if (fence) {
+        closeList();
+        const lang = fence[1] || '';
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !/^```\s*$/.test(lines[i])) { codeLines.push(lines[i]); i++; }
+        i++;
+        container.appendChild(buildCodeBlock(codeLines.join('\n'), lang));
+        continue;
+      }
+
+      if (!line.trim()) { closeList(); i++; continue; }
+
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        closeList();
+        const h = document.createElement('div');
+        h.className = 'md-heading';
+        applyInline(h, heading[2]);
+        container.appendChild(h);
+        i++; continue;
+      }
+
+      const ordered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      const unordered = !ordered && line.match(/^\s*[-*]\s+(.*)$/);
+      if (ordered || unordered) {
+        const tag = ordered ? 'ol' : 'ul';
+        if (!listEl || listEl.tagName.toLowerCase() !== tag) {
+          listEl = document.createElement(tag);
+          listEl.className = 'md-list';
+          container.appendChild(listEl);
+        }
+        const li = document.createElement('li');
+        applyInline(li, (ordered || unordered)[1]);
+        listEl.appendChild(li);
+        i++; continue;
+      }
+      closeList();
+
+      const paraLines = [line];
+      i++;
+      while (
+        i < lines.length && lines[i].trim() &&
+        !/^```/.test(lines[i]) && !/^#{1,6}\s+/.test(lines[i]) && !/^\s*(\d+[.)]|[-*])\s+/.test(lines[i])
+      ) {
+        paraLines.push(lines[i]); i++;
+      }
+      const p = document.createElement('div');
+      p.className = 'md-paragraph';
+      applyInline(p, paraLines.join('\n'));
+      container.appendChild(p);
+    }
+  }
+
+  function applyInline(el, raw) {
+    const text = String(raw);
+    const tokenRe = /(`[^`\n]+`)|(\[[^\]]+\]\(\S+\))|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(\n)/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = tokenRe.exec(text))) {
+      if (match.index > lastIndex) el.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      const token = match[0];
+      if (token === '\n') {
+        el.appendChild(document.createElement('br'));
+      } else if (token[0] === '`') {
+        const code = document.createElement('code');
+        code.className = 'md-inline-code';
+        code.textContent = token.slice(1, -1);
+        el.appendChild(code);
+      } else if (token[0] === '[') {
+        const linkMatch = token.match(/^\[([^\]]+)\]\((\S+)\)$/);
+        if (linkMatch) el.appendChild(buildLink(linkMatch[1], linkMatch[2]));
+        else el.appendChild(document.createTextNode(token));
+      } else if (token.startsWith('**') || token.startsWith('__')) {
+        const strong = document.createElement('strong');
+        strong.textContent = token.slice(2, -2);
+        el.appendChild(strong);
+      } else {
+        const em = document.createElement('em');
+        em.textContent = token.slice(1, -1);
+        el.appendChild(em);
+      }
+      lastIndex = tokenRe.lastIndex;
+    }
+    if (lastIndex < text.length) el.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+
+  function buildLink(label, url) {
+    const safeUrl = /^https?:\/\//i.test(url) ? url : '';
+    const span = document.createElement('span');
+    if (safeUrl) {
+      span.className = 'md-link';
+      span.title = safeUrl;
+      span.addEventListener('click', () => vscode.postMessage({ type: 'openExternal', value: safeUrl }));
+    } else {
+      span.className = 'md-inline-code';
+    }
+    span.textContent = label;
+    return span;
+  }
+
+  function buildCodeBlock(code, lang) {
+    const wrap = document.createElement('div');
+    wrap.className = 'md-code-block';
+    const bar = document.createElement('div');
+    bar.className = 'md-code-bar';
+    const label = document.createElement('span');
+    label.className = 'md-code-lang';
+    label.textContent = lang || 'text';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'md-copy-button';
+    copy.textContent = 'Copy';
+    copy.addEventListener('click', () => {
+      copyToClipboard(code);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+    });
+    bar.append(label, copy);
+    const pre = document.createElement('pre');
+    const codeEl = document.createElement('code');
+    codeEl.textContent = code;
+    pre.appendChild(codeEl);
+    wrap.append(bar, pre);
+    return wrap;
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch { /* clipboard unavailable */ }
+    document.body.removeChild(ta);
   }
 
   function button(label, className, handler) {

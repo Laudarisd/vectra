@@ -79,7 +79,7 @@ function activateVectra(context, output) {
     const patches = new PatchManager_1.PatchManager(tools);
     const diffs = new DiffContentProvider_1.DiffContentProvider(patches);
     const controller = new AgentController_1.AgentController(providers, new ContextCollector_1.ContextCollector(), tools, patches, commands);
-    const chat = new ChatViewProvider_1.ChatViewProvider(context.extensionUri, controller, patches, diffs, credentials, localLlama, attachments, String(context.extension.packageJSON.version ?? ''));
+    const chat = new ChatViewProvider_1.ChatViewProvider(context.extensionUri, controller, patches, diffs, credentials, localLlama, attachments, context.workspaceState, String(context.extension.packageJSON.version ?? ''));
     const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     status.text = '$(sparkle) Vectra';
     status.tooltip = 'Open Vectra AI coding agent';

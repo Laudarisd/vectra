@@ -10,7 +10,7 @@
 <body>
 <div class="app-shell">
   <aside class="sidebar">
-    <div class="brand"><div class="mark">V</div><span>Vectra</span></div>
+    <div class="brand"><img class="mark" src="/VectraLogo.png" alt="Vectra logo" /><span>Vectra</span></div>
     <button id="newChat" class="new-chat">＋ New chat</button>
     <div class="history-heading"><span>Chats</span><button id="refreshHistory" class="history-refresh" title="Refresh history">↻</button></div>
     <div id="chatHistory" class="chat-history" aria-label="Chat history"></div>
@@ -36,7 +36,7 @@
     </header>
 
     <section id="messages" class="messages">
-      <div class="welcome"><div class="hero-mark">V</div><h1>How can Vectra help?</h1><p>Chat, analyze code and documents, or run a local GGUF model with llama.cpp.</p></div>
+      <div class="welcome"><img class="hero-mark" src="/VectraLogo.png" alt="Vectra logo" /><h1>How can Vectra help?</h1><p>Chat, analyze code and documents, or run a local GGUF model with llama.cpp.</p></div>
     </section>
 
     <section class="composer-zone">
@@ -102,6 +102,11 @@
     <label>llama-server executable
       <div class="path-row"><input id="localServerPath" type="text" placeholder="Auto-detect llama-server on PATH" /><button id="chooseLlamaServer" type="button" class="ghost">Choose server</button></div>
     </label>
+
+    <div class="settings-grid two">
+      <label>Device<select id="localDevice"><option value="auto">Auto</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select></label>
+      <label>Detected GPUs<span id="localGpuInfo" class="field-help">—</span></label>
+    </div>
 
     <div class="settings-grid four">
       <label>Port<input id="localPort" type="number" min="1024" max="65535" value="8080" /></label>

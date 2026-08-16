@@ -1,5 +1,6 @@
 import { AgentAction, AgentMode, Attachment } from '../types';
 import { CommandRunner } from '../services/CommandRunner';
+import { GitTools } from '../services/GitTools';
 import { PatchManager } from '../services/PatchManager';
 import { WorkspaceTools } from '../services/WorkspaceTools';
 import { normalizeAgentPath } from '../utils/path';
@@ -26,7 +27,8 @@ export class AgentToolRegistry {
   constructor(
     private readonly workspace: WorkspaceTools,
     private readonly patches: PatchManager,
-    private readonly commands: CommandRunner
+    private readonly commands: CommandRunner,
+    private readonly git: GitTools
   ) {}
 
   describe(action: AgentAction): string {
@@ -40,6 +42,8 @@ export class AgentToolRegistry {
       case 'inspect_file': return `Inspecting ${action.path}…`;
       case 'search_text': return `Searching for “${action.query}”…`;
       case 'get_diagnostics': return 'Checking editor diagnostics…';
+      case 'git_status': return 'Checking git status…';
+      case 'git_diff': return 'Reading git diff…';
       case 'create_file': return `Producing ${action.path}…`;
       case 'propose_file': return `Editing ${action.path}…`;
       case 'propose_files': return `Producing ${Array.isArray(action.files) ? action.files.length : 0} project files…`;
@@ -92,6 +96,13 @@ export class AgentToolRegistry {
         ? `Attached ${attachment.name} (${attachment.mime}, ${attachment.size} bytes).\nExtracted text:\n${truncateMiddle(extracted, 20_000)}`
         : `Attached ${attachment.name} (${attachment.mime}, ${attachment.size} bytes) for multimodal inspection. No reliable embedded text was found.`;
       return this.result(action, detail);
+    }
+
+    if (action.type === 'git_status') {
+      return this.result(action, await this.git.status());
+    }
+    if (action.type === 'git_diff') {
+      return this.result(action, await this.git.diff(action.path, action.staged === true));
     }
 
     if (action.type === 'propose_files') {

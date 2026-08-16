@@ -6,33 +6,53 @@ const http_1 = require("../utils/http");
 class OllamaProvider {
     baseUrl;
     deviceMode;
+    contextSize;
+    timeoutMs;
     id = 'ollama';
-    constructor(baseUrl, deviceMode = 'auto') {
+    constructor(baseUrl, deviceMode = 'auto', contextSize = 8192, timeoutMs = 900_000) {
         this.baseUrl = baseUrl;
         this.deviceMode = deviceMode;
+        this.contextSize = contextSize;
+        this.timeoutMs = timeoutMs;
     }
     async complete(request) {
+        const options = {
+            // Ollama silently truncates context to a small default (often 2K-4K)
+            // unless told otherwise, which is a frequent cause of degraded answers
+            // and mid-conversation "forgetting" on local models.
+            num_ctx: this.contextSize,
+            ...(this.deviceMode === 'cpu' ? { num_gpu: 0 } : {})
+        };
+        const body = {
+            model: request.model,
+            messages: [
+                { role: 'system', content: request.systemPrompt },
+                { role: 'user', content: request.userPrompt }
+            ],
+            // Keeping the model resident avoids Ollama's default 5-minute unload,
+            // which otherwise reloads the whole model from disk on the next turn.
+            keep_alive: '30m',
+            options,
+            // Conversational turns must not be forced into the tool envelope.
+            ...(request.structured === false ? {} : { format: protocol_1.AGENT_ENVELOPE_SCHEMA })
+        };
+        if (request.structured === false && request.onDelta) {
+            const text = await (0, http_1.streamNdjson)(`${this.baseUrl}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...body, stream: true }),
+                signal: request.signal
+            }, { onDelta: request.onDelta, idleTimeoutMs: this.timeoutMs, signal: request.signal });
+            if (!text.trim())
+                throw new Error('Ollama returned no text output.');
+            return text.trim();
+        }
         const data = await (0, http_1.fetchJson)(`${this.baseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: request.model,
-                stream: false,
-                messages: [
-                    { role: 'system', content: request.systemPrompt },
-                    { role: 'user', content: request.userPrompt }
-                ],
-                // Keeping the model resident avoids Ollama's default 5-minute unload,
-                // which otherwise reloads the whole model from disk on the next turn.
-                keep_alive: '30m',
-                // 'cpu' forces every layer off the GPU; 'auto'/'gpu' leave Ollama's
-                // own (multi-)GPU auto-placement in charge, so no override is sent.
-                ...(this.deviceMode === 'cpu' ? { options: { num_gpu: 0 } } : {}),
-                // Conversational turns must not be forced into the tool envelope.
-                ...(request.structured === false ? {} : { format: protocol_1.AGENT_ENVELOPE_SCHEMA })
-            }),
+            body: JSON.stringify({ ...body, stream: false }),
             signal: request.signal
-        });
+        }, this.timeoutMs);
         const text = data.message?.content?.trim();
         if (!text) {
             throw new Error('Ollama returned no text output.');

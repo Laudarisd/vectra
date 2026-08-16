@@ -17,9 +17,9 @@ class ProviderManager {
         const config = (0, config_1.getConfig)();
         switch (config.provider) {
             case 'llamaCpp':
-                return new LlamaCppProvider_1.LlamaCppProvider(`http://127.0.0.1:${config.llamaCppPort}/v1`);
+                return new LlamaCppProvider_1.LlamaCppProvider(`http://127.0.0.1:${config.llamaCppPort}/v1`, config.localRequestTimeoutSeconds * 1000);
             case 'ollama':
-                return new OllamaProvider_1.OllamaProvider(config.ollamaBaseUrl, config.deviceMode);
+                return new OllamaProvider_1.OllamaProvider(config.ollamaBaseUrl, config.deviceMode, config.ollamaContextSize, config.localRequestTimeoutSeconds * 1000);
             case 'openai':
                 return new OpenAIProvider_1.OpenAIProvider(await this.requireKey('openai'), config.openaiBaseUrl);
             case 'anthropic':
@@ -27,7 +27,9 @@ class ProviderManager {
             case 'gemini':
                 return new GeminiProvider_1.GeminiProvider(await this.requireKey('gemini'), config.geminiBaseUrl);
             case 'openaiCompatible':
-                return new OpenAICompatibleProvider_1.OpenAICompatibleProvider(config.openaiCompatibleBaseUrl, await this.credentials.get('openaiCompatible'));
+                // Often another local/self-hosted runtime (LM Studio, vLLM, a private
+                // gateway), so it gets the same generous local timeout as llama.cpp/Ollama.
+                return new OpenAICompatibleProvider_1.OpenAICompatibleProvider(config.openaiCompatibleBaseUrl, await this.credentials.get('openaiCompatible'), false, config.localRequestTimeoutSeconds * 1000);
             default:
                 return assertNever(config.provider);
         }

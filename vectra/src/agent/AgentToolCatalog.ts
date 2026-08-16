@@ -16,6 +16,8 @@ export const AGENT_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   { name: 'inspect_file', description: 'Attach an image or visual document for model inspection.' },
   { name: 'search_text', description: 'Search text across bounded workspace files.' },
   { name: 'get_diagnostics', description: 'Read VS Code errors and warnings.' },
+  { name: 'git_status', description: 'Read git branch and working-tree status (read-only).' },
+  { name: 'git_diff', description: 'Read a git diff, optionally scoped to one path or the staged set (read-only).' },
   { name: 'create_file', description: 'Prepare one complete new text/code file for review.' },
   { name: 'propose_file', description: 'Prepare one complete new or replacement file for review.' },
   { name: 'propose_files', description: 'Prepare a coherent batch of up to 30 complete files for review.' },
@@ -68,7 +70,8 @@ export const AGENT_ACTION_SCHEMA = {
     command: { type: 'string' },
     cwd: { type: 'string' },
     timeoutMs: { type: 'integer' },
-    args: { type: 'array', items: { type: 'string' } }
+    args: { type: 'array', items: { type: 'string' } },
+    staged: { type: 'boolean' }
   },
   required: ['type']
 } as const;
@@ -105,6 +108,7 @@ DISCOVERY AND READING
 - read_files: {"type":"read_files","paths":["src/a.ts","src/b.ts"]}. Prefer this for multi-file context.
 - read_document extracts PDF/DOCX/PPTX/XLSX/RTF text. inspect_file handles images and visual/scanned PDFs.
 - search_text and get_diagnostics provide repository evidence.
+- git_status: {"type":"git_status"} and git_diff: {"type":"git_diff","path":"optional/file","staged":false} are read-only; use them when the user asks about uncommitted changes, what changed, or the current branch. They never commit, stage, or push.
 
 REVIEWED PROJECT AND FILE CHANGES
 - propose_files: {"type":"propose_files","reason":"Create complete application","files":[{"path":"package.json","content":"COMPLETE content"},{"path":"src/app.ts","content":"COMPLETE content"}]}

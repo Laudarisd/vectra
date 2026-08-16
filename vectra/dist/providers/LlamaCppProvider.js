@@ -5,7 +5,7 @@ const OpenAICompatibleProvider_1 = require("./OpenAICompatibleProvider");
 class LlamaCppProvider {
     id = 'llamaCpp';
     delegate;
-    constructor(baseUrl) { this.delegate = new OpenAICompatibleProvider_1.OpenAICompatibleProvider(baseUrl, undefined, true); }
+    constructor(baseUrl, timeoutMs = 900_000) { this.delegate = new OpenAICompatibleProvider_1.OpenAICompatibleProvider(baseUrl, undefined, true, timeoutMs); }
     complete(request) { return this.delegate.complete(request); }
     listModels(signal) { return this.delegate.listModels(signal); }
     async testConnection(signal) {

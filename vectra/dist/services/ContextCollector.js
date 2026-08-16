@@ -38,6 +38,7 @@ const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
 const path_1 = require("../utils/path");
 const text_1 = require("../utils/text");
+const INSTRUCTION_FILE_CANDIDATES = ['VECTRA.md', '.vectra/instructions.md', '.vectra/VECTRA.md'];
 class ContextCollector {
     async collect(mode) {
         const config = (0, config_1.getConfig)();
@@ -49,14 +50,15 @@ class ContextCollector {
             .filter((value) => Boolean(value))
             .filter((value) => config.allowSensitiveFiles || !(0, path_1.isSensitiveAgentPath)(value))
             .slice(0, 40);
+        const projectInstructions = vscode.workspace.isTrusted ? await this.loadProjectInstructions() : undefined;
         if (!editor || !vscode.workspace.isTrusted) {
-            return { workspaceFolders, openFiles, diagnostics: [] };
+            return { workspaceFolders, openFiles, diagnostics: [], projectInstructions };
         }
         const document = editor.document;
         const activeFile = (0, path_1.relativeToWorkspace)(document.uri) ?? document.fileName;
         const sensitive = !config.allowSensitiveFiles && (0, path_1.isSensitiveAgentPath)(activeFile);
         if (sensitive) {
-            return { workspaceFolders, openFiles, activeFile, activeLanguage: document.languageId, diagnostics: [] };
+            return { workspaceFolders, openFiles, activeFile, activeLanguage: document.languageId, diagnostics: [], projectInstructions };
         }
         const selection = editor.selection;
         const selectionText = selection.isEmpty ? undefined : document.getText(selection);
@@ -82,8 +84,33 @@ class ContextCollector {
             selectionStartLine: selection.isEmpty ? undefined : selection.start.line + 1,
             selectionEndLine: selection.isEmpty ? undefined : selection.end.line + 1,
             openFiles,
-            diagnostics
+            diagnostics,
+            projectInstructions
         };
+    }
+    /**
+     * Mirrors CLAUDE.md/.cursorrules-style project instructions: a workspace-root
+     * file the user maintains once, applied automatically to every turn instead
+     * of having to be repeated in each prompt. First match wins; kept small since
+     * it is included in-full on every request regardless of provider context size.
+     */
+    async loadProjectInstructions() {
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        if (!folder)
+            return undefined;
+        for (const candidate of INSTRUCTION_FILE_CANDIDATES) {
+            try {
+                const uri = vscode.Uri.joinPath(folder.uri, candidate);
+                const bytes = await vscode.workspace.fs.readFile(uri);
+                const text = new TextDecoder().decode(bytes).trim();
+                if (text)
+                    return (0, text_1.truncateMiddle)(text, 8_000);
+            }
+            catch {
+                // Try the next candidate; none existing is the common case.
+            }
+        }
+        return undefined;
     }
 }
 exports.ContextCollector = ContextCollector;

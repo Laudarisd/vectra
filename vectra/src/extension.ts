@@ -52,6 +52,7 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
     credentials,
     localLlama,
     attachments,
+    context.workspaceState,
     String(context.extension.packageJSON.version ?? '')
   );
 

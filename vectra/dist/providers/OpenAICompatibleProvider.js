@@ -7,18 +7,31 @@ class OpenAICompatibleProvider {
     baseUrl;
     apiKey;
     structuredAgentJson;
+    timeoutMs;
     id = 'openaiCompatible';
-    constructor(baseUrl, apiKey, structuredAgentJson = false) {
+    constructor(baseUrl, apiKey, structuredAgentJson = false, timeoutMs = 120_000) {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.structuredAgentJson = structuredAgentJson;
+        this.timeoutMs = timeoutMs;
     }
     async complete(request) {
         const userContent = [{ type: 'text', text: request.userPrompt }];
         for (const f of request.attachments ?? [])
             append(userContent, f);
         const wantsEnvelope = this.structuredAgentJson && request.structured !== false;
-        const data = await (0, http_1.fetchJson)(`${this.baseUrl}/chat/completions`, { method: 'POST', headers: this.headers(true), body: JSON.stringify({ model: request.model, messages: [{ role: 'system', content: request.systemPrompt }, { role: 'user', content: userContent }], temperature: request.structured === false ? 0.6 : 0.2, ...(wantsEnvelope ? { response_format: { type: 'json_schema', schema: protocol_1.AGENT_ENVELOPE_SCHEMA } } : {}) }), signal: request.signal });
+        const body = { model: request.model, messages: [{ role: 'system', content: request.systemPrompt }, { role: 'user', content: userContent }], temperature: request.structured === false ? 0.6 : 0.2, ...(wantsEnvelope ? { response_format: { type: 'json_schema', schema: protocol_1.AGENT_ENVELOPE_SCHEMA } } : {}) };
+        // Free-form conversational replies stream token-by-token so a slow local
+        // model shows visible progress instead of an unresponsive wait. The
+        // schema-constrained tool-loop JSON stays non-streaming: partial JSON is
+        // not useful to render and cannot be parsed until it is complete.
+        if (request.structured === false && request.onDelta) {
+            const text = await (0, http_1.streamSse)(`${this.baseUrl}/chat/completions`, { method: 'POST', headers: this.headers(true), body: JSON.stringify({ ...body, stream: true }), signal: request.signal }, { onDelta: request.onDelta, idleTimeoutMs: this.timeoutMs, signal: request.signal });
+            if (!text.trim())
+                throw new Error('OpenAI-compatible endpoint returned no text output.');
+            return text.trim();
+        }
+        const data = await (0, http_1.fetchJson)(`${this.baseUrl}/chat/completions`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(body), signal: request.signal }, this.timeoutMs);
         const text = data.choices?.[0]?.message?.content?.trim();
         if (!text)
             throw new Error('OpenAI-compatible endpoint returned no text output.');

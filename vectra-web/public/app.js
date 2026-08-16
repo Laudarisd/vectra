@@ -237,7 +237,7 @@
   /** Only probes hardware when the user is actually looking at the local runtime dialog. */
   async function refreshGpuInfo() {
     if (els.localDevice.value === 'cpu') { els.localGpuInfo.textContent = '—'; return; }
-    const response = await fetch('\api\local\gpu-info', { cache: 'no-store' });
+    const response = await fetch('/api/local/gpu-info', { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not detect GPUs.');
     const gpus = data.gpus || [];
@@ -491,14 +491,20 @@
     let stageIndex = 0; const activityTimer = setInterval(() => { if (!placeholder.pending) return; stageIndex = Math.min(stageIndex + 1, stages.length - 1); placeholder.activity = stages[stageIndex]; render(); }, 1200);
 
     try {
-      const data = await request('/api/chat', { method: 'POST', signal: state.chatAbort.signal, body: {
+      const data = await streamChat({
         provider: state.provider,
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
         model: state.model,
         messages: state.messages.filter((message) => !message.pending),
         attachments: payloadAttachments
-      } });
+      }, state.chatAbort.signal, (text) => {
+        // Real streamed output replaces the "Generating…" activity line the
+        // moment the first token arrives, so a slow local model still shows
+        // visible progress instead of one long silent wait.
+        placeholder.content = text;
+        render();
+      });
       placeholder.content = data.text;
       placeholder.artifacts = data.artifacts || [];
       placeholder.pending = false;
@@ -558,7 +564,7 @@
     els.messages.replaceChildren();
     if (!state.messages.length) {
       const welcome = document.createElement('div'); welcome.className = 'welcome';
-      welcome.innerHTML = '<div class="hero-mark">V</div><h1>How can Vectra help?</h1><p>Chat, analyze code and documents, or run a local GGUF model with llama.cpp.</p>';
+      welcome.innerHTML = '<img class="hero-mark" src="/VectraLogo.png" alt="Vectra logo" /><h1>How can Vectra help?</h1><p>Chat, analyze code and documents, or run a local GGUF model with llama.cpp.</p>';
       els.messages.appendChild(welcome);
     } else {
       state.messages.forEach((message, index) => {
@@ -567,7 +573,14 @@
         const body = document.createElement('div'); body.className = 'web-message-body';
         const name = document.createElement('div'); name.className = 'web-message-name'; name.textContent = message.role === 'assistant' ? 'Vectra' : 'You';
         const content = document.createElement('div'); content.className = 'web-message-content';
-        if (message.pending) { const line=document.createElement('div'); line.className='web-activity'; line.innerHTML='<span class="web-spinner"></span><span></span>'; line.lastElementChild.textContent=message.activity||'Generating…'; content.appendChild(line); } else content.textContent = message.content;
+        if (message.pending && !message.content) {
+          const line=document.createElement('div'); line.className='web-activity'; line.innerHTML='<span class="web-spinner"></span><span></span>'; line.lastElementChild.textContent=message.activity||'Generating…'; content.appendChild(line);
+        } else if (message.role === 'assistant') {
+          renderMarkdownInto(content, message.content);
+          if (message.pending) { const cursor = document.createElement('span'); cursor.className = 'stream-cursor'; content.appendChild(cursor); }
+        } else {
+          content.textContent = message.content;
+        }
         body.append(name, content);
         if (message.role === 'user' && !message.pending) {
           const actions = document.createElement('div'); actions.className = 'message-actions';
@@ -627,6 +640,211 @@
   }
   async function api(path, body) {
     return request(path, { method: 'POST', body: body || {} });
+  }
+
+  /**
+   * `/api/chat` responds as an SSE stream: `{delta}` events append text as
+   * the model produces it, `{replace}` swaps in a corrected full answer (the
+   * rare false-attachment-refusal retry), and `{done}` carries the final
+   * artifacts. Consuming it this way — rather than waiting for one JSON body
+   * — is what makes a slow local generation show visible progress.
+   */
+  async function streamChat(body, signal, onDelta) {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal
+    });
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Request failed: HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const result = { text: '', artifacts: [], attachments: [] };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let event;
+        try { event = JSON.parse(payload); } catch { continue; }
+        if (event.error) throw new Error(event.error);
+        if (typeof event.delta === 'string') { result.text += event.delta; onDelta?.(result.text); }
+        if (typeof event.replace === 'string') { result.text = event.replace; onDelta?.(result.text); }
+        if (event.done) { result.artifacts = event.artifacts || []; result.attachments = event.attachments || []; }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Small dependency-free markdown-lite renderer (no CDN dependency, keeps
+   * the page self-contained): fenced code with a copy button, inline code,
+   * bold/italic, headings, lists, and links.
+   */
+  function renderMarkdownInto(container, text) {
+    const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+    let i = 0;
+    let listEl = null;
+    const closeList = () => { listEl = null; };
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      const fence = line.match(/^```\s*([\w+-]*)\s*$/);
+      if (fence) {
+        closeList();
+        const lang = fence[1] || '';
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !/^```\s*$/.test(lines[i])) { codeLines.push(lines[i]); i++; }
+        i++;
+        container.appendChild(buildCodeBlock(codeLines.join('\n'), lang));
+        continue;
+      }
+
+      if (!line.trim()) { closeList(); i++; continue; }
+
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        closeList();
+        const h = document.createElement('div');
+        h.className = 'md-heading';
+        applyInline(h, heading[2]);
+        container.appendChild(h);
+        i++; continue;
+      }
+
+      const ordered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      const unordered = !ordered && line.match(/^\s*[-*]\s+(.*)$/);
+      if (ordered || unordered) {
+        const tag = ordered ? 'ol' : 'ul';
+        if (!listEl || listEl.tagName.toLowerCase() !== tag) {
+          listEl = document.createElement(tag);
+          listEl.className = 'md-list';
+          container.appendChild(listEl);
+        }
+        const li = document.createElement('li');
+        applyInline(li, (ordered || unordered)[1]);
+        listEl.appendChild(li);
+        i++; continue;
+      }
+      closeList();
+
+      const paraLines = [line];
+      i++;
+      while (
+        i < lines.length && lines[i].trim() &&
+        !/^```/.test(lines[i]) && !/^#{1,6}\s+/.test(lines[i]) && !/^\s*(\d+[.)]|[-*])\s+/.test(lines[i])
+      ) {
+        paraLines.push(lines[i]); i++;
+      }
+      const p = document.createElement('div');
+      p.className = 'md-paragraph';
+      applyInline(p, paraLines.join('\n'));
+      container.appendChild(p);
+    }
+  }
+
+  function applyInline(el, raw) {
+    const text = String(raw);
+    const tokenRe = /(`[^`\n]+`)|(\[[^\]]+\]\(\S+\))|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(\n)/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = tokenRe.exec(text))) {
+      if (match.index > lastIndex) el.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      const token = match[0];
+      if (token === '\n') {
+        el.appendChild(document.createElement('br'));
+      } else if (token[0] === '`') {
+        const code = document.createElement('code');
+        code.className = 'md-inline-code';
+        code.textContent = token.slice(1, -1);
+        el.appendChild(code);
+      } else if (token[0] === '[') {
+        const linkMatch = token.match(/^\[([^\]]+)\]\((\S+)\)$/);
+        if (linkMatch) el.appendChild(buildLink(linkMatch[1], linkMatch[2]));
+        else el.appendChild(document.createTextNode(token));
+      } else if (token.startsWith('**') || token.startsWith('__')) {
+        const strong = document.createElement('strong');
+        strong.textContent = token.slice(2, -2);
+        el.appendChild(strong);
+      } else {
+        const em = document.createElement('em');
+        em.textContent = token.slice(1, -1);
+        el.appendChild(em);
+      }
+      lastIndex = tokenRe.lastIndex;
+    }
+    if (lastIndex < text.length) el.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+
+  function buildLink(label, url) {
+    const safeUrl = /^https?:\/\//i.test(url) ? url : '';
+    const span = document.createElement('span');
+    if (safeUrl) {
+      span.className = 'md-link';
+      span.title = safeUrl;
+      span.addEventListener('click', () => window.open(safeUrl, '_blank', 'noopener,noreferrer'));
+    } else {
+      span.className = 'md-inline-code';
+    }
+    span.textContent = label;
+    return span;
+  }
+
+  function buildCodeBlock(code, lang) {
+    const wrap = document.createElement('div');
+    wrap.className = 'md-code-block';
+    const bar = document.createElement('div');
+    bar.className = 'md-code-bar';
+    const label = document.createElement('span');
+    label.className = 'md-code-lang';
+    label.textContent = lang || 'text';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'md-copy-button';
+    copy.textContent = 'Copy';
+    copy.addEventListener('click', () => {
+      copyToClipboard(code);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+    });
+    bar.append(label, copy);
+    const pre = document.createElement('pre');
+    const codeEl = document.createElement('code');
+    codeEl.textContent = code;
+    pre.appendChild(codeEl);
+    wrap.append(bar, pre);
+    return wrap;
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch { /* clipboard unavailable */ }
+    document.body.removeChild(ta);
   }
   async function runLocalAction(button, label, action) {
     const old = button.textContent; button.disabled = true; button.textContent = label;

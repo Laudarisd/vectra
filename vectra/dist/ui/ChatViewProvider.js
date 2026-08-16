@@ -48,8 +48,11 @@ class ChatViewProvider {
     credentials;
     localLlama;
     attachmentService;
+    workspaceState;
     extensionVersion;
     static viewType = 'vectra.chat';
+    static HISTORY_KEY = 'vectra.chatHistory';
+    static MAX_STORED_MESSAGES = 300;
     view;
     messages = [];
     pendingAttachments = [];
@@ -57,7 +60,7 @@ class ChatViewProvider {
     abortController;
     busy = false;
     pendingSelectionCheck = false;
-    constructor(extensionUri, controller, patches, diffs, credentials, localLlama, attachmentService, extensionVersion = '') {
+    constructor(extensionUri, controller, patches, diffs, credentials, localLlama, attachmentService, workspaceState, extensionVersion = '') {
         this.extensionUri = extensionUri;
         this.controller = controller;
         this.patches = patches;
@@ -65,7 +68,20 @@ class ChatViewProvider {
         this.credentials = credentials;
         this.localLlama = localLlama;
         this.attachmentService = attachmentService;
+        this.workspaceState = workspaceState;
         this.extensionVersion = extensionVersion;
+        // Attachment payloads (base64/text) are deliberately not persisted here —
+        // ChatMessage only carries attachment metadata, so history survives a
+        // reload without workspaceState ballooning from re-stored file content.
+        const saved = this.workspaceState.get(ChatViewProvider.HISTORY_KEY, []);
+        if (Array.isArray(saved))
+            this.messages.push(...saved);
+    }
+    persistMessages() {
+        const trimmed = this.messages.length > ChatViewProvider.MAX_STORED_MESSAGES
+            ? this.messages.slice(-ChatViewProvider.MAX_STORED_MESSAGES)
+            : this.messages;
+        void this.workspaceState.update(ChatViewProvider.HISTORY_KEY, trimmed);
     }
     resolveWebviewView(webviewView) {
         this.view = webviewView;
@@ -173,6 +189,7 @@ class ChatViewProvider {
                     this.messages.splice(0);
                     this.pendingAttachments.splice(0);
                     this.messageAttachments.clear();
+                    this.persistMessages();
                     await this.postState();
                     break;
                 case 'setApiKey':
@@ -201,6 +218,11 @@ class ChatViewProvider {
                     break;
                 case 'supportDeveloper':
                     await vscode.commands.executeCommand('vectra.supportDeveloper');
+                    break;
+                case 'openExternal':
+                    if (message.value && /^https?:\/\//i.test(message.value)) {
+                        await vscode.env.openExternal(vscode.Uri.parse(message.value));
+                    }
                     break;
             }
         }
@@ -234,10 +256,15 @@ class ChatViewProvider {
         };
         this.messages.push(userMessage);
         this.rememberAttachments(userMessage.id, attachments);
+        this.persistMessages();
         this.busy = true;
         this.abortController = new AbortController();
         await this.postState();
         await this.post({ type: 'progress', message: 'Analyzing…' });
+        // Streamed deltas (chat/ask replies only — see AgentController.converse)
+        // are shown live under this id; the real message pushed below on
+        // completion is what actually persists and survives a reload.
+        const streamId = (0, node_crypto_1.randomUUID)();
         try {
             const result = await this.controller.run({
                 mode,
@@ -245,10 +272,11 @@ class ChatViewProvider {
                 history: this.messages.slice(0, -1),
                 attachments,
                 signal: this.abortController.signal,
-                onProgress: (progress) => void this.post({ type: 'progress', message: progress })
+                onProgress: (progress) => void this.post({ type: 'progress', message: progress }),
+                onDelta: (delta) => void this.post({ type: 'chatDelta', id: streamId, delta })
             });
             this.messages.push({
-                id: (0, node_crypto_1.randomUUID)(),
+                id: streamId,
                 role: 'assistant',
                 content: result.text,
                 createdAt: Date.now()
@@ -256,7 +284,7 @@ class ChatViewProvider {
         }
         catch (error) {
             this.messages.push({
-                id: (0, node_crypto_1.randomUUID)(),
+                id: streamId,
                 role: 'assistant',
                 content: this.abortController.signal.aborted ? 'Request stopped.' : `Error: ${messageOf(error)}`,
                 createdAt: Date.now()
@@ -265,6 +293,7 @@ class ChatViewProvider {
         finally {
             this.busy = false;
             this.abortController = undefined;
+            this.persistMessages();
             await this.postState();
         }
     }
@@ -346,7 +375,7 @@ class ChatViewProvider {
         const nonce = (0, node_crypto_1.randomBytes)(16).toString('hex');
         const script = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'main.js'));
         const style = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'main.css'));
-        const icon = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'vectra-icon.png'));
+        const icon = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'VectraLogo.png'));
         return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';"/><link rel="stylesheet" href="${style}"/><title>Vectra</title></head><body>
 <main id="app">
 <header class="topbar"><div class="brand-wrap"><img class="brand-icon" src="${icon}" alt=""/><span class="brand">Vectra</span></div><button id="settingsButton" class="settings-button" title="Vectra settings" aria-label="Vectra settings">⚙</button></header>

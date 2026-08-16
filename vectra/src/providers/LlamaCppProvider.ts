@@ -4,7 +4,7 @@ import { OpenAICompatibleProvider } from './OpenAICompatibleProvider';
 export class LlamaCppProvider implements TextProvider {
   readonly id = 'llamaCpp' as const;
   private readonly delegate: OpenAICompatibleProvider;
-  constructor(baseUrl: string) { this.delegate = new OpenAICompatibleProvider(baseUrl, undefined, true); }
+  constructor(baseUrl: string, timeoutMs = 900_000) { this.delegate = new OpenAICompatibleProvider(baseUrl, undefined, true, timeoutMs); }
   complete(request: ProviderRequest): Promise<string> { return this.delegate.complete(request); }
   listModels(signal?: AbortSignal): Promise<ModelInfo[]> { return this.delegate.listModels(signal); }
   async testConnection(signal?: AbortSignal): Promise<string> {

@@ -38,6 +38,7 @@ const node_crypto_1 = require("node:crypto");
 const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
 const text_1 = require("../utils/text");
+const GitTools_1 = require("../services/GitTools");
 const DocumentExtractor_1 = require("../services/DocumentExtractor");
 const AgentToolRegistry_1 = require("./AgentToolRegistry");
 const protocol_1 = require("./protocol");
@@ -55,11 +56,11 @@ class AgentController {
     contextCollector;
     patches;
     toolRegistry;
-    constructor(providers, contextCollector, tools, patches, commands) {
+    constructor(providers, contextCollector, tools, patches, commands, git = new GitTools_1.GitTools()) {
         this.providers = providers;
         this.contextCollector = contextCollector;
         this.patches = patches;
-        this.toolRegistry = new AgentToolRegistry_1.AgentToolRegistry(tools, patches, commands);
+        this.toolRegistry = new AgentToolRegistry_1.AgentToolRegistry(tools, patches, commands, git);
     }
     async run(request) {
         if (!vscode.workspace.isTrusted) {
@@ -77,6 +78,7 @@ class AgentController {
         if ((0, ConversationContext_1.classifyTurn)(request.userText, request.mode, hasAttachments) === 'chat') {
             return { text: await this.converse(provider, request, config), proposals: [] };
         }
+        const contextCharBudget = effectiveCharBudget(config);
         const workspaceContext = await this.contextCollector.collect(request.mode);
         const mediaAttachments = [...(request.attachments ?? [])];
         if (config.provider === 'llamaCpp' && config.llamaCppMmprojPath) {
@@ -100,7 +102,7 @@ class AgentController {
             if (request.signal?.aborted)
                 throw new Error('Request cancelled.');
             request.onProgress?.(step === 1 ? 'Analyzing…' : 'Generating…');
-            const userPrompt = buildUserPrompt(request.userText, request.history, workspaceContext, observations, mediaAttachments, this.resolveProposals([...proposalIds]), config.maxContextCharacters);
+            const userPrompt = buildUserPrompt(request.userText, request.history, workspaceContext, observations, mediaAttachments, this.resolveProposals([...proposalIds]), contextCharBudget);
             const raw = await provider.complete({
                 systemPrompt: (0, protocol_1.buildSystemPrompt)(request.mode),
                 userPrompt,
@@ -183,15 +185,24 @@ class AgentController {
     async converse(provider, request, config) {
         request.onProgress?.('Thinking…');
         const history = (0, ConversationContext_1.formatRecentHistory)(request.history);
-        const ask = (nudge = '') => provider.complete({
-            systemPrompt: (0, protocol_1.buildChatSystemPrompt)(),
-            userPrompt: (0, text_1.truncateMiddle)(`${history ? `RECENT CHAT (finished history, for reference only)\n${history}\n\n` : ''}` +
-                `THE USER JUST SAID\n${request.userText}\n\n` +
-                `Reply to them directly and naturally.${nudge}`, Math.min(config.maxContextCharacters, 24_000)),
-            model: config.model,
-            structured: false,
-            signal: request.signal
-        });
+        const charBudget = Math.min(effectiveCharBudget(config), 24_000);
+        // A retry (see below) must not re-stream: the first attempt's partial
+        // text is already shown, and a second stream would visibly duplicate it.
+        let streamingClaimed = false;
+        const ask = (nudge = '') => {
+            const onDelta = streamingClaimed ? undefined : request.onDelta;
+            streamingClaimed = true;
+            return provider.complete({
+                systemPrompt: (0, protocol_1.buildChatSystemPrompt)(),
+                userPrompt: (0, text_1.truncateMiddle)(`${history ? `RECENT CHAT (finished history, for reference only)\n${history}\n\n` : ''}` +
+                    `THE USER JUST SAID\n${request.userText}\n\n` +
+                    `Reply to them directly and naturally.${nudge}`, charBudget),
+                model: config.model,
+                structured: false,
+                signal: request.signal,
+                onDelta
+            });
+        };
         // Tool-tuned local models sometimes answer a greeting with an envelope or a
         // status line anyway. Unwrap it, then retry once with an explicit nudge.
         let reply = (0, protocol_1.parseAgentEnvelope)(await ask()).message.trim();
@@ -237,6 +248,22 @@ function buildUserPrompt(task, history, context, observations, attachments, prop
         'This task replaces any conflicting or unfinished request in RECENT CHAT. Never repeat an old tool action unless this task explicitly requests it.\n\n' +
         'Return the next JSON action envelope. Finish the complete task in this run.', maxCharacters);
 }
+/**
+ * Cloud providers advertise large (100K+ token) context windows, so
+ * `maxContextCharacters` applies unmodified. Local providers run whatever
+ * context size the user actually configured for the server process, which is
+ * very often much smaller — sending more than that gets the request rejected
+ * outright (HTTP 400) instead of gracefully truncated.
+ */
+function effectiveCharBudget(config) {
+    if (config.provider === 'llamaCpp') {
+        return (0, text_1.estimateContextCharBudget)(config.llamaCppContextSize, config.maxContextCharacters);
+    }
+    if (config.provider === 'ollama') {
+        return (0, text_1.estimateContextCharBudget)(config.ollamaContextSize, config.maxContextCharacters);
+    }
+    return config.maxContextCharacters;
+}
 function actionFingerprint(action) {
     return JSON.stringify(action);
 }
@@ -245,6 +272,9 @@ function formatWorkspaceContext(context) {
         `Workspace folders: ${context.workspaceFolders.join(', ') || 'none'}`,
         `Open files: ${context.openFiles.join(', ') || 'none'}`
     ];
+    if (context.projectInstructions) {
+        sections.push(`PROJECT INSTRUCTIONS (from VECTRA.md, follow these for this workspace):\n${context.projectInstructions}`);
+    }
     if (context.workspaceOverview)
         sections.push(`Workspace overview:\n${context.workspaceOverview}`);
     if (context.activeFile) {

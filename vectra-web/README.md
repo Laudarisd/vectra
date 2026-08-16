@@ -3,44 +3,40 @@
 <p align="center">
   <a href="../vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-2.0.3-blue" alt="Version 2.0.3"></a>
+  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-2.0.4-blue" alt="Version 2.0.4"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
-Vectra Web is the browser edition of Vectra: a local-first AI chat and document workspace with local GGUF support through llama.cpp and optional cloud providers.
+**ChatGPT-style AI chat, running entirely on your machine.**
 
-## Features
+Vectra Web is the browser edition of Vectra: local-first AI chat with document support, no server-side account, no cloud required.
 
-- Run downloaded GGUF models locally with llama.cpp.
-- Automatically detect models served by Ollama, LM Studio, llama.cpp, vLLM, and compatible local runtimes.
-- Connect OpenAI, Anthropic, Gemini, or OpenAI-compatible services.
-- Parse PDF, DOCX, PPTX, XLSX, RTF, code, text, and image uploads.
-- Generate downloadable PDF, DOCX, Markdown, JSON, CSV, HTML, and code files.
-- Keep chat history in a local SQLite database, with edit, resend, reopen, and delete controls.
-- Keep cloud keys in the browser session and communicate through the local Vectra server.
+## Why Vectra Web
 
-## Run
+- **Local-first** — run GGUF models through llama.cpp, or auto-detect Ollama, LM Studio, vLLM, and other OpenAI-compatible runtimes already on your machine.
+- **Any model, any time** — switch to OpenAI, Anthropic, Gemini, or an OpenAI-compatible endpoint whenever you want.
+- **Documents in and out** — parse PDF, DOCX, PPTX, XLSX, RTF, code, and images; generate downloadable PDF, DOCX, Markdown, JSON, CSV, HTML, and code files.
+- **Real history, kept local** — chats persist in a local SQLite file, with edit, resend, reopen, and delete.
+- **Nothing phones home** — cloud keys live only in your browser session; the local server binds to `127.0.0.1`.
+
+## Quick start
 
 ```bash
 npm start
 ```
 
-Open the localhost URL printed in the terminal. Vectra selects another free port when the preferred port is unavailable.
+Open the printed localhost URL, choose **Local llama.cpp**, pick a `.gguf` file (and its `mmproj*.gguf` for vision), then **Start model**.
 
-Chat history is stored only on this computer in `vectra.sqlite` under the operating system's local application-data directory. Set `VECTRA_DATA_DIR` to choose another local folder. API keys are never stored in the database.
+Prefer a cloud model? Open **Settings** and pick a provider instead.
 
-## Load a local model
+## Requirements
 
-1. Install [llama.cpp](https://github.com/ggml-org/llama.cpp).
-2. Start Vectra Web and choose **Local llama.cpp**.
-3. Under **Model**, select an instruction-tuned `.gguf` file.
-4. For vision, optionally select the model's matching `mmproj*.gguf` file.
-5. Select **Start model** and wait for the connection to become ready.
+Node.js 22.13+. llama.cpp only if you're running a model locally.
 
-The local server binds to `127.0.0.1`, uses a private key for each launch, and disables llama.cpp's bundled web UI.
+## Privacy
 
-## Project
+Chat history stays in `vectra.sqlite` under your OS's local app-data directory (override with `VECTRA_DATA_DIR`) — nothing is sent anywhere unless you choose a cloud provider, and API keys are never written to that database.
 
-Created by [Sudip Laudari](https://github.com/Laudarisd). Support and source: [github.com/Laudarisd/vectra](https://github.com/Laudarisd/vectra).
+---
 
-Vectra is proprietary software. See the repository [license](../LICENSE).
+Created by [Sudip Laudari](https://github.com/Laudarisd). [Source & issues](https://github.com/Laudarisd/vectra) · Proprietary — see the repository [license](../LICENSE).

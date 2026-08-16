@@ -3,11 +3,12 @@ import * as vscode from 'vscode';
 import { AgentRunRequest, AgentRunResult, Attachment, ChatMessage, TextProvider, WorkspaceContext } from '../types';
 import { ProviderManager } from '../providers/ProviderManager';
 import { AgentConfiguration, getConfig } from '../utils/config';
-import { truncateMiddle } from '../utils/text';
+import { truncateMiddle, estimateContextCharBudget } from '../utils/text';
 import { ContextCollector } from '../services/ContextCollector';
 import { PatchManager } from '../services/PatchManager';
 import { WorkspaceTools } from '../services/WorkspaceTools';
 import { CommandRunner } from '../services/CommandRunner';
+import { GitTools } from '../services/GitTools';
 import { renderPdfPagesFromBuffer } from '../services/DocumentExtractor';
 import { AgentToolRegistry } from './AgentToolRegistry';
 import { buildChatSystemPrompt, buildSystemPrompt, parseAgentEnvelope } from './protocol';
@@ -29,9 +30,10 @@ export class AgentController {
     private readonly contextCollector: ContextCollector,
     tools: WorkspaceTools,
     private readonly patches: PatchManager,
-    commands: CommandRunner
+    commands: CommandRunner,
+    git: GitTools = new GitTools()
   ) {
-    this.toolRegistry = new AgentToolRegistry(tools, patches, commands);
+    this.toolRegistry = new AgentToolRegistry(tools, patches, commands, git);
   }
 
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
@@ -52,6 +54,8 @@ export class AgentController {
     if (classifyTurn(request.userText, request.mode, hasAttachments) === 'chat') {
       return { text: await this.converse(provider, request, config), proposals: [] };
     }
+
+    const contextCharBudget = effectiveCharBudget(config);
 
     const workspaceContext = await this.contextCollector.collect(request.mode);
     const mediaAttachments: Attachment[] = [...(request.attachments ?? [])];
@@ -89,7 +93,7 @@ export class AgentController {
         observations,
         mediaAttachments,
         this.resolveProposals([...proposalIds]),
-        config.maxContextCharacters
+        contextCharBudget
       );
 
       const raw = await provider.complete({
@@ -195,18 +199,27 @@ export class AgentController {
   ): Promise<string> {
     request.onProgress?.('Thinking…');
     const history = formatRecentHistory(request.history);
-    const ask = (nudge = '') => provider.complete({
-      systemPrompt: buildChatSystemPrompt(),
-      userPrompt: truncateMiddle(
-        `${history ? `RECENT CHAT (finished history, for reference only)\n${history}\n\n` : ''}` +
-        `THE USER JUST SAID\n${request.userText}\n\n` +
-        `Reply to them directly and naturally.${nudge}`,
-        Math.min(config.maxContextCharacters, 24_000)
-      ),
-      model: config.model,
-      structured: false,
-      signal: request.signal
-    });
+    const charBudget = Math.min(effectiveCharBudget(config), 24_000);
+    // A retry (see below) must not re-stream: the first attempt's partial
+    // text is already shown, and a second stream would visibly duplicate it.
+    let streamingClaimed = false;
+    const ask = (nudge = '') => {
+      const onDelta = streamingClaimed ? undefined : request.onDelta;
+      streamingClaimed = true;
+      return provider.complete({
+        systemPrompt: buildChatSystemPrompt(),
+        userPrompt: truncateMiddle(
+          `${history ? `RECENT CHAT (finished history, for reference only)\n${history}\n\n` : ''}` +
+          `THE USER JUST SAID\n${request.userText}\n\n` +
+          `Reply to them directly and naturally.${nudge}`,
+          charBudget
+        ),
+        model: config.model,
+        structured: false,
+        signal: request.signal,
+        onDelta
+      });
+    };
 
     // Tool-tuned local models sometimes answer a greeting with an envelope or a
     // status line anyway. Unwrap it, then retry once with an explicit nudge.
@@ -269,6 +282,23 @@ function buildUserPrompt(
   );
 }
 
+/**
+ * Cloud providers advertise large (100K+ token) context windows, so
+ * `maxContextCharacters` applies unmodified. Local providers run whatever
+ * context size the user actually configured for the server process, which is
+ * very often much smaller — sending more than that gets the request rejected
+ * outright (HTTP 400) instead of gracefully truncated.
+ */
+function effectiveCharBudget(config: AgentConfiguration): number {
+  if (config.provider === 'llamaCpp') {
+    return estimateContextCharBudget(config.llamaCppContextSize, config.maxContextCharacters);
+  }
+  if (config.provider === 'ollama') {
+    return estimateContextCharBudget(config.ollamaContextSize, config.maxContextCharacters);
+  }
+  return config.maxContextCharacters;
+}
+
 function actionFingerprint(action: unknown): string {
   return JSON.stringify(action);
 }
@@ -278,6 +308,9 @@ function formatWorkspaceContext(context: WorkspaceContext): string {
     `Workspace folders: ${context.workspaceFolders.join(', ') || 'none'}`,
     `Open files: ${context.openFiles.join(', ') || 'none'}`
   ];
+  if (context.projectInstructions) {
+    sections.push(`PROJECT INSTRUCTIONS (from VECTRA.md, follow these for this workspace):\n${context.projectInstructions}`);
+  }
   if (context.workspaceOverview) sections.push(`Workspace overview:\n${context.workspaceOverview}`);
   if (context.activeFile) {
     sections.push(`Active file: ${context.activeFile}${context.activeLanguage ? ` (${context.activeLanguage})` : ''}`);

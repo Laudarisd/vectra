@@ -134,6 +134,7 @@ export function commonModelDirectories(): string[] {
   const localAppData = process.env.LOCALAPPDATA || '';
   const appData = process.env.APPDATA || '';
   return [
+    path.join(home, '.vectra', 'models'),
     path.join(home, 'models'),
     path.join(home, 'Models'),
     path.join(home, 'Downloads'),
@@ -173,7 +174,7 @@ function deduplicate<T>(values: T[], key: (value: T) => string): T[] {
   });
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   const gib = bytes / 1024 / 1024 / 1024;
   if (gib >= 0.1) return `${gib.toFixed(gib >= 10 ? 0 : 1)} GiB`;
   return `${(bytes / 1024 / 1024).toFixed(0)} MiB`;

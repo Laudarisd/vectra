@@ -3,6 +3,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentToolRegistry = void 0;
 const path_1 = require("../utils/path");
 const text_1 = require("../utils/text");
+/** Write/execution action types gated behind plan approval (and, for a subagent, denied outright). */
+const WRITE_OR_EXEC_TYPES = new Set([
+    'create_file', 'propose_file', 'propose_files',
+    'replace_lines', 'delete_lines', 'insert_lines',
+    'create_document', 'edit_document', 'delete_file',
+    'run_file', 'run_project', 'run_command', 'run_tests'
+]);
+/** Denied outright for a subagent, regardless of mode or plan state: writes/execution, plus plan/todo/further delegation. */
+const SUBAGENT_DENIED_TYPES = new Set([...WRITE_OR_EXEC_TYPES, 'delegate_task', 'propose_plan', 'todo_write']);
 /**
  * Executes validated agent actions against extension services. This is the only
  * place where model-requested tools are connected to filesystem, proposal, and
@@ -13,38 +22,55 @@ class AgentToolRegistry {
     patches;
     commands;
     git;
-    constructor(workspace, patches, commands, git) {
+    todos;
+    plans;
+    web;
+    constructor(workspace, patches, commands, git, todos, plans, web) {
         this.workspace = workspace;
         this.patches = patches;
         this.commands = commands;
         this.git = git;
+        this.todos = todos;
+        this.plans = plans;
+        this.web = web;
     }
+    /**
+     * Toddler-speak on purpose: this is the live step log the user watches
+     * while a run is in progress, so the exact operation (analyzing a
+     * directory vs. generating a file vs. parsing a document) stays
+     * recognizable even through the playful wording.
+     */
     describe(action) {
         switch (action.type) {
-            case 'workspace_summary': return 'Analyzing workspace…';
-            case 'list_directory': return 'Scanning directory…';
-            case 'list_files': return 'Scanning workspace files…';
-            case 'read_file': return `Reading ${action.path}…`;
-            case 'read_files': return `Reading ${Array.isArray(action.paths) ? action.paths.length : 0} related files…`;
-            case 'read_document': return `Parsing document ${action.path}…`;
-            case 'inspect_file': return `Inspecting ${action.path}…`;
-            case 'search_text': return `Searching for “${action.query}”…`;
-            case 'get_diagnostics': return 'Checking editor diagnostics…';
-            case 'git_status': return 'Checking git status…';
-            case 'git_diff': return 'Reading git diff…';
-            case 'create_file': return `Producing ${action.path}…`;
-            case 'propose_file': return `Editing ${action.path}…`;
-            case 'propose_files': return `Producing ${Array.isArray(action.files) ? action.files.length : 0} project files…`;
+            case 'workspace_summary': return "Analyzin' the whole workspace…";
+            case 'list_directory': return "Peekin' in the foldie…";
+            case 'list_files': return "Countin' up all the file-friends…";
+            case 'read_file': return `Readin' ${action.path}, readin' it good…`;
+            case 'read_files': return `Readin' ${Array.isArray(action.paths) ? action.paths.length : 0} file-friends, one by one…`;
+            case 'read_document': return `Parsin' ${action.path}, nom nom…`;
+            case 'inspect_file': return `Snoopin' at ${action.path}…`;
+            case 'search_text': return `Findy-findy “${action.query}”…`;
+            case 'get_diagnostics': return "Checky-checky for boo-boos…";
+            case 'git_status': return "Peekin' at the git-git…";
+            case 'git_diff': return "Readin' the git-git changes…";
+            case 'create_file': return `Generatin' ${action.path}, brand new!…`;
+            case 'propose_file': return `Fixin' up ${action.path}…`;
+            case 'propose_files': return `Generatin' ${Array.isArray(action.files) ? action.files.length : 0} shiny new file-friends…`;
             case 'replace_lines':
             case 'delete_lines':
-            case 'insert_lines': return `Editing ${action.path}…`;
-            case 'create_document': return `Producing document ${action.path}…`;
-            case 'edit_document': return `Editing document ${action.path}…`;
-            case 'delete_file': return `Preparing deletion of ${action.path}…`;
-            case 'run_file': return `Running ${action.path}…`;
-            case 'run_project': return 'Running project…';
-            case 'run_command': return 'Running command…';
-            case 'run_tests': return 'Running tests…';
+            case 'insert_lines': return `Fixin' up ${action.path}…`;
+            case 'create_document': return `Generatin' the document ${action.path}…`;
+            case 'edit_document': return `Fixin' up the document ${action.path}…`;
+            case 'delete_file': return `Gettin' ready to bye-bye ${action.path}…`;
+            case 'run_file': return `Runny-run ${action.path}…`;
+            case 'run_project': return "Runny-run the whole project…";
+            case 'run_command': return "Runny-run a lil' command…";
+            case 'run_tests': return "Testy-test time, go go go…";
+            case 'todo_write': return "Jotting down the plan…";
+            case 'propose_plan': return "Sketchin' out a plan for ya…";
+            case 'web_search': return `Googlin' "${action.query}"…`;
+            case 'web_fetch': return `Fetchin' ${action.url}…`;
+            case 'delegate_task': return "Delegatin' a sub-task…";
         }
     }
     async execute(action, context) {
@@ -58,6 +84,18 @@ class AgentToolRegistry {
         }
     }
     async executeTrusted(action, context) {
+        if (context.subagent && SUBAGENT_DENIED_TYPES.has(action.type)) {
+            return this.denied(action, 'Subagents are read-only and cannot write, execute, plan, edit the shared todo list, or delegate further.');
+        }
+        if (context.mode === 'agent' && WRITE_OR_EXEC_TYPES.has(action.type) && this.planBlocksWrites()) {
+            return this.denied(action, 'A plan is pending your review. Approve or reject it in the chat before I can write or run anything.');
+        }
+        if (action.type === 'delegate_task') {
+            // A non-subagent delegate_task is intercepted and actually executed by
+            // AgentController before it ever reaches here; a subagent's attempt was
+            // already denied above. Reaching this point means neither happened.
+            return this.denied(action, 'delegate_task must be handled by the agent loop, not executed directly.');
+        }
         if (action.type === 'read_file') {
             return this.result(action, await this.readFileWithPendingOverlay(action.path, action.startLine, action.endLine));
         }
@@ -90,6 +128,24 @@ class AgentToolRegistry {
         }
         if (action.type === 'git_diff') {
             return this.result(action, await this.git.diff(action.path, action.staged === true));
+        }
+        if (action.type === 'todo_write') {
+            const validated = validateTodos(action.todos);
+            this.todos.set(validated);
+            return this.result(action, summarizeTodos(validated));
+        }
+        if (action.type === 'propose_plan') {
+            if (context.mode !== 'agent')
+                return this.denied(action, 'This mode is read-only.');
+            const steps = validateStringArray(action.steps, 'propose_plan steps', 20);
+            const plan = this.plans.propose(steps, action.reason);
+            return this.result(action, `Proposed a ${plan.steps.length}-step plan for user review. Do not write or run anything until it is approved.`);
+        }
+        if (action.type === 'web_search') {
+            return this.result(action, await this.web.search(action.query, action.maxResults, context.signal));
+        }
+        if (action.type === 'web_fetch') {
+            return this.result(action, await this.web.fetch(action.url, context.signal));
         }
         if (action.type === 'propose_files') {
             if (context.mode !== 'agent')
@@ -210,10 +266,18 @@ class AgentToolRegistry {
         const numbered = lines.slice(start - 1, end).map((line, index) => `${start + index}: ${line}`);
         return `PENDING FILE ${(0, path_1.normalizeAgentPath)(filePath)} lines ${start}-${end} of ${lines.length}\n${numbered.join('\n')}`;
     }
+    /** Writes/execution stay blocked until the current plan is approved — a missing, pending, or rejected plan all block. */
+    planBlocksWrites() {
+        return this.plans.get()?.status !== 'approved';
+    }
     denied(action, reason) {
-        const guidance = /read-only|only in Agent mode/i.test(reason)
-            ? ' Do not retry this or any other write/execute action in the current mode. Answer the CURRENT USER TASK with actions=[].'
-            : ' Do not repeat the identical action; correct it or finish the current task.';
+        const guidance = /subagents are read-only/i.test(reason)
+            ? ' Do not retry this or any other write/execute/plan/delegate action. Continue read-only investigation and finish with actions=[] and your findings.'
+            : /read-only|only in Agent mode/i.test(reason)
+                ? ' Do not retry this or any other write/execute action in the current mode. Answer the CURRENT USER TASK with actions=[].'
+                : /plan is pending/i.test(reason)
+                    ? ' Do not retry this action. If you have not called propose_plan yet this run, call it now with actions=[propose_plan]; otherwise stop and wait for the user to decide.'
+                    : ' Do not repeat the identical action; correct it or finish the current task.';
         return this.result(action, `Denied: ${reason}${guidance}`);
     }
     result(action, output, proposalIds = [], wrote = false) {
@@ -259,5 +323,31 @@ function validateStringArray(value, label, maxItems) {
 function clamp(value, min, max) {
     const number = Number.isFinite(value) ? Math.floor(value) : min;
     return Math.min(max, Math.max(min, number));
+}
+const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+function validateTodos(value) {
+    if (!Array.isArray(value) || value.length === 0)
+        throw new Error('todo_write requires at least one todo item.');
+    if (value.length > 40)
+        throw new Error('todo_write supports at most 40 items.');
+    const seen = new Set();
+    return value.map((item) => {
+        if (!item || typeof item.id !== 'string' || !item.id.trim())
+            throw new Error('Every todo item requires a non-empty string id.');
+        if (typeof item.content !== 'string' || !item.content.trim())
+            throw new Error('Every todo item requires non-empty content.');
+        if (!TODO_STATUSES.has(item.status))
+            throw new Error(`Invalid todo status: ${String(item.status)}`);
+        if (seen.has(item.id))
+            throw new Error(`Duplicate todo id: ${item.id}`);
+        seen.add(item.id);
+        return { id: item.id, content: item.content, status: item.status };
+    });
+}
+function summarizeTodos(todos) {
+    const completed = todos.filter((item) => item.status === 'completed').length;
+    const inProgress = todos.filter((item) => item.status === 'in_progress').length;
+    const pending = todos.filter((item) => item.status === 'pending').length;
+    return `Todo list updated: ${completed} completed, ${inProgress} in progress, ${pending} pending.`;
 }
 //# sourceMappingURL=AgentToolRegistry.js.map

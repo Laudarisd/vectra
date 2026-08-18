@@ -10,6 +10,8 @@ import { DiffContentProvider } from '../services/DiffContentProvider';
 import { LocalCredentialStore } from '../services/LocalCredentialStore';
 import { LocalLlamaCppService } from '../services/LocalLlamaCppService';
 import { PatchManager } from '../services/PatchManager';
+import { PlanManager } from '../services/PlanManager';
+import { TodoManager } from '../services/TodoManager';
 
 interface WebviewMessage {
   type: string;
@@ -39,6 +41,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly extensionUri: vscode.Uri,
     private readonly controller: AgentController,
     private readonly patches: PatchManager,
+    private readonly todos: TodoManager,
+    private readonly plans: PlanManager,
     private readonly diffs: DiffContentProvider,
     private readonly credentials: LocalCredentialStore,
     private readonly localLlama: LocalLlamaCppService,
@@ -164,10 +168,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.patches.clearCompleted();
           await this.postState();
           break;
+        case 'approvePlan':
+          this.plans.approve();
+          await this.postState();
+          break;
+        case 'rejectPlan':
+          this.plans.reject();
+          await this.postState();
+          break;
         case 'clearChat':
           this.messages.splice(0);
           this.pendingAttachments.splice(0);
           this.messageAttachments.clear();
+          this.todos.clear();
+          this.plans.reset();
           this.persistMessages();
           await this.postState();
           break;
@@ -176,6 +190,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'selectLocalModel':
           await vscode.commands.executeCommand('vectra.selectLocalModel');
+          break;
+        case 'downloadModel':
+          await vscode.commands.executeCommand('vectra.downloadModel');
           break;
         case 'selectMmproj':
           await vscode.commands.executeCommand('vectra.selectMmproj');
@@ -238,10 +255,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.rememberAttachments(userMessage.id, attachments);
     this.persistMessages();
 
+    // A resolved plan from a finished task must not linger in the UI as if it
+    // still applied to this new one — AgentController.run() resets it too,
+    // but doing it here keeps the very next postState() in sync immediately.
+    if (mode === 'agent') this.plans.reset();
+
     this.busy = true;
     this.abortController = new AbortController();
     await this.postState();
-    await this.post({ type: 'progress', message: 'Analyzing…' });
+    await this.post({ type: 'progress', message: "Wakin' up, analyzin'…" });
 
     // Streamed deltas (chat/ask replies only — see AgentController.converse)
     // are shown live under this id; the real message pushed below on
@@ -255,7 +277,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         attachments,
         signal: this.abortController.signal,
         onProgress: (progress) => void this.post({ type: 'progress', message: progress }),
-        onDelta: (delta) => void this.post({ type: 'chatDelta', id: streamId, delta })
+        onDelta: (delta) => void this.post({ type: 'chatDelta', id: streamId, delta }),
+        onTodosChanged: (todos) => void this.post({ type: 'todoUpdate', todos }),
+        onPlanChanged: (plan) => void this.post({ type: 'planUpdate', plan })
       });
       this.messages.push({
         id: streamId,
@@ -290,7 +314,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const originalAttachments = this.messageAttachments.get(messageId) ?? [];
     const removed = this.messages.splice(index);
     for (const message of removed) this.messageAttachments.delete(message.id);
+
+    const discarded = this.patches.list().filter((proposal) => proposal.status === 'pending').length;
     this.patches.rejectAllPending();
+    if (discarded > 0) {
+      const noun = discarded === 1 ? 'proposal' : 'proposals';
+      void vscode.window.showInformationMessage(
+        `Vectra discarded ${discarded} pending ${noun} from the message you're replacing. Nothing from it was written to disk.`
+      );
+    }
 
     // Attachments added while editing are included alongside the original set.
     const newlyAttached = this.pendingAttachments.splice(0);
@@ -321,6 +353,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'state',
       messages: this.messages,
       proposals: this.patches.list().map(toWebviewProposal),
+      todos: this.todos.list(),
+      plan: this.plans.get(),
       attachments: this.pendingAttachments.map(toAttachmentMeta),
       busy: this.busy,
       provider: config.provider,
@@ -360,7 +394,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';"/><link rel="stylesheet" href="${style}"/><title>Vectra</title></head><body>
 <main id="app">
 <header class="topbar"><div class="brand-wrap"><img class="brand-icon" src="${icon}" alt=""/><span class="brand">Vectra</span></div><button id="settingsButton" class="settings-button" title="Vectra settings" aria-label="Vectra settings">⚙</button></header>
-<section class="connection-bar"><button id="apiKeyButton" class="connection-button">API Key</button><button id="localModelButton" class="connection-button">Local Model</button><button id="testButton" class="connection-button">Test</button></section>
+<section class="connection-bar"><button id="apiKeyButton" class="connection-button">API Key</button><button id="localModelButton" class="connection-button">Local Model</button><button id="testButton" class="connection-button">Test</button><button id="downloadModelButton" class="connection-button">Download Model</button></section>
 <nav class="modes"><button class="mode active" data-mode="agent">Agent</button><button class="mode" data-mode="ask">Ask</button><button class="mode" data-mode="selection">Check Selection</button></nav>
 <section id="messages" class="messages" aria-live="polite"></section>
 <section class="composer-wrap"><div id="attachments" class="attachment-list"></div><textarea id="prompt" rows="3" placeholder="Ask Vectra…"></textarea><div class="composer-actions"><div class="left-actions"><button id="attachButton" class="secondary">＋ File</button><button id="clearButton" class="secondary">Clear Chat</button></div><button id="sendButton" class="primary">Send</button><button id="stopButton" class="danger hidden">Stop</button></div></section>

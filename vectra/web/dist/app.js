@@ -484,11 +484,17 @@
     els.prompt.placeholder = 'Message Vectra';
     state.busy = true;
     state.chatAbort = new AbortController();
-    const stages = payloadAttachments.length ? ['Analyzing files…','Parsing documents…','Generating…','Producing…'] : ['Analyzing…','Generating…','Producing…'];
-    const placeholder = { role: 'assistant', content: '', pending: true, activity: stages[0], artifacts: [], createdAt: Date.now() };
+    // Toddler-speak on purpose (matches the VS Code extension's live step
+    // log): the words still name the real phase — analyzing, parsing,
+    // generating, producing — just dressed up as something fun to watch
+    // instead of one line silently overwriting itself.
+    const stages = payloadAttachments.length
+      ? ["Analyzin' the file-friends…", "Parsin' the documents, nom nom…", "Generatin' stuff…", "Wrappin' it all up…"]
+      : ["Analyzin' errythin'…", "Generatin' stuff…", "Wrappin' it all up…"];
+    const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [stages[0]], artifacts: [], createdAt: Date.now() };
     state.messages.push(placeholder); render();
     await persistChat().catch((error) => console.warn('Could not save chat history:', error));
-    let stageIndex = 0; const activityTimer = setInterval(() => { if (!placeholder.pending) return; stageIndex = Math.min(stageIndex + 1, stages.length - 1); placeholder.activity = stages[stageIndex]; render(); }, 1200);
+    let stageIndex = 0; const activityTimer = setInterval(() => { if (!placeholder.pending) return; stageIndex = Math.min(stageIndex + 1, stages.length - 1); if (placeholder.activityLog[placeholder.activityLog.length - 1] !== stages[stageIndex]) placeholder.activityLog.push(stages[stageIndex]); render(); }, 1200);
 
     try {
       const data = await streamChat({
@@ -574,7 +580,7 @@
         const name = document.createElement('div'); name.className = 'web-message-name'; name.textContent = message.role === 'assistant' ? 'Vectra' : 'You';
         const content = document.createElement('div'); content.className = 'web-message-content';
         if (message.pending && !message.content) {
-          const line=document.createElement('div'); line.className='web-activity'; line.innerHTML='<span class="web-spinner"></span><span></span>'; line.lastElementChild.textContent=message.activity||'Generating…'; content.appendChild(line);
+          content.appendChild(buildWebActivityLog(message.activityLog));
         } else if (message.role === 'assistant') {
           renderMarkdownInto(content, message.content);
           if (message.pending) { const cursor = document.createElement('span'); cursor.className = 'stream-cursor'; content.appendChild(cursor); }
@@ -597,6 +603,22 @@
     els.send.textContent = state.busy ? '■' : '↑';
     els.send.title = state.busy ? 'Stop generating' : 'Send';
     renderAttachments();
+  }
+
+  /** Mirrors the VS Code extension's step log: earlier phases get a check, the newest gets a spinner. */
+  function buildWebActivityLog(steps) {
+    const log = document.createElement('div'); log.className = 'web-activity-log';
+    const list = steps && steps.length ? steps : ["Wakin' up…"];
+    list.forEach((step, index) => {
+      const isLast = index === list.length - 1;
+      const row = document.createElement('div'); row.className = `web-activity-step${isLast ? '' : ' done'}`;
+      const icon = document.createElement('span');
+      if (isLast) { icon.className = 'web-spinner'; }
+      else { icon.className = 'web-activity-check'; icon.textContent = '✓'; }
+      const label = document.createElement('span'); label.textContent = step;
+      row.append(icon, label); log.appendChild(row);
+    });
+    return log;
   }
 
   function renderAttachments() {

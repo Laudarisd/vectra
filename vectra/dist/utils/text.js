@@ -4,6 +4,7 @@ exports.sha256 = sha256;
 exports.sha256Bytes = sha256Bytes;
 exports.truncateMiddle = truncateMiddle;
 exports.estimateContextCharBudget = estimateContextCharBudget;
+exports.stripEnclosingCodeFence = stripEnclosingCodeFence;
 exports.safeJson = safeJson;
 const node_crypto_1 = require("node:crypto");
 function sha256(value) {
@@ -33,6 +34,31 @@ function estimateContextCharBudget(contextTokens, maxCharacters) {
     const RESERVED_RATIO = 0.35;
     const budget = Math.floor(contextTokens * CHARS_PER_TOKEN * (1 - RESERVED_RATIO));
     return Math.max(4_000, Math.min(maxCharacters, budget));
+}
+/**
+ * A model asked for raw file content sometimes wraps the whole answer in a
+ * markdown fence anyway (```python ... ```), despite the JSON action schema
+ * asking for a plain string. Written verbatim, that fence becomes literal
+ * text inside the .py/.cs/.cpp file. Only strip when the fence wraps the
+ * *entire* content (first and last non-blank lines are fence markers) —
+ * real source that legitimately contains a fenced block in the middle, or a
+ * markdown file about fences, must pass through untouched.
+ */
+function stripEnclosingCodeFence(content) {
+    const lines = content.split(/\r?\n/);
+    let start = 0;
+    let end = lines.length - 1;
+    while (start <= end && lines[start].trim() === '')
+        start++;
+    while (end >= start && lines[end].trim() === '')
+        end--;
+    if (end <= start)
+        return content;
+    if (!/^```[^\s`]*$/.test(lines[start].trim()))
+        return content;
+    if (lines[end].trim() !== '```')
+        return content;
+    return lines.slice(start + 1, end).join('\n');
 }
 function safeJson(value) {
     try {

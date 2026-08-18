@@ -3,11 +3,15 @@
   const saved = vscode.getState() || {};
   let mode = saved.mode || 'agent';
   let editingMessageId = saved.editingMessageId || '';
-  let activityText = 'Analyzing…';
+  // A running log of step labels for the current request, oldest first. The
+  // last entry is "in progress" (spinner); everything before it is "done"
+  // (checkmark) — this is what makes file-by-file progress visible instead
+  // of one line that keeps getting silently overwritten.
+  let activitySteps = [];
   let streamId = '';
   let streamText = '';
   let state = {
-    messages: [], proposals: [], attachments: [], busy: false,
+    messages: [], proposals: [], todos: [], plan: null, attachments: [], busy: false,
     provider: 'llamaCpp', model: '', localModelName: '', localModelRunning: false,
     visionEnabled: false, hasKey: true, isLocal: true, workspaceTrusted: true,
     deviceMode: 'auto', gpuInfo: ''
@@ -18,6 +22,7 @@
     messages: $('messages'), attachments: $('attachments'),
     prompt: $('prompt'), send: $('sendButton'), stop: $('stopButton'), attach: $('attachButton'),
     clear: $('clearButton'), api: $('apiKeyButton'), local: $('localModelButton'), test: $('testButton'),
+    download: $('downloadModelButton'),
     settings: $('settingsButton'), dialog: $('settingsDialog'), runtime: $('runtimeInfo'),
     capability: $('capabilityInfo'), advanced: $('advancedSettingsButton'), support: $('supportButton'),
     deviceMode: $('deviceMode'), gpuInfo: $('gpuInfo')
@@ -39,6 +44,7 @@
   els.api.addEventListener('click', () => vscode.postMessage({ type: 'setApiKey' }));
   els.local.addEventListener('click', () => vscode.postMessage({ type: 'selectLocalModel' }));
   els.test.addEventListener('click', () => vscode.postMessage({ type: 'testConnection' }));
+  els.download.addEventListener('click', () => vscode.postMessage({ type: 'downloadModel' }));
   els.settings.addEventListener('click', () => {
     renderSettings();
     els.dialog.showModal();
@@ -61,8 +67,11 @@
   window.addEventListener('message', (event) => {
     const message = event.data || {};
     if (message.type === 'state') {
+      const wasBusy = state.busy;
       state = { ...state, ...message };
-      if (!state.busy) activityText = 'Analyzing…';
+      // A fresh run starts a fresh step log; a finished run clears it so the
+      // next busy period starts empty instead of showing stale steps.
+      if (!state.busy || (state.busy && !wasBusy)) activitySteps = [];
       streamId = '';
       streamText = '';
       if (editingMessageId && !state.messages.some((item) => item.id === editingMessageId)) {
@@ -71,7 +80,7 @@
       }
       renderAll();
     } else if (message.type === 'progress') {
-      activityText = cleanActivity(message.message);
+      pushActivityStep(cleanActivity(message.message));
       renderMessages();
     } else if (message.type === 'chatDelta') {
       if (message.id !== streamId) {
@@ -80,16 +89,27 @@
       }
       streamText += message.delta || '';
       renderMessages();
+    } else if (message.type === 'todoUpdate') {
+      state.todos = message.todos || [];
+      renderMessages();
+    } else if (message.type === 'planUpdate') {
+      state.plan = message.plan || null;
+      renderMessages();
     } else if (message.type === 'error') {
-      activityText = 'Error';
+      pushActivityStep("Uh-oh, somethin' went sideways…");
       renderMessages();
     }
   });
 
+  function pushActivityStep(text) {
+    if (activitySteps[activitySteps.length - 1] === text) return;
+    activitySteps.push(text);
+  }
+
   function send() {
     const text = els.prompt.value.trim();
     if (!text || state.busy || !state.workspaceTrusted) return;
-    activityText = 'Analyzing…';
+    activitySteps = [];
     vscode.postMessage({
       type: 'send',
       text,
@@ -153,6 +173,7 @@
     els.api.classList.toggle('active-connection', !state.isLocal);
     els.api.classList.toggle('warning', !state.isLocal && !state.hasKey);
     els.test.disabled = state.busy;
+    els.download.disabled = state.busy;
   }
 
   function renderMessages() {
@@ -220,17 +241,118 @@
         content.appendChild(cursor);
         card.append(meta, content);
       } else {
-        const line = document.createElement('div');
-        line.className = 'activity-line';
-        line.innerHTML = '<span class="activity-spinner"></span><span></span>';
-        line.lastElementChild.textContent = activityText;
-        card.append(meta, line);
+        card.append(meta, buildActivityLog());
       }
       els.messages.appendChild(card);
     }
 
+    renderPlan(els.messages);
+    renderTodos(els.messages);
     renderProposals(els.messages);
     requestAnimationFrame(() => { els.messages.scrollTop = els.messages.scrollHeight; });
+  }
+
+  /** A proposed plan renders as an inline reviewable card, same idiom as a proposal, clickable even while state.busy (the run is suspended waiting on it). */
+  function renderPlan(container) {
+    if (!state.plan) return;
+    const card = document.createElement('article');
+    card.className = `proposal plan ${state.plan.status}`;
+    const top = document.createElement('div');
+    top.className = 'proposal-top';
+    const title = document.createElement('div');
+    title.className = 'proposal-path';
+    title.textContent = 'Proposed plan';
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = state.plan.status;
+    top.append(title, badge);
+    const reason = document.createElement('div');
+    reason.className = 'proposal-reason';
+    reason.textContent = state.plan.reason || '';
+    const steps = document.createElement('ol');
+    steps.className = 'plan-steps';
+    for (const step of state.plan.steps || []) {
+      const li = document.createElement('li');
+      li.textContent = step.text;
+      steps.appendChild(li);
+    }
+    card.append(top);
+    if (state.plan.reason) card.append(reason);
+    card.append(steps);
+    if (state.plan.status === 'pending') {
+      const actions = document.createElement('div');
+      actions.className = 'proposal-actions';
+      actions.append(
+        button('Approve', 'primary', () => vscode.postMessage({ type: 'approvePlan' })),
+        button('Reject', 'danger-outline', () => vscode.postMessage({ type: 'rejectPlan' }))
+      );
+      card.append(actions);
+    }
+    container.appendChild(card);
+  }
+
+  /** A live checklist for multi-step tasks. Shown whenever the agent has set one, independent of busy/idle. */
+  function renderTodos(container) {
+    if (!state.todos || !state.todos.length) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'todo-panel';
+    for (const item of state.todos) {
+      const row = document.createElement('div');
+      row.className = `todo-item ${item.status}`;
+      const icon = document.createElement('span');
+      if (item.status === 'completed') {
+        icon.className = 'activity-check';
+        icon.textContent = '✓';
+      } else if (item.status === 'in_progress') {
+        icon.className = 'activity-spinner';
+      } else {
+        icon.className = 'todo-bullet';
+      }
+      const label = document.createElement('span');
+      label.textContent = item.content;
+      row.append(icon, label);
+      wrap.appendChild(row);
+    }
+    container.appendChild(wrap);
+  }
+
+  /**
+   * Renders the current run's step history: earlier steps get a checkmark
+   * and dim, the newest step gets the spinner. Older steps beyond
+   * MAX_VISIBLE_STEPS collapse into a single "N more steps" line so a long
+   * multi-file agent run doesn't flood the sidebar.
+   */
+  function buildActivityLog() {
+    const MAX_VISIBLE_STEPS = 6;
+    const log = document.createElement('div');
+    log.className = 'activity-log';
+    const steps = activitySteps.length ? activitySteps : ["Wakin' up…"];
+    const overflow = Math.max(0, steps.length - MAX_VISIBLE_STEPS);
+    if (overflow > 0) {
+      log.appendChild(activityStepRow(`${overflow} more step${overflow === 1 ? '' : 's'} done`, 'done', '…'));
+    }
+    const visible = steps.slice(-MAX_VISIBLE_STEPS);
+    visible.forEach((step, index) => {
+      const isLast = index === visible.length - 1;
+      log.appendChild(activityStepRow(step, isLast ? 'active' : 'done', isLast ? null : '✓'));
+    });
+    return log;
+  }
+
+  function activityStepRow(text, status, checkGlyph) {
+    const row = document.createElement('div');
+    row.className = `activity-step ${status}`;
+    const icon = document.createElement('span');
+    if (checkGlyph) {
+      icon.className = 'activity-check';
+      icon.textContent = checkGlyph;
+    } else {
+      icon.className = 'activity-spinner';
+    }
+    const label = document.createElement('span');
+    label.textContent = text;
+    row.append(icon, label);
+    return row;
   }
 
   function renderAttachments() {
@@ -552,7 +674,7 @@
 
   function cleanActivity(value) {
     const text = String(value || '').trim();
-    if (!text || /agent step/i.test(text)) return 'Analyzing…';
+    if (!text || /agent step/i.test(text)) return "Analyzin' errythin'…";
     return text.length > 90 ? `${text.slice(0, 87)}…` : text;
   }
 

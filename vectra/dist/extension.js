@@ -41,6 +41,8 @@ const ProviderManager_1 = require("./providers/ProviderManager");
 const ContextCollector_1 = require("./services/ContextCollector");
 const DiffContentProvider_1 = require("./services/DiffContentProvider");
 const PatchManager_1 = require("./services/PatchManager");
+const PlanManager_1 = require("./services/PlanManager");
+const TodoManager_1 = require("./services/TodoManager");
 const LocalCredentialStore_1 = require("./services/LocalCredentialStore");
 const LocalLlamaCppService_1 = require("./services/LocalLlamaCppService");
 const WorkspaceTools_1 = require("./services/WorkspaceTools");
@@ -77,9 +79,11 @@ function activateVectra(context, output) {
     const commands = new CommandRunner_1.CommandRunner();
     const attachments = new AttachmentService_1.AttachmentService();
     const patches = new PatchManager_1.PatchManager(tools);
+    const todos = new TodoManager_1.TodoManager();
+    const plans = new PlanManager_1.PlanManager();
     const diffs = new DiffContentProvider_1.DiffContentProvider(patches);
-    const controller = new AgentController_1.AgentController(providers, new ContextCollector_1.ContextCollector(), tools, patches, commands);
-    const chat = new ChatViewProvider_1.ChatViewProvider(context.extensionUri, controller, patches, diffs, credentials, localLlama, attachments, context.workspaceState, String(context.extension.packageJSON.version ?? ''));
+    const controller = new AgentController_1.AgentController(providers, new ContextCollector_1.ContextCollector(), tools, patches, commands, todos, plans);
+    const chat = new ChatViewProvider_1.ChatViewProvider(context.extensionUri, controller, patches, todos, plans, diffs, credentials, localLlama, attachments, context.workspaceState, String(context.extension.packageJSON.version ?? ''));
     const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     status.text = '$(sparkle) Vectra';
     status.tooltip = 'Open Vectra AI coding agent';
@@ -119,6 +123,20 @@ function activateVectra(context, output) {
         catch (error) {
             output.appendLine(`[Vectra] Local model error: ${messageOf(error)}`);
             void vscode.window.showErrorMessage(`Vectra local model failed: ${messageOf(error)}`);
+        }
+    }), vscode.commands.registerCommand('vectra.downloadModel', async () => {
+        if (!requireTrustedWorkspace('download a local model'))
+            return;
+        try {
+            const modelId = await localLlama.downloadAndSelectModel();
+            if (modelId) {
+                await chat.refresh();
+                void vscode.window.showInformationMessage(`Vectra local model ready: ${modelId}`);
+            }
+        }
+        catch (error) {
+            output.appendLine(`[Vectra] Model download error: ${messageOf(error)}`);
+            void vscode.window.showErrorMessage(`Vectra model download failed: ${messageOf(error)}`);
         }
     }), vscode.commands.registerCommand('vectra.setApiKey', async () => {
         await configureCloudProvider(credentials, providers, chat);

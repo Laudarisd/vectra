@@ -33,6 +33,27 @@ export function estimateContextCharBudget(contextTokens: number, maxCharacters: 
   return Math.max(4_000, Math.min(maxCharacters, budget));
 }
 
+/**
+ * A model asked for raw file content sometimes wraps the whole answer in a
+ * markdown fence anyway (```python ... ```), despite the JSON action schema
+ * asking for a plain string. Written verbatim, that fence becomes literal
+ * text inside the .py/.cs/.cpp file. Only strip when the fence wraps the
+ * *entire* content (first and last non-blank lines are fence markers) —
+ * real source that legitimately contains a fenced block in the middle, or a
+ * markdown file about fences, must pass through untouched.
+ */
+export function stripEnclosingCodeFence(content: string): string {
+  const lines = content.split(/\r?\n/);
+  let start = 0;
+  let end = lines.length - 1;
+  while (start <= end && lines[start].trim() === '') start++;
+  while (end >= start && lines[end].trim() === '') end--;
+  if (end <= start) return content;
+  if (!/^```[^\s`]*$/.test(lines[start].trim())) return content;
+  if (lines[end].trim() !== '```') return content;
+  return lines.slice(start + 1, end).join('\n');
+}
+
 export function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);

@@ -39,6 +39,28 @@ export interface ProposedFileInput {
   reason?: string;
 }
 
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
+export interface PlanStep {
+  id: string;
+  text: string;
+}
+
+export type PlanStatus = 'pending' | 'approved' | 'rejected';
+
+export interface Plan {
+  id: string;
+  steps: PlanStep[];
+  reason?: string;
+  status: PlanStatus;
+  revision: number;
+  createdAt: number;
+}
+
 export type AgentAction =
   | { type: 'workspace_summary'; path?: string }
   | { type: 'list_directory'; path?: string; maxResults?: number; maxDepth?: number }
@@ -63,7 +85,12 @@ export type AgentAction =
   | { type: 'run_file'; path: string; args?: string[]; timeoutMs?: number; reason?: string }
   | { type: 'run_project'; path?: string; timeoutMs?: number; reason?: string }
   | { type: 'run_command'; command: string; cwd?: string; timeoutMs?: number; reason?: string }
-  | { type: 'run_tests'; command?: string; cwd?: string; timeoutMs?: number; reason?: string };
+  | { type: 'run_tests'; command?: string; cwd?: string; timeoutMs?: number; reason?: string }
+  | { type: 'todo_write'; todos: TodoItem[] }
+  | { type: 'propose_plan'; steps: string[]; reason?: string }
+  | { type: 'web_search'; query: string; maxResults?: number }
+  | { type: 'web_fetch'; url: string }
+  | { type: 'delegate_task'; task: string; reason?: string };
 
 export interface AgentEnvelope { message: string; actions: AgentAction[]; done: boolean }
 export type ProposalKind = 'modify' | 'create' | 'delete';
@@ -84,6 +111,6 @@ export interface EditProposal {
   binaryOutputBase64?: string;
 }
 
-export interface AgentRunRequest { mode: AgentMode; userText: string; history: ChatMessage[]; attachments?: Attachment[]; onProgress?: (message: string) => void; onDelta?: (delta: string) => void; signal?: AbortSignal }
+export interface AgentRunRequest { mode: AgentMode; userText: string; history: ChatMessage[]; attachments?: Attachment[]; onProgress?: (message: string) => void; onDelta?: (delta: string) => void; onTodosChanged?: (todos: TodoItem[]) => void; onPlanChanged?: (plan: Plan) => void; signal?: AbortSignal }
 export interface AgentRunResult { text: string; proposals: EditProposal[] }
 export interface WorkspaceContext { workspaceFolders: string[]; workspaceOverview?: string; activeFile?: string; activeLanguage?: string; activeFileContent?: string; selectionText?: string; selectionStartLine?: number; selectionEndLine?: number; openFiles: string[]; diagnostics: string[]; projectInstructions?: string }

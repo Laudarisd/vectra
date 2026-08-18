@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.5
+
+- Replaced the single, silently-overwritten progress line with a running step log: earlier steps stay visible with a checkmark while the newest one spins, so a multi-file agent run now shows real file-by-file progress instead of one line changing in place. Applied to both the VS Code extension and Vectra Web.
+- Reworded progress/status labels so each one names the actual operation (analyzing a directory, generating a file, parsing a document, running tests, etc.) in a playful, toddler-speak voice instead of a generic "Analyzing…/Generating…/Producing…" cycle.
+- Nudged the agent's final-summary tone away from templated boilerplate ("no further changes are needed at this stage", generic "clean, modular, best practices" praise) toward a natural, specific explanation of what was actually built or changed.
+
 ## 2.0.4
 
 - Fixed the leading cause of "bad request" errors against local models: prompts are now clamped to the model's actual configured context window (`vectra.llamaCppContextSize`, `vectra.ollamaContextSize`) instead of a flat cloud-sized budget, so a request no longer exceeds the local server's `n_ctx` and gets rejected.

@@ -4,6 +4,8 @@ import { ProviderManager } from './providers/ProviderManager';
 import { ContextCollector } from './services/ContextCollector';
 import { DIFF_SCHEME, DiffContentProvider } from './services/DiffContentProvider';
 import { PatchManager } from './services/PatchManager';
+import { PlanManager } from './services/PlanManager';
+import { TodoManager } from './services/TodoManager';
 import { LocalCredentialStore } from './services/LocalCredentialStore';
 import { LocalLlamaCppService } from './services/LocalLlamaCppService';
 import { WorkspaceTools } from './services/WorkspaceTools';
@@ -42,12 +44,16 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
   const commands = new CommandRunner();
   const attachments = new AttachmentService();
   const patches = new PatchManager(tools);
+  const todos = new TodoManager();
+  const plans = new PlanManager();
   const diffs = new DiffContentProvider(patches);
-  const controller = new AgentController(providers, new ContextCollector(), tools, patches, commands);
+  const controller = new AgentController(providers, new ContextCollector(), tools, patches, commands, todos, plans);
   const chat = new ChatViewProvider(
     context.extensionUri,
     controller,
     patches,
+    todos,
+    plans,
     diffs,
     credentials,
     localLlama,
@@ -101,6 +107,19 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
       } catch (error) {
         output.appendLine(`[Vectra] Local model error: ${messageOf(error)}`);
         void vscode.window.showErrorMessage(`Vectra local model failed: ${messageOf(error)}`);
+      }
+    }),
+    vscode.commands.registerCommand('vectra.downloadModel', async () => {
+      if (!requireTrustedWorkspace('download a local model')) return;
+      try {
+        const modelId = await localLlama!.downloadAndSelectModel();
+        if (modelId) {
+          await chat.refresh();
+          void vscode.window.showInformationMessage(`Vectra local model ready: ${modelId}`);
+        }
+      } catch (error) {
+        output.appendLine(`[Vectra] Model download error: ${messageOf(error)}`);
+        void vscode.window.showErrorMessage(`Vectra model download failed: ${messageOf(error)}`);
       }
     }),
     vscode.commands.registerCommand('vectra.setApiKey', async () => {

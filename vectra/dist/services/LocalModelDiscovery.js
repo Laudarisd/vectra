@@ -37,6 +37,7 @@ exports.discoverGgufModels = discoverGgufModels;
 exports.discoverOllamaModels = discoverOllamaModels;
 exports.commonModelDirectories = commonModelDirectories;
 exports.normalizeShardPath = normalizeShardPath;
+exports.formatBytes = formatBytes;
 const node_fs_1 = require("node:fs");
 const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
@@ -144,6 +145,7 @@ function commonModelDirectories() {
     const localAppData = process.env.LOCALAPPDATA || '';
     const appData = process.env.APPDATA || '';
     return [
+        path.join(home, '.vectra', 'models'),
         path.join(home, 'models'),
         path.join(home, 'Models'),
         path.join(home, 'Downloads'),

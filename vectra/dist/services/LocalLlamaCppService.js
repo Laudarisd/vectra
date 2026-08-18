@@ -41,8 +41,13 @@ const path = __importStar(require("node:path"));
 const node_util_1 = require("node:util");
 const vscode = __importStar(require("vscode"));
 const OpenAICompatibleProvider_1 = require("../providers/OpenAICompatibleProvider");
+const hardware_1 = require("../utils/hardware");
 const config_1 = require("../utils/config");
+const HuggingFaceSearch_1 = require("./HuggingFaceSearch");
 const LocalModelDiscovery_1 = require("./LocalModelDiscovery");
+const ModelCatalog_1 = require("./ModelCatalog");
+const ModelDownloader_1 = require("./ModelDownloader");
+const ModelRecommender_1 = require("./ModelRecommender");
 const execFileAsync = (0, node_util_1.promisify)(node_child_process_1.execFile);
 /** Owns local model selection and the llama.cpp child-process lifecycle. */
 class LocalLlamaCppService {
@@ -161,6 +166,151 @@ class LocalLlamaCppService {
             title: `Vectra: loading ${path.basename(modelPath)}…`
         }, () => this.configureAndStartModel(modelPath));
     }
+    /**
+     * Hardware-aware model discovery: recommend from a curated list, or search
+     * Hugging Face for more, confirm size/destination, download with progress,
+     * then hand off to configureAndStartModel() — the exact same activation
+     * path manual selection already uses, so VLM vision auto-wiring (which
+     * keys off "a mmproj*.gguf file next to the model") comes for free once
+     * both files land in the same directory.
+     */
+    async downloadAndSelectModel() {
+        const entry = await this.pickCatalogEntry();
+        if (!entry)
+            return undefined;
+        const destDir = this.resolveModelsDirectory();
+        await node_fs_1.promises.mkdir(destDir, { recursive: true });
+        const modelPath = path.join(destDir, entry.filename);
+        const sizeText = entry.sizeBytes ? (0, LocalModelDiscovery_1.formatBytes)(entry.sizeBytes) : 'unknown';
+        const choice = await vscode.window.showWarningMessage(`Download ${entry.label}?`, { modal: true, detail: `Size: ${sizeText}\nSaves to: ${modelPath}` }, 'Download');
+        if (choice !== 'Download')
+            return undefined;
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Vectra: downloading ${entry.label}…`,
+            cancellable: true
+        }, async (progress, token) => {
+            const controller = new AbortController();
+            token.onCancellationRequested(() => controller.abort());
+            const isVlm = entry.kind === 'vlm' && entry.mmprojUrl && entry.mmprojFilename;
+            await (0, ModelDownloader_1.downloadFile)(entry.downloadUrl, modelPath, {
+                signal: controller.signal,
+                onProgress: phaseProgress(progress, isVlm ? 'Model (1/2)' : 'Model')
+            });
+            if (isVlm) {
+                const mmprojPath = path.join(destDir, entry.mmprojFilename);
+                await (0, ModelDownloader_1.downloadFile)(entry.mmprojUrl, mmprojPath, {
+                    signal: controller.signal,
+                    onProgress: phaseProgress(progress, 'Vision projector (2/2)')
+                });
+            }
+        });
+        return this.configureAndStartModel(modelPath);
+    }
+    resolveModelsDirectory() {
+        return (0, config_1.getConfig)().modelsDirectory || path.join(os.homedir(), '.vectra', 'models');
+    }
+    async pickCatalogEntry() {
+        const hw = await (0, hardware_1.getHardwareSnapshot)();
+        const recommended = (0, ModelRecommender_1.recommendCatalogEntries)(hw, ModelCatalog_1.CURATED_MODELS);
+        return this.showCatalogPicker(recommended);
+    }
+    async showCatalogPicker(recommended) {
+        const llmEntries = recommended.filter((entry) => entry.kind === 'llm');
+        const vlmEntries = recommended.filter((entry) => entry.kind === 'vlm');
+        const items = [];
+        if (llmEntries.length) {
+            items.push({ label: 'Recommended for your hardware', kind: vscode.QuickPickItemKind.Separator });
+            items.push(...llmEntries.map(toCatalogPickItem));
+        }
+        if (vlmEntries.length) {
+            items.push({ label: 'Vision models', kind: vscode.QuickPickItemKind.Separator });
+            items.push(...vlmEntries.map(toCatalogPickItem));
+        }
+        items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+        items.push({ label: '$(search) Search Hugging Face for more…', action: 'search' });
+        const picked = await vscode.window.showQuickPick(items, {
+            title: 'Vectra: Download Model',
+            placeHolder: recommended.length
+                ? 'Choose a recommended model, or search for more'
+                : 'No curated model fits your detected hardware — search Hugging Face instead',
+            matchOnDescription: true,
+            matchOnDetail: true
+        });
+        if (!picked)
+            return undefined;
+        if (picked.entry)
+            return picked.entry;
+        if (picked.action === 'search')
+            return this.showSearchFlow(recommended);
+        return undefined;
+    }
+    async showSearchFlow(recommended) {
+        const query = await vscode.window.showInputBox({
+            title: 'Vectra: Search Hugging Face for a GGUF model',
+            prompt: 'e.g. "llama 3 8b", "qwen coder", "phi mini"',
+            ignoreFocusOut: true
+        });
+        if (!query?.trim())
+            return this.showCatalogPicker(recommended);
+        let results;
+        try {
+            results = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Vectra: searching Hugging Face for "${query}"…` }, () => (0, HuggingFaceSearch_1.searchHuggingFace)(query.trim()));
+        }
+        catch (error) {
+            void vscode.window.showErrorMessage(`Vectra Hugging Face search failed: ${messageOf(error)}`);
+            return undefined;
+        }
+        if (!results.length) {
+            const retry = await vscode.window.showWarningMessage(`No Hugging Face GGUF results for "${query}".`, 'Search again', 'Back');
+            if (retry === 'Search again')
+                return this.showSearchFlow(recommended);
+            if (retry === 'Back')
+                return this.showCatalogPicker(recommended);
+            return undefined;
+        }
+        const items = [
+            { label: '$(arrow-left) Back to recommended models', action: 'back' },
+            ...results.map((result) => ({
+                label: `$(repo) ${result.label}`,
+                description: `${result.downloads.toLocaleString()} downloads`,
+                result
+            }))
+        ];
+        const picked = await vscode.window.showQuickPick(items, {
+            title: `Vectra: ${results.length} Hugging Face result${results.length === 1 ? '' : 's'}`,
+            placeHolder: 'Type to filter results',
+            matchOnDescription: true
+        });
+        if (!picked)
+            return undefined;
+        if (picked.action === 'back')
+            return this.showCatalogPicker(recommended);
+        if (!picked.result)
+            return undefined;
+        const resolved = await (0, HuggingFaceSearch_1.resolveDownloadableFile)(picked.result.id);
+        if (!resolved) {
+            const openInBrowser = await vscode.window.showWarningMessage(`Vectra could not determine a single downloadable GGUF file for ${picked.result.id}. Open its Hugging Face page instead?`, 'Open in Browser');
+            if (openInBrowser === 'Open in Browser') {
+                await vscode.env.openExternal(vscode.Uri.parse(`https://huggingface.co/${picked.result.id}`));
+            }
+            return undefined;
+        }
+        return {
+            id: `hf:${picked.result.id}:${resolved.filename}`,
+            label: `${picked.result.id} (${resolved.filename})`,
+            family: 'other',
+            paramCount: 0,
+            quant: '',
+            kind: 'llm',
+            sizeBytes: resolved.sizeBytes ?? 0,
+            minVramMiB: 0,
+            minRamMiB: 0,
+            downloadUrl: resolved.downloadUrl,
+            filename: resolved.filename
+        };
+    }
+    /** Public: also the activation tail end of downloadAndSelectModel() below. */
     async configureAndStartModel(selectedPath) {
         const config = (0, config_1.getConfig)();
         const modelPath = (0, LocalModelDiscovery_1.normalizeShardPath)(selectedPath);
@@ -446,5 +596,35 @@ function delay(milliseconds) {
 }
 function shellQuote(value) {
     return /\s/.test(value) ? JSON.stringify(value) : value;
+}
+function toCatalogPickItem(entry) {
+    return {
+        label: `$(file-binary) ${entry.label}`,
+        description: `${entry.family} · ${entry.paramCount}B · ${(0, LocalModelDiscovery_1.formatBytes)(entry.sizeBytes)}`,
+        detail: entry.kind === 'vlm' ? 'Vision-language model — includes a vision projector' : undefined,
+        entry
+    };
+}
+/**
+ * Each phase (model, then optionally the vision projector) reports its own
+ * 0-100% independently — simpler and safer than trying to weight a single
+ * combined bar across two differently-sized downloads. VS Code's progress
+ * bar visually settles near "full" after phase 1; the message text still
+ * accurately reflects phase 2, which is what actually matters here.
+ */
+function phaseProgress(progress, label) {
+    let lastPercent = 0;
+    return (bytesDone, totalBytes) => {
+        if (!totalBytes) {
+            progress.report({ message: `${label}: ${(0, LocalModelDiscovery_1.formatBytes)(bytesDone)}` });
+            return;
+        }
+        const percent = Math.min(100, Math.floor((bytesDone / totalBytes) * 100));
+        progress.report({ increment: Math.max(0, percent - lastPercent), message: `${label}: ${percent}%` });
+        lastPercent = percent;
+    };
+}
+function messageOf(error) {
+    return error instanceof Error ? error.message : String(error);
 }
 //# sourceMappingURL=LocalLlamaCppService.js.map

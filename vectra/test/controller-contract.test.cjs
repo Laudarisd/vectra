@@ -30,14 +30,15 @@ test('controller never shows engine internals or bare status text to the user', 
 
 test('controller continues after tools and keeps multi-file proposals in one run', () => {
   const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
-  assert.match(src, /for \(let step = 1; step <= config\.maxAgentSteps; step\+\+\)/);
+  assert.match(src, /for \(let step = 1; step <= opts\.maxSteps; step\+\+\)/);
+  assert.match(src, /maxSteps: config\.maxAgentSteps/);
   assert.match(src, /proposalIds = new Set<string>/);
   assert.doesNotMatch(src, /if \(createdProposalThisStep\)/);
 });
 
 test('controller sends parsed text once and reserves provider attachments for media', () => {
   const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
-  assert.match(src, /providerMediaAttachments\(mediaAttachments\)/);
+  assert.match(src, /providerMediaAttachments\(opts\.mediaAttachments\)/);
   assert.match(src, /attachment\.kind === 'image' \|\| attachment\.kind === 'pdf'/);
 });
 

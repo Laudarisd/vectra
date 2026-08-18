@@ -72,7 +72,8 @@ class PatchManager {
             return undefined;
         return proposal.proposedContent;
     }
-    async proposeFile(filePath, proposedContent, reason = 'Agent-proposed change') {
+    async proposeFile(filePath, rawProposedContent, reason = 'Agent-proposed change') {
+        const proposedContent = (0, text_1.stripEnclosingCodeFence)(rawProposedContent);
         const pending = this.getPendingForPath(filePath);
         if (pending) {
             if (pending.kind === 'delete' || pending.contentType !== 'text') {

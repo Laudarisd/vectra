@@ -38,11 +38,13 @@ const node_crypto_1 = require("node:crypto");
 const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
 const text_1 = require("../utils/text");
+const WebTools_1 = require("../services/WebTools");
 const GitTools_1 = require("../services/GitTools");
 const DocumentExtractor_1 = require("../services/DocumentExtractor");
 const AgentToolRegistry_1 = require("./AgentToolRegistry");
 const protocol_1 = require("./protocol");
 const ConversationContext_1 = require("./ConversationContext");
+const MAX_DELEGATIONS_PER_RUN = 3;
 /**
  * Runs the model/tool loop for one user request.
  *
@@ -55,12 +57,16 @@ class AgentController {
     providers;
     contextCollector;
     patches;
+    todos;
+    plans;
     toolRegistry;
-    constructor(providers, contextCollector, tools, patches, commands, git = new GitTools_1.GitTools()) {
+    constructor(providers, contextCollector, tools, patches, commands, todos, plans, git = new GitTools_1.GitTools(), web = new WebTools_1.WebTools()) {
         this.providers = providers;
         this.contextCollector = contextCollector;
         this.patches = patches;
-        this.toolRegistry = new AgentToolRegistry_1.AgentToolRegistry(tools, patches, commands, git);
+        this.todos = todos;
+        this.plans = plans;
+        this.toolRegistry = new AgentToolRegistry_1.AgentToolRegistry(tools, patches, commands, git, todos, plans, web);
     }
     async run(request) {
         if (!vscode.workspace.isTrusted) {
@@ -79,52 +85,110 @@ class AgentController {
             return { text: await this.converse(provider, request, config), proposals: [] };
         }
         const contextCharBudget = effectiveCharBudget(config);
+        // A plan approved for a previous task must not silently authorize writes
+        // for an unrelated new one — each agent-mode run starts needing its own.
+        if (request.mode === 'agent')
+            this.plans.reset();
         const workspaceContext = await this.contextCollector.collect(request.mode);
         const mediaAttachments = [...(request.attachments ?? [])];
         if (config.provider === 'llamaCpp' && config.llamaCppMmprojPath) {
             await addLocalVisionPdfPages(mediaAttachments);
         }
-        const observations = [];
-        const proposalIds = new Set();
+        // Proposals from an earlier turn stay pending (unwritten) until the user
+        // accepts or rejects them in the review panel. Seeding with them here is
+        // what lets this run's prompt and final summary stay honest about that
+        // state instead of the model guessing from its own past chat claims.
+        const proposalIds = new Set(this.patches.list().filter((proposal) => proposal.status === 'pending').map((proposal) => proposal.id));
+        const message = await this.runLoop({
+            task: request.userText,
+            mode: request.mode,
+            history: request.history,
+            workspaceContext,
+            observations: [],
+            mediaAttachments,
+            proposalIds,
+            maxSteps: config.maxAgentSteps,
+            subagent: false,
+            preload: request.mode !== 'selection',
+            provider,
+            config,
+            contextCharBudget,
+            signal: request.signal,
+            onProgress: request.onProgress,
+            onTodosChanged: request.onTodosChanged,
+            onPlanChanged: request.onPlanChanged
+        });
+        return this.finish(message, [...proposalIds]);
+    }
+    /**
+     * The shared step loop. The top-level run() and a delegate_task sub-run both
+     * call this — a sub-run passes subagent: true, fresh empty history/
+     * observations/proposalIds, an independent (smaller) step budget, and no
+     * plan/todo callbacks, so it can never see or mutate the parent's plan or
+     * todo state. AgentToolRegistry additionally denies it any write, execution,
+     * plan, todo, or further-delegation action regardless of what it requests.
+     */
+    async runLoop(opts) {
+        const observations = opts.observations;
         const attemptedActions = new Set();
         let duplicateOnlySteps = 0;
         let verificationTurnUsed = false;
+        let delegateCallCount = 0;
         let lastMessage = '';
         // Ask and Agent begin with real workspace evidence. This makes a directory
         // question answerable in one user prompt even when a small model forgets to
-        // request discovery on its first turn.
-        if (request.mode !== 'selection') {
-            request.onProgress?.('Scanning workspace…');
-            const preload = await this.toolRegistry.execute({ type: 'workspace_summary' }, { mode: request.mode, mediaAttachments, signal: request.signal });
+        // request discovery on its first turn. A sub-run reuses the parent's
+        // already-collected workspaceContext instead of preloading again.
+        if (opts.preload) {
+            opts.onProgress?.("Snoopin' 'round the whole workspace, first peek!…");
+            const preload = await this.toolRegistry.execute({ type: 'workspace_summary' }, { mode: opts.mode, mediaAttachments: opts.mediaAttachments, signal: opts.signal, subagent: opts.subagent });
             observations.push(preload.observation);
         }
-        for (let step = 1; step <= config.maxAgentSteps; step++) {
-            if (request.signal?.aborted)
+        for (let step = 1; step <= opts.maxSteps; step++) {
+            if (opts.signal?.aborted)
                 throw new Error('Request cancelled.');
-            request.onProgress?.(step === 1 ? 'Analyzing…' : 'Generating…');
-            const userPrompt = buildUserPrompt(request.userText, request.history, workspaceContext, observations, mediaAttachments, this.resolveProposals([...proposalIds]), contextCharBudget);
-            const raw = await provider.complete({
-                systemPrompt: (0, protocol_1.buildSystemPrompt)(request.mode),
+            opts.onProgress?.(step === 1 ? "Analyzin' errythin'…" : "Generatin' more stuff…");
+            const userPrompt = buildUserPrompt(opts.task, opts.history, opts.workspaceContext, observations, opts.mediaAttachments, this.resolveProposals([...opts.proposalIds]), opts.subagent ? [] : this.todos.list(), opts.subagent ? undefined : this.plans.get(), opts.contextCharBudget);
+            const raw = await opts.provider.complete({
+                systemPrompt: (0, protocol_1.buildSystemPrompt)(opts.mode),
                 userPrompt,
-                model: config.model,
+                model: opts.config.model,
                 // Extracted text already lives in userPrompt. Providers only receive
                 // native visual/PDF bytes here, avoiding duplicate token-heavy text.
-                attachments: providerMediaAttachments(mediaAttachments),
-                signal: request.signal
+                attachments: providerMediaAttachments(opts.mediaAttachments),
+                signal: opts.signal
             });
             const envelope = (0, protocol_1.parseAgentEnvelope)(raw);
             lastMessage = envelope.message || lastMessage;
             if (!envelope.actions.length) {
-                request.onProgress?.('Producing…');
+                opts.onProgress?.("Wrappin' it all up…");
                 const answer = envelope.message || lastMessage;
-                return this.finish((0, ConversationContext_1.isStatusOnlyReply)(answer)
+                // A model can skip tools entirely and just narrate success in prose.
+                // There is no create_directory action at all, so any "created a
+                // folder" claim reaching here is fabricated by definition. Give it
+                // one real chance to back the claim with an actual action, or retract
+                // it, instead of forwarding an assertion nothing supports.
+                if (opts.mode === 'agent' &&
+                    !this.resolveProposals([...opts.proposalIds]).length &&
+                    !verificationTurnUsed &&
+                    claimsUnverifiedCreation(answer)) {
+                    verificationTurnUsed = true;
+                    opts.onProgress?.("Checky-checky my own work…");
+                    observations.push('GROUNDING CHECK: Your last reply claimed file or folder creation, but no propose_file(s)/create_file ' +
+                        'action was ever executed this run and no proposal is pending. There is no create_directory action — ' +
+                        'folders only ever appear as a side effect of an accepted file proposal. Either call the real action now ' +
+                        '(propose_files, create_file, etc.) to actually do this, or reply again with actions=[] and an honest ' +
+                        'message that does not claim anything was created, written, or saved.');
+                    continue;
+                }
+                return (0, ConversationContext_1.isStatusOnlyReply)(answer)
                     ? 'I finished, but I do not have a useful summary to show for it. Could you rephrase what you need?'
-                    : answer, [...proposalIds]);
+                    : answer;
             }
             let allActionsWereSuccessfulWrites = true;
             let executedActionCount = 0;
             for (const action of envelope.actions.slice(0, 40)) {
-                if (request.signal?.aborted)
+                if (opts.signal?.aborted)
                     throw new Error('Request cancelled.');
                 const fingerprint = actionFingerprint(action);
                 if (attemptedActions.has(fingerprint)) {
@@ -135,17 +199,80 @@ class AgentController {
                 }
                 attemptedActions.add(fingerprint);
                 executedActionCount++;
-                request.onProgress?.(this.toolRegistry.describe(action));
+                // A legitimate (non-subagent) delegation runs a nested, bounded,
+                // read-only step loop and folds its summary back in as one
+                // observation. A subagent requesting this itself falls through to
+                // the normal dispatch below, where AgentToolRegistry denies it —
+                // recursion is never allowed, not even once.
+                if (action.type === 'delegate_task' && !opts.subagent) {
+                    if (delegateCallCount >= MAX_DELEGATIONS_PER_RUN) {
+                        observations.push(`ACTION ${(0, text_1.safeJson)({ type: 'delegate_task', task: action.task })}\n` +
+                            `RESULT\nERROR: delegate_task call limit (${MAX_DELEGATIONS_PER_RUN}) reached this run. Proceed directly instead of delegating further.`);
+                        allActionsWereSuccessfulWrites = false;
+                        continue;
+                    }
+                    delegateCallCount++;
+                    opts.onProgress?.(`Delegatin' a sub-task: "${(0, text_1.truncateMiddle)(action.task, 80)}"…`);
+                    const subBudget = Math.max(1, Math.min(opts.config.maxAgentSteps, opts.config.maxSubagentSteps));
+                    const summary = await this.runLoop({
+                        task: buildSubagentTask(action.task),
+                        mode: 'agent',
+                        history: [],
+                        workspaceContext: opts.workspaceContext,
+                        observations: [],
+                        mediaAttachments: [],
+                        proposalIds: new Set(),
+                        maxSteps: subBudget,
+                        subagent: true,
+                        preload: false,
+                        provider: opts.provider,
+                        config: opts.config,
+                        contextCharBudget: opts.contextCharBudget,
+                        signal: opts.signal,
+                        onProgress: (message) => opts.onProgress?.(`Sub-task: ${message}`)
+                    });
+                    observations.push(`ACTION ${(0, text_1.safeJson)({ type: 'delegate_task', task: action.task })}\nRESULT\n${summary}`);
+                    // A delegation is exploration, not a write — it must not make the
+                    // step look like a completed write batch to the done-check below.
+                    allActionsWereSuccessfulWrites = false;
+                    continue;
+                }
+                opts.onProgress?.(this.toolRegistry.describe(action));
                 const result = await this.toolRegistry.execute(action, {
-                    mode: request.mode,
-                    mediaAttachments,
-                    signal: request.signal
+                    mode: opts.mode,
+                    mediaAttachments: opts.mediaAttachments,
+                    signal: opts.signal,
+                    subagent: opts.subagent
                 });
                 observations.push(result.observation);
                 for (const id of result.proposalIds)
-                    proposalIds.add(id);
+                    opts.proposalIds.add(id);
                 if (!result.wrote || /\b(?:ERROR|Denied):/i.test(result.observation)) {
                     allActionsWereSuccessfulWrites = false;
+                }
+                if (action.type === 'todo_write')
+                    opts.onTodosChanged?.(this.todos.list());
+            }
+            // A freshly proposed plan suspends this run in place until the user
+            // decides in the chat panel. No synthetic turn or resend is needed:
+            // execution resumes in the same run with the same step budget. A
+            // subagent can never propose a plan (denied by the registry), so this
+            // never applies to one — it also must never react to the parent's plan.
+            if (!opts.subagent) {
+                const activePlan = this.plans.get();
+                if (activePlan && activePlan.status === 'pending') {
+                    opts.onPlanChanged?.(activePlan);
+                    opts.onProgress?.('Waiting for you to approve the plan…');
+                    const decision = await this.plans.waitForDecision(activePlan.id, opts.signal);
+                    if (decision === 'approved') {
+                        this.todos.set(activePlan.steps.map((planStep) => ({ id: planStep.id, content: planStep.text, status: 'pending' })));
+                        opts.onTodosChanged?.(this.todos.list());
+                        observations.push('PLAN APPROVED: proceed to execute it now, step by step, using real tools.');
+                    }
+                    else {
+                        observations.push('PLAN REJECTED: ask what to change, or propose a revised plan with propose_plan before attempting any write/execution action.');
+                    }
+                    continue;
                 }
             }
             duplicateOnlySteps = executedActionCount === 0 ? duplicateOnlySteps + 1 : 0;
@@ -153,8 +280,8 @@ class AgentController {
                 // The loop guard is an engine detail. The user gets a plain explanation
                 // and a way forward instead of the internal reason.
                 const progress = (0, ConversationContext_1.isStatusOnlyReply)(lastMessage) ? '' : `${lastMessage}\n\n`;
-                return this.finish(`${progress}I stopped because I kept repeating the same step without making progress. ` +
-                    'Could you tell me a bit more about what you need, or point me at the file or folder to start from?', [...proposalIds]);
+                return `${progress}I stopped because I kept repeating the same step without making progress. ` +
+                    'Could you tell me a bit more about what you need, or point me at the file or folder to start from?';
             }
             // A model may submit a complete batch and explicitly mark it done. Before
             // accepting that, give it exactly one turn to check its own work against
@@ -162,10 +289,10 @@ class AgentController {
             // an assertion. Read and error results always get another turn anyway.
             if (envelope.done && allActionsWereSuccessfulWrites) {
                 if (verificationTurnUsed) {
-                    return this.finish(lastMessage || 'Project changes prepared.', [...proposalIds]);
+                    return lastMessage || 'Project changes prepared.';
                 }
                 verificationTurnUsed = true;
-                request.onProgress?.('Verifying changes…');
+                opts.onProgress?.("Checky-checky my own work…");
                 observations.push('VERIFICATION STEP: Your files are prepared but not yet reviewed by the user. ' +
                     'Check your own work now: use list_directory to confirm the layout, read_file on the files you just prepared ' +
                     '(the pending overlay serves their new content), and search_text to confirm imports, names, and references line up. ' +
@@ -175,15 +302,15 @@ class AgentController {
             }
         }
         const progress = (0, ConversationContext_1.isStatusOnlyReply)(lastMessage) ? '' : `${lastMessage}\n\n`;
-        return this.finish(`${progress}I reached my limit of ${config.maxAgentSteps} steps for this request, so this is as far as I got. ` +
-            'Ask me to continue, or narrow the request and I will pick it up from here.', [...proposalIds]);
+        return `${progress}I reached my limit of ${opts.maxSteps} steps for this request, so this is as far as I got. ` +
+            'Ask me to continue, or narrow the request and I will pick it up from here.';
     }
     /**
      * Single plain-prose completion for a conversational turn. No tools, no
      * workspace context, and no forced JSON schema.
      */
     async converse(provider, request, config) {
-        request.onProgress?.('Thinking…');
+        request.onProgress?.("Thinkin' thinkin'…");
         const history = (0, ConversationContext_1.formatRecentHistory)(request.history);
         const charBudget = Math.min(effectiveCharBudget(config), 24_000);
         // A retry (see below) must not re-stream: the first attempt's partial
@@ -215,27 +342,51 @@ class AgentController {
             ? 'Hi! I am Vectra, your coding assistant in VS Code. What would you like to work on?'
             : reply;
     }
+    /**
+     * The model's `message` is free text it writes about its own turn, and a
+     * weak or local model will sometimes narrate file/folder creation it never
+     * actually attempted through a tool call. When there ARE pending proposals,
+     * PatchManager — the one source of truth for what is written vs. pending —
+     * still gets the final word, appended as a plain, useful next step. When
+     * there is nothing pending, the model's own natural reply is left alone: a
+     * conversational answer (e.g. "I can't generate images, but I could write
+     * a script for that") does not need a disk-write disclaimer bolted onto it.
+     */
     finish(message, ids) {
         const proposals = this.resolveProposals(ids);
-        if (!proposals.length)
-            return { text: message, proposals };
-        const noun = proposals.length === 1 ? 'change is' : 'changes are';
-        const suffix = `${proposals.length} ${noun} ready for review. Accept them to write the project to disk.`;
-        return { text: [message, suffix].filter(Boolean).join('\n\n'), proposals };
+        if (proposals.length) {
+            const noun = proposals.length === 1 ? 'change is' : 'changes are';
+            const suffix = `${proposals.length} ${noun} ready for review. Accept them to write the project to disk.`;
+            return { text: [message, suffix].filter(Boolean).join('\n\n'), proposals };
+        }
+        return { text: message, proposals };
     }
     resolveProposals(ids) {
-        return ids.map((id) => this.patches.get(id)).filter(Boolean);
+        // Only 'pending' survives here: once a proposal is accepted, rejected, or
+        // goes stale mid-run (e.g. the user actioned it from the panel while this
+        // run was still going), it must stop being announced as awaiting review.
+        return ids
+            .map((id) => this.patches.get(id))
+            .filter((proposal) => proposal?.status === 'pending');
     }
 }
 exports.AgentController = AgentController;
-function buildUserPrompt(task, history, context, observations, attachments, proposals, maxCharacters) {
+function buildUserPrompt(task, history, context, observations, attachments, proposals, todos, plan, maxCharacters) {
     const recentHistory = (0, ConversationContext_1.formatRecentHistory)(history);
     const observationsText = observations.length
         ? observations.slice(-32).map((observation, index) => `OBSERVATION ${index + 1}\n${observation}`).join('\n\n')
         : 'No tool observations yet.';
     const pendingText = proposals.length
-        ? proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}`).join('\n')
-        : 'No proposals prepared in this run.';
+        ? `These exist only as reviewed proposals, NOT yet written to disk. Do not tell the user they were created, ` +
+            `saved, or now present until the user accepts them.\n` +
+            proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}`).join('\n')
+        : 'No proposals are pending. Nothing has been written or is queued for review right now.';
+    const todoText = todos.length
+        ? todos.map((item) => `- [${item.status === 'completed' ? 'x' : item.status === 'in_progress' ? '~' : ' '}] ${item.content} (${item.status})`).join('\n')
+        : 'No todo list yet.';
+    const planText = plan
+        ? `Plan (${plan.status}):\n${plan.steps.map((step) => `- ${step.text}`).join('\n')}`
+        : 'No plan proposed yet. Propose one with propose_plan before any write or execution action.';
     // The task stays at the beginning and recent evidence stays at the end. If a
     // very large session must be truncated, these are the two highest-value areas.
     return (0, text_1.truncateMiddle)(`CURRENT USER TASK\n${task}\n\n` +
@@ -243,6 +394,8 @@ function buildUserPrompt(task, history, context, observations, attachments, prop
         `PARSED ATTACHMENTS\n${formatAttachmentContext(attachments)}\n\n` +
         `RECENT CHAT\n${recentHistory || 'No previous chat.'}\n\n` +
         `PENDING REVIEW BATCH\n${pendingText}\n\n` +
+        `PLAN\n${planText}\n\n` +
+        `TODO LIST\n${todoText}\n\n` +
         `TOOL OBSERVATIONS\n${observationsText}\n\n` +
         `ACTIVE TASK REMINDER\n${task}\n` +
         'This task replaces any conflicting or unfinished request in RECENT CHAT. Never repeat an old tool action unless this task explicitly requests it.\n\n' +
@@ -266,6 +419,23 @@ function effectiveCharBudget(config) {
 }
 function actionFingerprint(action) {
     return JSON.stringify(action);
+}
+/**
+ * Loose net for "I just did file/folder work" narration, used only to decide
+ * whether a zero-action reply deserves one grounding challenge before it
+ * reaches the user. False positives cost one extra turn; false negatives let
+ * a fabricated claim straight through, so this stays deliberately broad.
+ */
+const CREATION_CLAIM_PATTERN = /\b(?:created|creating|generated|generating|built|building|wrote|written|writing|saved|saving|added|adding|implemented|implementing|set up|setting up|prepared|preparing|made|making)\b[\s\S]{0,80}\b(?:file|files|folder|folders|directory|directories|pipeline|pipelines|project|script|scripts|module|modules|component|components)\b/i;
+function claimsUnverifiedCreation(message) {
+    return CREATION_CLAIM_PATTERN.test(message);
+}
+/** Framing prepended to a delegated task: the sub-agent has no memory of the parent conversation and a hard-restricted tool set. */
+function buildSubagentTask(task) {
+    return 'You are a bounded, read-only sub-agent helping with one focused exploration task delegated by the main agent. ' +
+        'You have no memory of the main conversation — the task below is everything you know. ' +
+        'You cannot write files, run commands, propose a plan, edit the todo list, or delegate further; investigate and report back precisely.\n\n' +
+        `TASK\n${task}`;
 }
 function formatWorkspaceContext(context) {
     const sections = [

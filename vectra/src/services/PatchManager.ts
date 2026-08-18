@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { EditProposal } from '../types';
 import { normalizeAgentPath, resolveWorkspacePath } from '../utils/path';
-import { sha256, sha256Bytes } from '../utils/text';
+import { sha256, sha256Bytes, stripEnclosingCodeFence } from '../utils/text';
 import { createDocumentBytes, documentFormatForPath, extractDocumentText, isWritableDocumentFormat } from './DocumentService';
 import { WorkspaceTools } from './WorkspaceTools';
 
@@ -45,9 +45,10 @@ export class PatchManager {
 
   async proposeFile(
     filePath: string,
-    proposedContent: string,
+    rawProposedContent: string,
     reason = 'Agent-proposed change'
   ): Promise<EditProposal> {
+    const proposedContent = stripEnclosingCodeFence(rawProposedContent);
     const pending = this.getPendingForPath(filePath);
     if (pending) {
       if (pending.kind === 'delete' || pending.contentType !== 'text') {

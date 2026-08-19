@@ -1,0 +1,444 @@
+{
+  "name": "vectra",
+  "displayName": "Vectra",
+  "description": "A fast, local-first AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
+  "version": "2.0.5",
+  "publisher": "laudarisd",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding",
+    "llama.cpp",
+    "gguf",
+    "openai",
+    "anthropic",
+    "gemini",
+    "local llm"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:vectra.attachFiles",
+    "onCommand:vectra.checkSelection",
+    "onCommand:vectra.open",
+    "onCommand:vectra.selectLocalModel",
+    "onCommand:vectra.downloadModel",
+    "onCommand:vectra.selectMmproj",
+    "onView:vectra.chat",
+    "onCommand:vectra.showLogs"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vectra.open",
+        "title": "Open Vectra",
+        "category": "Vectra",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "vectra.checkSelection",
+        "title": "Check Selection with Vectra",
+        "category": "Vectra",
+        "icon": "$(search)"
+      },
+      {
+        "command": "vectra.setApiKey",
+        "title": "Configure API Key",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.selectLocalModel",
+        "title": "Select Local GGUF Model",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.downloadModel",
+        "title": "Download Model",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.selectModel",
+        "title": "Select AI Model",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.selectProvider",
+        "title": "Advanced: Select Provider",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.testConnection",
+        "title": "Test Model Connection",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.openSettings",
+        "title": "Open Settings",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.supportDeveloper",
+        "title": "Support the Developer",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.attachFiles",
+        "title": "Attach Files",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.selectMmproj",
+        "title": "Select Local Vision Projector (mmproj)",
+        "category": "Vectra"
+      },
+      {
+        "command": "vectra.showLogs",
+        "title": "Show Vectra Logs",
+        "category": "Vectra"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vectraSidebar",
+          "title": "Vectra",
+          "icon": "media/VectraLogo.png"
+        }
+      ]
+    },
+    "views": {
+      "vectraSidebar": [
+        {
+          "type": "webview",
+          "id": "vectra.chat",
+          "name": "Vectra",
+          "icon": "media/VectraLogo.png",
+          "visibility": "visible",
+          "contextualTitle": "Vectra"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "vectra.checkSelection",
+          "when": "editorTextFocus && editorHasSelection",
+          "group": "navigation@50"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vectra.openSettings",
+          "when": "view == vectra.chat",
+          "group": "navigation@20"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Vectra",
+      "properties": {
+        "vectra.provider": {
+          "type": "string",
+          "enum": [
+            "llamaCpp",
+            "openai",
+            "anthropic",
+            "gemini",
+            "openaiCompatible",
+            "ollama"
+          ],
+          "enumDescriptions": [
+            "Local GGUF model launched through llama.cpp.",
+            "OpenAI API using your locally stored key.",
+            "Anthropic Claude API using your locally stored key.",
+            "Google Gemini API using your locally stored key.",
+            "Any OpenAI-compatible endpoint such as LM Studio or vLLM.",
+            "Advanced compatibility option for an existing Ollama server."
+          ],
+          "default": "llamaCpp",
+          "description": "Active Vectra model provider. Normally choose through API Key or Local Model in the Vectra sidebar."
+        },
+        "vectra.model": {
+          "type": "string",
+          "default": "",
+          "description": "Active model ID."
+        },
+        "vectra.localModelPath": {
+          "type": "string",
+          "default": "",
+          "description": "Selected local GGUF model path."
+        },
+        "vectra.localModelDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Last local GGUF model directory used by the file picker."
+        },
+        "vectra.modelsDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Directory where Vectra saves models downloaded via Download Model. Leave empty to use ~/.vectra/models."
+        },
+        "vectra.llamaCppServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional full path to llama-server. Leave empty to auto-detect llama-server on PATH."
+        },
+        "vectra.llamaCppPort": {
+          "type": "number",
+          "default": 8080,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Local port used by Vectra's llama.cpp server."
+        },
+        "vectra.llamaCppContextSize": {
+          "type": "number",
+          "default": 16384,
+          "minimum": 1024,
+          "maximum": 1048576,
+          "description": "Context size passed to llama-server. Larger context uses more memory."
+        },
+        "vectra.ollamaBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Advanced: base URL for an existing Ollama server."
+        },
+        "vectra.ollamaContextSize": {
+          "type": "number",
+          "default": 8192,
+          "minimum": 1024,
+          "maximum": 1048576,
+          "description": "Context window (num_ctx) requested from Ollama. Ollama defaults to a small window unless told otherwise."
+        },
+        "vectra.localRequestTimeoutSeconds": {
+          "type": "number",
+          "default": 900,
+          "minimum": 60,
+          "maximum": 7200,
+          "description": "How long Vectra waits on a local model (llama.cpp, Ollama, OpenAI-compatible) response before giving up. Local CPU inference can be slow, so this is much higher than the cloud-provider timeout."
+        },
+        "vectra.openaiCompatibleBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:1234/v1",
+          "description": "OpenAI-compatible API endpoint such as LM Studio, vLLM, or a private gateway."
+        },
+        "vectra.openaiBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "OpenAI API base URL."
+        },
+        "vectra.anthropicBaseUrl": {
+          "type": "string",
+          "default": "https://api.anthropic.com/v1",
+          "description": "Anthropic API base URL."
+        },
+        "vectra.geminiBaseUrl": {
+          "type": "string",
+          "default": "https://generativelanguage.googleapis.com/v1",
+          "description": "Gemini API base URL."
+        },
+        "vectra.maxAgentSteps": {
+          "type": "number",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Maximum read/reason cycles per Agent request."
+        },
+        "vectra.maxSubagentSteps": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Maximum read/reason cycles for a single delegate_task sub-agent, independent of and typically smaller than Maximum Agent Steps."
+        },
+        "vectra.maxFileBytes": {
+          "type": "number",
+          "default": 1000000,
+          "minimum": 10000,
+          "maximum": 5000000,
+          "description": "Maximum file size Vectra will inspect automatically."
+        },
+        "vectra.maxContextCharacters": {
+          "type": "number",
+          "default": 180000,
+          "minimum": 10000,
+          "maximum": 1000000,
+          "description": "Soft character budget for repository/chat context."
+        },
+        "vectra.excludeGlob": {
+          "type": "string",
+          "default": "**/{node_modules,.git,dist,build,out,.next,.venv,venv,__pycache__,coverage}/**",
+          "description": "Glob excluded from workspace discovery and search."
+        },
+        "vectra.supportDeveloperUrl": {
+          "type": "string",
+          "default": "https://github.com/Laudarisd/vectra",
+          "description": "Vectra repository opened by Support Developer."
+        },
+        "vectra.showDiagnosticsInContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include active-file errors and warnings in context."
+        },
+        "vectra.allowSensitiveFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow access to files that commonly contain credentials. Disabled by default."
+        },
+        "vectra.llamaCppLoadTimeoutSeconds": {
+          "type": "number",
+          "default": 600,
+          "minimum": 30,
+          "maximum": 3600,
+          "description": "How long Vectra waits for large local models to load."
+        },
+        "vectra.llamaCppGpuLayers": {
+          "type": "string",
+          "default": "auto",
+          "description": "llama.cpp --gpu-layers value: auto, all, or an integer."
+        },
+        "vectra.llamaCppSplitMode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "layer",
+            "row",
+            "tensor"
+          ],
+          "default": "layer",
+          "description": "How llama.cpp distributes a model across multiple GPUs. Tensor mode is experimental."
+        },
+        "vectra.llamaCppCpuMoe": {
+          "type": "boolean",
+          "default": false,
+          "description": "Keep Mixture-of-Experts weights on CPU to reduce VRAM use for very large MoE models."
+        },
+        "vectra.llamaCppNoMmap": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable mmap. Leave off for large models unless you know you need --no-mmap."
+        },
+        "vectra.llamaCppMmprojPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional multimodal projector GGUF. Vectra automatically detects mmproj*.gguf beside the selected model."
+        },
+        "vectra.llamaCppExtraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Advanced extra arguments appended to llama-server."
+        },
+        "vectra.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "grayWhite"
+          ],
+          "enumDescriptions": [
+            "Match your current VS Code color theme.",
+            "Always use a fixed gray/white look for the Vectra sidebar, regardless of your VS Code theme."
+          ],
+          "default": "auto",
+          "description": "Vectra sidebar appearance."
+        },
+        "vectra.deviceMode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "gpu",
+            "cpu"
+          ],
+          "enumDescriptions": [
+            "Let the local runtime decide. Uses GPU acceleration when available.",
+            "Prefer GPU acceleration, using every detected GPU when more than one is available.",
+            "Force CPU-only inference, even when a GPU is available."
+          ],
+          "default": "auto",
+          "description": "Device used for local model inference (llama.cpp and Ollama)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "tsc --noEmit -p .",
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node --test",
+    "package": "npm run test && vsce package --no-dependencies",
+    "sync:web": "node scripts/sync-web.mjs",
+    "build:web": "npm run sync:web && node web/scripts/build.mjs",
+    "web": "npm run sync:web && node web/server.mjs",
+    "build:all": "npm run compile && npm run build:web && npm run test:web",
+    "test:web": "npm run sync:web && cd web && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.3.0",
+    "typescript": "^5.8.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "restrictedConfigurations": [
+        "vectra.provider",
+        "vectra.model",
+        "vectra.localModelPath",
+        "vectra.localModelDirectory",
+        "vectra.modelsDirectory",
+        "vectra.llamaCppServerPath",
+        "vectra.llamaCppPort",
+        "vectra.llamaCppContextSize",
+        "vectra.llamaCppLoadTimeoutSeconds",
+        "vectra.llamaCppGpuLayers",
+        "vectra.llamaCppSplitMode",
+        "vectra.llamaCppCpuMoe",
+        "vectra.llamaCppNoMmap",
+        "vectra.llamaCppMmprojPath",
+        "vectra.llamaCppExtraArgs",
+        "vectra.deviceMode",
+        "vectra.ollamaBaseUrl",
+        "vectra.openaiCompatibleBaseUrl",
+        "vectra.openaiBaseUrl",
+        "vectra.anthropicBaseUrl",
+        "vectra.geminiBaseUrl",
+        "vectra.supportDeveloperUrl"
+      ]
+    }
+  },
+  "author": {
+    "name": "Sudip Laudari"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Laudarisd/vectra.git"
+  },
+  "homepage": "https://github.com/Laudarisd/vectra",
+  "bugs": {
+    "url": "https://github.com/Laudarisd/vectra/issues"
+  },
+  "private": true,
+  "icon": "media/VectraLogo.png",
+  "funding": {
+    "url": "https://github.com/Laudarisd/vectra"
+  },
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "allowScripts": {
+    "keytar@7.9.0": true,
+    "@vscode/vsce-sign@2.0.9": true
+  }
+}

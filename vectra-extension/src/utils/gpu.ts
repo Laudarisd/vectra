@@ -5,23 +5,34 @@ const execFileAsync = promisify(execFile);
 const PROBE_TIMEOUT_MS = 4_000;
 const CACHE_TTL_MS = 60_000;
 
-let cache;
+export interface DetectedGpu {
+  name: string;
+  vramMiB?: number;
+  vendor?: 'nvidia';
+}
+
+/** True when at least one detected GPU is NVIDIA/CUDA-capable (the only backend llama.cpp/Ollama offload to today). */
+export function hasNvidiaGpu(gpus: DetectedGpu[]): boolean {
+  return gpus.some((gpu) => gpu.vendor === 'nvidia');
+}
+
+let cache: { at: number; gpus: DetectedGpu[] } | undefined;
 
 /**
  * Best-effort, dependency-free GPU inventory for the device-mode picker.
  * nvidia-smi gives authoritative name+VRAM for the common CUDA case; the
  * platform-native fallback only surfaces names (AMD/Apple/integrated) so the
- * UI can still say something useful even though llama.cpp only offloads to
- * CUDA devices today.
+ * UI can still say something useful even though llama.cpp/Ollama only offload
+ * to CUDA devices today.
  */
-export async function detectGpus() {
+export async function detectGpus(): Promise<DetectedGpu[]> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.gpus;
-  const gpus = (await detectViaNvidiaSmi()) ?? (await detectViaPlatform());
+  const gpus = await detectViaNvidiaSmi() ?? await detectViaPlatform();
   cache = { at: Date.now(), gpus };
   return gpus;
 }
 
-async function detectViaNvidiaSmi() {
+async function detectViaNvidiaSmi(): Promise<DetectedGpu[] | undefined> {
   try {
     const { stdout } = await execFileAsync(
       'nvidia-smi',
@@ -35,7 +46,7 @@ async function detectViaNvidiaSmi() {
       .map((line) => {
         const [name, mem] = line.split(',').map((part) => part.trim());
         const vram = parseInt(mem, 10);
-        return { name, vramMiB: Number.isFinite(vram) ? vram : undefined, vendor: 'nvidia' };
+        return { name, vramMiB: Number.isFinite(vram) ? vram : undefined, vendor: 'nvidia' as const };
       });
     return gpus.length ? gpus : undefined;
   } catch {
@@ -43,7 +54,7 @@ async function detectViaNvidiaSmi() {
   }
 }
 
-async function detectViaPlatform() {
+async function detectViaPlatform(): Promise<DetectedGpu[]> {
   try {
     if (process.platform === 'win32') {
       const { stdout } = await execFileAsync(
@@ -54,11 +65,15 @@ async function detectViaPlatform() {
       return namesToGpus(stdout.split(/\r?\n/));
     }
     if (process.platform === 'darwin') {
-      const { stdout } = await execFileAsync('system_profiler', ['SPDisplaysDataType'], { timeout: PROBE_TIMEOUT_MS });
+      const { stdout } = await execFileAsync(
+        'system_profiler',
+        ['SPDisplaysDataType'],
+        { timeout: PROBE_TIMEOUT_MS }
+      );
       const names = stdout
         .split(/\r?\n/)
         .map((line) => /^\s*Chipset Model:\s*(.+)$/.exec(line)?.[1])
-        .filter(Boolean);
+        .filter((value): value is string => Boolean(value));
       return namesToGpus(names);
     }
     const { stdout } = await execFileAsync('lspci', [], { timeout: PROBE_TIMEOUT_MS });
@@ -72,11 +87,6 @@ async function detectViaPlatform() {
   }
 }
 
-function namesToGpus(lines) {
+function namesToGpus(lines: string[]): DetectedGpu[] {
   return lines.map((line) => line.trim()).filter(Boolean).map((name) => ({ name }));
-}
-
-/** True when at least one detected GPU is NVIDIA/CUDA-capable (the only backend llama.cpp offloads to today). */
-export function hasNvidiaGpu(gpus) {
-  return gpus.some((gpu) => gpu.vendor === 'nvidia');
 }

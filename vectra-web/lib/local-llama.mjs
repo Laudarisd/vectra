@@ -14,6 +14,8 @@ export class LocalLlamaManager {
     this.child = undefined;
     this.runtimeApiKey = '';
     this.lastRequestKey = '';
+    this.selectedModelsDirectory = '';
+    this.additionalModelRoots = new Set();
     this.state = {
       status: 'stopped',
       modelPath: '',
@@ -54,8 +56,30 @@ export class LocalLlamaManager {
     const modelPath = normalizeShardPath(picked);
     if (!/\.gguf$/i.test(modelPath)) throw new Error('Select a .gguf model file.');
     await ensureFile(modelPath);
+    this.additionalModelRoots.add(dirname(modelPath));
     const mmprojPath = await detectMmproj(modelPath);
     return { cancelled: false, modelPath, mmprojPath: mmprojPath || '' };
+  }
+
+  async chooseModelDirectory() {
+    const directory = await nativePickDirectory('Vectra: Choose a folder containing local models');
+    if (!directory) return { cancelled: true };
+    await access(directory);
+    this.additionalModelRoots.add(directory);
+    return { cancelled: false, directory };
+  }
+
+  async chooseDownloadDirectory() {
+    const directory = await nativePickDirectory('Vectra: Choose where to download models');
+    if (!directory) return { cancelled: true };
+    await access(directory);
+    this.selectedModelsDirectory = directory;
+    this.additionalModelRoots.add(directory);
+    return { cancelled: false, directory };
+  }
+
+  modelSearchRoots() {
+    return [...this.additionalModelRoots];
   }
 
   async chooseMmproj() {
@@ -279,9 +303,15 @@ export function normalizeShardPath(pathValue) {
 export async function detectMmproj(modelPath) {
   try {
     const directory = dirname(modelPath);
+    const modelName = basename(modelPath);
+    const family = visionFamily(modelName);
+    if (!family) return undefined;
+    const modelScale = parameterScale(modelName);
     const names = await readdir(directory);
     const candidates = names
       .filter((name) => /^mmproj.*\.gguf$/i.test(name))
+      .filter((name) => visionFamily(name) === family)
+      .filter((name) => !modelScale || !parameterScale(name) || parameterScale(name) === modelScale)
       .sort((a, b) => scoreMmproj(b) - scoreMmproj(a) || a.localeCompare(b));
     return candidates[0] ? join(directory, candidates[0]) : undefined;
   } catch {
@@ -301,6 +331,12 @@ export async function resolveServerExecutable(configured = '') {
   const command = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
   if (await commandExists(command)) return command;
 
+  // Vectra installs private llama.cpp builds here. Browser storage can be
+  // cleared and the web server can restart, so rediscover a previously
+  // verified install from disk instead of asking the user to install again.
+  const managed = await findManagedServerExecutable();
+  if (managed) return managed;
+
   const common = process.platform === 'darwin'
     ? ['/opt/homebrew/bin/llama-server', '/usr/local/bin/llama-server', join(homedir(), '.local', 'bin', 'llama-server')]
     : process.platform === 'win32'
@@ -317,7 +353,56 @@ export async function resolveServerExecutable(configured = '') {
       return candidate;
     } catch {}
   }
-  throw new Error('llama-server was not found. Install llama.cpp or use “Choose llama-server” in Local Model settings.');
+  const error = new Error('llama-server was not found. Install llama.cpp automatically or use “Choose llama-server” in Local Model settings.');
+  error.code = 'LLAMA_SERVER_MISSING';
+  throw error;
+}
+
+function visionFamily(name) {
+  const value = String(name || '').toLowerCase().replace(/[_. ]+/g, '-');
+  if (/qwen-?3-?vl|qwen3vl/.test(value)) return 'qwen3vl';
+  if (/qwen-?2[.-]?5-?vl|qwen2[.-]?5vl/.test(value)) return 'qwen2.5vl';
+  if (/qwen-?2-?vl|qwen2vl/.test(value)) return 'qwen2vl';
+  if (/minicpm-?v/.test(value)) return 'minicpmv';
+  if (/internvl/.test(value)) return 'internvl';
+  if (/smolvlm/.test(value)) return 'smolvlm';
+  if (/llava/.test(value)) return 'llava';
+  if (/pixtral/.test(value)) return 'pixtral';
+  if (/moondream/.test(value)) return 'moondream';
+  if (/gemma-?3/.test(value)) return 'gemma3';
+  if (/phi-?3.*vision/.test(value)) return 'phi3vision';
+  if (/lfm-?2.*vl/.test(value)) return 'lfm2vl';
+  return '';
+}
+
+function parameterScale(name) {
+  return String(name || '').toLowerCase().match(/(?:^|[-_.])(\d+(?:\.\d+)?)b(?:[-_.]|$)/)?.[1] || '';
+}
+
+async function findManagedServerExecutable() {
+  const root = join(homedir(), '.vectra', 'llama.cpp');
+  const target = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
+  const queue = [{ directory: root, depth: 0 }];
+  const candidates = [];
+  while (queue.length) {
+    const current = queue.shift();
+    if (current.depth > 7) continue;
+    let entries;
+    try { entries = await readdir(current.directory, { withFileTypes: true }); } catch { continue; }
+    entries.sort((left, right) => right.name.localeCompare(left.name, undefined, { numeric: true, sensitivity: 'base' }));
+    for (const entry of entries) {
+      const full = join(current.directory, entry.name);
+      if (entry.isFile() && entry.name.toLowerCase() === target) candidates.push(full);
+      else if (entry.isDirectory() && !entry.isSymbolicLink()) queue.push({ directory: full, depth: current.depth + 1 });
+    }
+  }
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync(candidate, ['--version'], { timeout: 10_000 });
+      return candidate;
+    } catch {}
+  }
+  return '';
 }
 
 async function nativePickFile({ title, extensions = [] }) {
@@ -371,6 +456,51 @@ async function nativePickFile({ title, extensions = [] }) {
     }
   }
   throw new Error('No native Linux file picker was found. Install zenity or kdialog, or enter the model path manually.');
+}
+
+async function nativePickDirectory(title) {
+  if (process.platform === 'darwin') {
+    const script = `POSIX path of (choose folder with prompt ${JSON.stringify(title)})`;
+    try {
+      const { stdout } = await execFileAsync('osascript', ['-e', script], { timeout: 120000 });
+      return stdout.trim().replace(/\/$/, '');
+    } catch (error) {
+      if (isCancelError(error)) return '';
+      throw new Error(`Could not open macOS folder picker: ${error.message || error}`);
+    }
+  }
+
+  if (process.platform === 'win32') {
+    const script = [
+      'Add-Type -AssemblyName System.Windows.Forms;',
+      '$d = New-Object System.Windows.Forms.FolderBrowserDialog;',
+      `$d.Description = ${powershellQuote(title)};`,
+      '$d.ShowNewFolderButton = $true;',
+      'if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }'
+    ].join(' ');
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-STA', '-Command', script], { timeout: 120000 });
+    return stdout.trim();
+  }
+
+  if (await commandExists('zenity')) {
+    try {
+      const { stdout } = await execFileAsync('zenity', ['--file-selection', '--directory', '--title', title], { timeout: 120000 });
+      return stdout.trim();
+    } catch (error) {
+      if (isCancelError(error)) return '';
+      throw error;
+    }
+  }
+  if (await commandExists('kdialog')) {
+    try {
+      const { stdout } = await execFileAsync('kdialog', ['--getexistingdirectory', homedir(), '--title', title], { timeout: 120000 });
+      return stdout.trim();
+    } catch (error) {
+      if (isCancelError(error)) return '';
+      throw error;
+    }
+  }
+  throw new Error('No native Linux folder picker was found. Install zenity or kdialog.');
 }
 
 

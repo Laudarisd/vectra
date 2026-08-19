@@ -1,9 +1,9 @@
 import http from 'node:http';
-import { readFile, stat, mkdtemp, writeFile, readdir, rm } from 'node:fs/promises';
+import { readFile, stat, mkdtemp, writeFile, readdir, rm, mkdir } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { extname, join, normalize, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir, totalmem, cpus } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { inflateSync } from 'node:zlib';
@@ -11,10 +11,15 @@ import { LocalLlamaManager } from './lib/local-llama.mjs';
 import { extractPdfText as extractPdfTextRobust, extractDocumentText, artifactForRequest } from './lib/documents.mjs';
 import { ChatHistoryStore } from './lib/history.mjs';
 import { discoverLocalRuntimes, searchGgufModels } from './lib/local-discovery.mjs';
-import { detectGpus } from './lib/gpu-detect.mjs';
+import { detectGpus, hasNvidiaGpu } from './lib/gpu-detect.mjs';
+import { CURATED_MODELS } from './lib/model-catalog.mjs';
+import { recommendCatalogEntries } from './lib/model-recommender.mjs';
+import { downloadFile } from './lib/model-downloader.mjs';
+import { searchHuggingFace, resolveDownloadableFile } from './lib/huggingface-search.mjs';
+import { installLatestLlamaCpp } from './lib/llama-cpp-installer.mjs';
 const execFileAsync=promisify(execFile);
 const here=dirname(fileURLToPath(import.meta.url)); const publicRoot=existsSync(join(here,'dist'))?join(here,'dist'):join(here,'public'); const host=process.env.VECTRA_HOST||'127.0.0.1'; let port=Number(process.env.VECTRA_PORT||4173); const MAX_BODY=110*1024*1024; const localLlama=new LocalLlamaManager(); const history=new ChatHistoryStore();
-const server=http.createServer(async(req,res)=>{try{const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);const pathname=url.pathname;if(pathname.startsWith('/api/'))assertApiRequest(req);if(pathname==='/api/chats'||pathname.startsWith('/api/chats/'))return await handleHistory(req,res,pathname,url);if(req.method==='POST'&&pathname==='/api/chat')return await handleChat(req,res);if(req.method==='POST'&&pathname==='/api/models')return await handleModels(req,res);if(req.method==='POST'&&pathname==='/api/attachments/inspect')return await handleAttachmentInspect(req,res);if(req.method==='GET'&&pathname==='/api/local/status')return json(res,200,localLlama.snapshot());if(req.method==='GET'&&pathname==='/api/local/gpu-info'){assertLocalRuntimeAllowed();return json(res,200,{gpus:await detectGpus()})}if(req.method==='POST'&&pathname==='/api/local/discover'){assertLocalRuntimeAllowed();return json(res,200,{runtimes:await discoverRuntimes()})}if(req.method==='POST'&&pathname==='/api/local/search-models'){assertLocalRuntimeAllowed();return json(res,200,{models:await searchGgufModels(await readJson(req))})}if(req.method==='POST'&&pathname==='/api/local/choose-model'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseModel())}if(req.method==='POST'&&pathname==='/api/local/choose-mmproj'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseMmproj())}if(req.method==='POST'&&pathname==='/api/local/choose-server'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseServer())}if(req.method==='POST'&&pathname==='/api/local/start'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.start(await readJson(req)))}if(req.method==='POST'&&pathname==='/api/local/stop'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.stop())}if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'Method not allowed'});return await serveStatic(req,res)}catch(e){console.error('[Vectra Web]',e instanceof Error?e.message:e);return json(res,500,{error:e instanceof Error?e.message:String(e)})}});
+const server=http.createServer(async(req,res)=>{try{const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);const pathname=url.pathname;if(pathname.startsWith('/api/'))assertApiRequest(req);if(pathname==='/api/chats'||pathname.startsWith('/api/chats/'))return await handleHistory(req,res,pathname,url);if(req.method==='POST'&&pathname==='/api/chat')return await handleChat(req,res);if(req.method==='POST'&&pathname==='/api/models')return await handleModels(req,res);if(req.method==='POST'&&pathname==='/api/test-connection')return await handleTestConnection(req,res);if(req.method==='POST'&&pathname==='/api/attachments/inspect')return await handleAttachmentInspect(req,res);if(req.method==='GET'&&pathname==='/api/local/status')return json(res,200,localLlama.snapshot());if(req.method==='GET'&&pathname==='/api/local/gpu-info'){assertLocalRuntimeAllowed();return json(res,200,{gpus:await detectGpus()})}if(req.method==='POST'&&pathname==='/api/local/discover'){assertLocalRuntimeAllowed();return json(res,200,{runtimes:await discoverRuntimes()})}if(req.method==='POST'&&pathname==='/api/local/search-models'){assertLocalRuntimeAllowed();const body=await readJson(req);return json(res,200,{models:await searchGgufModels({query:body.query,limit:body.limit,roots:localLlama.modelSearchRoots()})})}if(req.method==='POST'&&pathname==='/api/local/models/catalog'){assertLocalRuntimeAllowed();return json(res,200,await handleModelCatalog())}if(req.method==='POST'&&pathname==='/api/local/models/search'){assertLocalRuntimeAllowed();return json(res,200,{results:await searchHuggingFace((await readJson(req)).query)})}if(req.method==='POST'&&pathname==='/api/local/models/resolve'){assertLocalRuntimeAllowed();const resolved=await resolveDownloadableFile((await readJson(req)).repoId);return resolved?json(res,200,resolved):json(res,404,{error:'Could not determine a single downloadable GGUF file for this repo.'})}if(req.method==='POST'&&pathname==='/api/local/models/download'){assertLocalRuntimeAllowed();return await handleModelDownload(req,res,await readJson(req))}if(req.method==='POST'&&pathname==='/api/local/llama-cpp/install'){assertLocalRuntimeAllowed();return await handleLlamaCppInstall(req,res)}if(req.method==='POST'&&pathname==='/api/local/choose-model'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseModel())}if(req.method==='POST'&&pathname==='/api/local/choose-model-directory'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseModelDirectory())}if(req.method==='POST'&&pathname==='/api/local/choose-download-directory'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseDownloadDirectory())}if(req.method==='POST'&&pathname==='/api/local/choose-mmproj'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseMmproj())}if(req.method==='POST'&&pathname==='/api/local/choose-server'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseServer())}if(req.method==='POST'&&pathname==='/api/local/start'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.start(await readJson(req)))}if(req.method==='POST'&&pathname==='/api/local/stop'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.stop())}if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'Method not allowed'});return await serveStatic(req,res)}catch(e){console.error('[Vectra Web]',e instanceof Error?e.message:e);return json(res,500,{error:e instanceof Error?e.message:String(e),code:e?.code})}});
 listenWithFallback(port);
 function listenWithFallback(candidate, remaining=20){port=candidate;const onListening=()=>{server.removeListener('error',onError);console.log(`Vectra Web: http://${host}:${candidate}`);console.log('Keys are accepted per request and never written to disk by this server.');console.log('Local GGUF loading is available when Vectra Web is bound to localhost.');};const onError=(error)=>{server.removeListener('listening',onListening);if(error?.code==='EADDRINUSE'&&remaining>0){console.warn(`Port ${candidate} is busy. Trying ${candidate+1}…`);setTimeout(()=>listenWithFallback(candidate+1,remaining-1),20);return;}console.error('Vectra Web failed to start:',error);process.exitCode=1;};server.once('error',onError);server.once('listening',onListening);server.listen(candidate,host);}
 process.on('SIGINT',async()=>{await localLlama.stop().catch(()=>{});history.close();server.close(()=>process.exit(0))});
@@ -98,9 +103,135 @@ function clip(text,maxChars){
 async function handleAttachmentInspect(req,res){const body=await readJson(req);const provider=String(body.provider||'llamaCpp');const input=sanitizeAttachment(body.attachment||{});const parsed=await preprocessAttachments([input],provider);const primary=parsed[0]||input;return json(res,200,{name:primary.name,kind:primary.kind,mime:primary.mime,text:primary.text||'',parsedCharacters:(primary.text||'').length,visualPages:Math.max(0,parsed.length-1)})}
 async function callProvider(provider,args){if(provider==='openai')return openAIChat(args);if(provider==='anthropic')return anthropicChat(args);if(provider==='gemini')return geminiChat(args);return compatibleChat({...args,baseUrl:args.baseUrl||'http://127.0.0.1:8080/v1'})}
 
-async function handleModels(req,res){let{provider='openai',apiKey='',baseUrl=''}=await readJson(req);if(!['llamaCpp','openaiCompatible','localAuto'].includes(provider)&&!apiKey)return json(res,400,{error:'API key required.'});let models=[];let runtimes=[];if(provider==='openai'){const d=await fetchJson(`${trim(baseUrl||'https://api.openai.com/v1')}/models`,{headers:{Authorization:`Bearer ${apiKey}`}});models=(d.data||[]).map(x=>x.id).filter(Boolean).sort()}else if(provider==='anthropic'){const d=await fetchJson(`${trim(baseUrl||'https://api.anthropic.com/v1')}/models`,{headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01'}});models=(d.data||[]).map(x=>x.id).filter(Boolean)}else if(provider==='gemini'){const root=trim(baseUrl||'https://generativelanguage.googleapis.com/v1beta');const d=await fetchJson(`${root}/models`,{headers:{'x-goog-api-key':apiKey}});models=(d.models||[]).map(x=>String(x.name||'').replace(/^models\//,'')).filter(Boolean)}else if(provider==='llamaCpp'){const local=localLlama.snapshot();if(local.status==='ready'&&local.running)models=await localLlama.listModels();else if(baseUrl){const d=await fetchJson(`${trim(baseUrl)}/models`);models=(d.data||[]).map(x=>x.id).filter(Boolean)}else throw new Error('No local llama.cpp model is running. Open Model, choose and start a GGUF model first.')}else if(provider==='localAuto'){runtimes=await discoverRuntimes();models=[...new Set(runtimes.flatMap(runtime=>runtime.models))];}else{const d=await fetchJson(`${trim(baseUrl||'http://127.0.0.1:8080/v1')}/models`,{headers:apiKey?{Authorization:`Bearer ${apiKey}`}:{}});models=(d.data||[]).map(x=>x.id).filter(Boolean)}return json(res,200,{models,runtimes})}
+/** Shared by /api/models and /api/test-connection for every cloud/OpenAI-compatible provider (llamaCpp and localAuto keep their own runtime-aware branches, out of this helper). */
+async function fetchProviderModels(provider,apiKey,baseUrl){
+  if(provider==='openai'){const d=await fetchJson(`${trim(baseUrl||'https://api.openai.com/v1')}/models`,{headers:{Authorization:`Bearer ${apiKey}`}});return (d.data||[]).map(x=>x.id).filter(Boolean).sort()}
+  if(provider==='anthropic'){const d=await fetchJson(`${trim(baseUrl||'https://api.anthropic.com/v1')}/models`,{headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01'}});return (d.data||[]).map(x=>x.id).filter(Boolean)}
+  if(provider==='gemini'){const root=trim(baseUrl||'https://generativelanguage.googleapis.com/v1beta');const d=await fetchJson(`${root}/models`,{headers:{'x-goog-api-key':apiKey}});return (d.models||[]).map(x=>String(x.name||'').replace(/^models\//,'')).filter(Boolean)}
+  const d=await fetchJson(`${trim(baseUrl||'http://127.0.0.1:8080/v1')}/models`,{headers:apiKey?{Authorization:`Bearer ${apiKey}`}:{}});
+  return (d.data||[]).map(x=>x.id).filter(Boolean);
+}
+async function handleModels(req,res){
+  let{provider='openai',apiKey='',baseUrl=''}=await readJson(req);
+  if(!['llamaCpp','openaiCompatible','localAuto'].includes(provider)&&!apiKey)return json(res,400,{error:'API key required.'});
+  let models=[];let runtimes=[];
+  if(provider==='llamaCpp'){
+    const local=localLlama.snapshot();
+    if(local.status==='ready'&&local.running)models=await localLlama.listModels();
+    else if(baseUrl){const d=await fetchJson(`${trim(baseUrl)}/models`);models=(d.data||[]).map(x=>x.id).filter(Boolean)}
+    else throw new Error('No local llama.cpp model is running. Open Model, choose and start a GGUF model first.');
+  }else if(provider==='localAuto'){
+    runtimes=await discoverRuntimes();
+    models=[...new Set(runtimes.flatMap(runtime=>runtime.models))];
+  }else{
+    models=await fetchProviderModels(provider,apiKey,baseUrl);
+  }
+  return json(res,200,{models,runtimes});
+}
+/** Lightweight connectivity check: for cloud/OpenAI-compatible providers this lists models as proof the key/endpoint works; for local runtimes it checks the runtime is actually reachable. Always resolves 200 with {ok,message} so the client can show a plain result either way. */
+async function handleTestConnection(req,res){
+  const {provider='openai',apiKey='',baseUrl='',model=''}=await readJson(req);
+  try{
+    if(provider==='llamaCpp'){
+      const local=localLlama.snapshot();
+      if(!(local.status==='ready'&&local.running))throw new Error('No local llama.cpp model is running. Open Local Model and start a GGUF model first.');
+      const ids=await localLlama.listModels();
+      return json(res,200,{ok:true,message:`Connected to local llama.cpp (${ids[0]||local.modelId||'model running'}).`});
+    }
+    if(provider==='localAuto'){
+      const runtimes=await discoverRuntimes();
+      if(!runtimes.length)throw new Error('No local model server was detected. Start Ollama, LM Studio, llama.cpp, vLLM, or another OpenAI-compatible runtime.');
+      return json(res,200,{ok:true,message:`Connected to ${runtimes.map(r=>r.name).join(', ')}.`});
+    }
+    if(provider!=='openaiCompatible'&&!apiKey)throw new Error('API key is required for this provider.');
+    const models=await fetchProviderModels(provider,apiKey,baseUrl);
+    if(model&&models.length&&!models.includes(model))return json(res,200,{ok:true,message:`Connected, but "${model}" was not among the ${models.length} model(s) this endpoint returned.`});
+    return json(res,200,{ok:true,message:`Connected. ${models.length} model${models.length===1?'':'s'} available.`});
+  }catch(error){
+    return json(res,200,{ok:false,message:error instanceof Error?error.message:String(error)});
+  }
+}
 
 async function discoverRuntimes(){const local=localLlama.snapshot();const extra=local.running&&local.status==='ready'?[{name:'Vectra llama.cpp',baseUrl:local.baseUrl,discoveryUrl:`${local.baseUrl}/models`,apiKey:localLlama.connection().apiKey}]:[];return discoverLocalRuntimes(extra)}
+
+function resolveModelsDirectory(){return localLlama.selectedModelsDirectory||process.env.VECTRA_MODELS_DIR||join(homedir(),'.vectra','models')}
+
+/**
+ * Streams progress events over SSE for a long-running download so the client
+ * can show a live percentage instead of one static "downloading…" line —
+ * same text/event-stream contract as /api/chat, just carrying {bytesDone,
+ * totalBytes} progress events instead of text deltas. Errors from `run` are
+ * caught here and sent as a final {error} event rather than thrown, since the
+ * response headers are already committed to SSE by the time `run` executes.
+ * `run` also receives an AbortSignal that fires when the client disconnects
+ * (tab closed, or the Stop button aborts the client's fetch) so the actual
+ * upstream download stops instead of continuing to burn bandwidth/disk for
+ * nobody.
+ */
+async function streamSseResult(req,res,run){
+  res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
+  const send=(obj)=>{try{res.write(`data: ${JSON.stringify(obj)}\n\n`)}catch{}};
+  let closed=false;
+  const controller=new AbortController();
+  req.on('close',()=>{closed=true;controller.abort()});
+  try{
+    const result=await run((progress)=>{if(!closed)send(progress)},controller.signal);
+    if(!closed){send({done:true,...result});res.write('data: [DONE]\n\n')}
+  }catch(error){
+    if(!closed)send({error:error instanceof Error?error.message:String(error)});
+  }finally{
+    res.end();
+  }
+}
+
+/** Hardware-aware model shortlist: same catalog/recommend logic as the VS Code extension's Download Model flow. */
+async function handleModelCatalog(){
+  const gpus=await detectGpus();
+  const vramValues=gpus.map(g=>g.vramMiB).filter(v=>typeof v==='number');
+  const hardware={gpus,maxVramMiB:vramValues.length?Math.max(...vramValues):undefined,cpuCores:cpus().length,totalRamMiB:Math.round(totalmem()/1024/1024)};
+  const recommended=recommendCatalogEntries(hardware,CURATED_MODELS);
+  return {recommended,hardware};
+}
+
+/**
+ * Downloads a model (and its vision projector, if any) into the local models
+ * directory and returns the paths, mirroring the VS Code extension's
+ * downloadAndSelectModel(): the client fills localModelPath/localMmprojPath
+ * from the result and can start the model immediately, so a vision model's
+ * mmproj lands next to it automatically (LocalLlamaManager.detectMmproj()
+ * only looks beside the model file).
+ */
+async function handleModelDownload(req,res,body){
+  await streamSseResult(req,res,async(onProgress,signal)=>{
+    const downloadUrl=String(body?.downloadUrl||'');
+    const filename=String(body?.filename||'');
+    if(!downloadUrl||!filename)throw new Error('A downloadUrl and filename are required.');
+    const destDir=resolveModelsDirectory();
+    await mkdir(destDir,{recursive:true});
+    const modelPath=join(destDir,filename);
+    await downloadFile(downloadUrl,modelPath,{signal,onProgress:(bytesDone,totalBytes)=>onProgress({phase:'model',bytesDone,totalBytes})});
+
+    let mmprojPath='';
+    if(body?.mmprojUrl&&body?.mmprojFilename){
+      mmprojPath=join(destDir,String(body.mmprojFilename));
+      await downloadFile(String(body.mmprojUrl),mmprojPath,{signal,onProgress:(bytesDone,totalBytes)=>onProgress({phase:'mmproj',bytesDone,totalBytes})});
+    }
+    return {modelPath,mmprojPath};
+  });
+}
+
+/** Downloads and installs the llama.cpp build matching this machine when /api/local/start reports LLAMA_SERVER_MISSING, mirroring the VS Code extension's "Install llama.cpp automatically" flow. */
+async function handleLlamaCppInstall(req,res){
+  await streamSseResult(req,res,async(onProgress,signal)=>{
+    const gpus=await detectGpus();
+    const result=await installLatestLlamaCpp({
+      hasCuda:hasNvidiaGpu(gpus),
+      signal,
+      onProgress:(bytesDone,totalBytes)=>onProgress({phase:'llama.cpp',bytesDone,totalBytes})
+    });
+    return {serverPath:result.execPath,name:result.name,version:result.version,fellBackToCpu:result.fellBackToCpu};
+  });
+}
 
 async function openAIChat({apiKey,model,baseUrl,messages,attachments}){const content=[{type:'input_text',text:transcript(messages)}];for(const f of attachments){if(f.kind==='text'||f.kind==='document')content.push({type:'input_text',text:`\n[Attachment: ${f.name}]\n${f.text}`});else if(f.mime.startsWith('image/')&&f.base64)content.push({type:'input_image',image_url:`data:${f.mime};base64,${f.base64}`,detail:'auto'});else if(f.base64)content.push({type:'input_file',filename:f.name,file_data:`data:${f.mime};base64,${f.base64}`});if(f.kind==='pdf'&&f.text)content.push({type:'input_text',text:`\n[Extracted PDF text fallback: ${f.name}]\n${f.text}`})}const d=await fetchJson(`${trim(baseUrl||'https://api.openai.com/v1')}/responses`,{method:'POST',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model,instructions:systemPrompt(attachments),input:[{role:'user',content}]})});const parts=[];if(d.output_text)parts.push(d.output_text);for(const i of d.output||[])for(const p of i.content||[])if(p.text)parts.push(p.text);if(!parts.join('').trim())throw new Error('OpenAI returned no text output.');return parts.join('\n').trim()}
 async function anthropicChat({apiKey,model,baseUrl,messages,attachments}){const last=messages.at(-1)?.content||'';const history=messages.slice(0,-1).map(m=>({role:m.role,content:m.content}));const content=[{type:'text',text:last||'Please analyze the attached files.'}];for(const f of attachments){if(f.kind==='text'||f.kind==='document')content.push({type:'text',text:`\n[Attachment: ${f.name}]\n${f.text}`});else if(f.mime.startsWith('image/')&&f.base64)content.push({type:'image',source:{type:'base64',media_type:f.mime,data:f.base64}});else if(f.mime==='application/pdf'&&f.base64)content.push({type:'document',source:{type:'base64',media_type:f.mime,data:f.base64}});else if(f.text)content.push({type:'text',text:`\n[Extracted attachment: ${f.name}]\n${f.text}`})}const d=await fetchJson(`${trim(baseUrl||'https://api.anthropic.com/v1')}/messages`,{method:'POST',headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','Content-Type':'application/json'},body:JSON.stringify({model,max_tokens:8192,system:systemPrompt(attachments),messages:[...history,{role:'user',content}]})});const text=(d.content||[]).filter(p=>p.type==='text').map(p=>p.text).join('\n').trim();if(!text)throw new Error('Anthropic returned no text output.');return text}

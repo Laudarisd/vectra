@@ -184,6 +184,15 @@ export class AgentController {
       const envelope = parseAgentEnvelope(raw);
       lastMessage = envelope.message || lastMessage;
 
+      if (envelope.actionError) {
+        observations.push(
+          `ERROR: Invalid tool action format: ${envelope.actionError} ` +
+          'Return the same next step again using an action object that exactly matches the provided tool schema. ' +
+          'Do not describe a tool call as a string.'
+        );
+        continue;
+      }
+
       if (!envelope.actions.length) {
         opts.onProgress?.("Wrappin' it all up…");
         const answer = envelope.message || lastMessage;

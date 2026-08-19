@@ -92,7 +92,13 @@ export type AgentAction =
   | { type: 'web_fetch'; url: string }
   | { type: 'delegate_task'; task: string; reason?: string };
 
-export interface AgentEnvelope { message: string; actions: AgentAction[]; done: boolean }
+export interface AgentEnvelope {
+  message: string;
+  actions: AgentAction[];
+  done: boolean;
+  /** Present when JSON parsed but one or more model-generated actions were not dispatchable. */
+  actionError?: string;
+}
 export type ProposalKind = 'modify' | 'create' | 'delete';
 export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'stale' | 'undone';
 

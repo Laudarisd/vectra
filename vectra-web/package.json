@@ -1,7 +1,7 @@
 {
   "name": "vectra-web",
   "private": true,
-  "version": "2.0.5",
+  "version": "1.0.0",
   "description": "Vectra Web professional AI workspace companion with local/cloud models, pre-parsed PDF/DOCX/PPTX/XLSX attachments, image inputs, GGUF llama.cpp runtime, false-refusal recovery, and downloadable generated documents/code files.",
   "type": "module",
   "scripts": {

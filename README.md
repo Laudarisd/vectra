@@ -7,7 +7,7 @@
 <p align="center">
   <a href="./vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="./vectra/CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.4-blue" alt="Version 2.0.4"></a>
+  <a href="./vectra-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-2.0.7-blue" alt="Extension version 2.0.7"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 

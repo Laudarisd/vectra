@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.7
+
+- Fixed malformed local-model tool actions crashing with a JavaScript `in`-operator error.
+- Added action-shape validation and automatic correction turns before tool dispatch.
+- Switched llama.cpp structured generation to its broadly compatible schema-constrained JSON-object format.
+
+## 2.0.6
+
+- Updated the extension release version and aligned package metadata and documentation.
+
 ## 2.0.5
 
 - Replaced the single, silently-overwritten progress line with a running step log: earlier steps stay visible with a checkmark while the newest one spins, so a multi-file agent run now shows real file-by-file progress instead of one line changing in place. Applied to both the VS Code extension and Vectra Web.

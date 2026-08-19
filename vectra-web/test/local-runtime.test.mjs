@@ -14,11 +14,22 @@ test('normalizeShardPath selects the first GGUF shard', () => {
 test('detectMmproj finds a nearby projector', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'vectra-mmproj-'));
   try {
-    const model = join(dir, 'model.gguf');
+    const model = join(dir, 'Qwen3VL-4B-Instruct-Q4_K_M.gguf');
     await writeFile(model, '');
-    await writeFile(join(dir, 'mmproj-Q8_0.gguf'), '');
-    await writeFile(join(dir, 'mmproj-F16.gguf'), '');
-    assert.equal(await detectMmproj(model), join(dir, 'mmproj-F16.gguf'));
+    await writeFile(join(dir, 'mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf'), '');
+    await writeFile(join(dir, 'mmproj-Qwen3VL-4B-Instruct-F16.gguf'), '');
+    await writeFile(join(dir, 'mmproj-Qwen3VL-8B-Instruct-F16.gguf'), '');
+    assert.equal(await detectMmproj(model), join(dir, 'mmproj-Qwen3VL-4B-Instruct-F16.gguf'));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('detectMmproj never attaches a vision projector to a text-only model', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'vectra-mmproj-text-'));
+  try {
+    const model = join(dir, 'Qwen3-4B-Q4_K_M.gguf');
+    await writeFile(model, '');
+    await writeFile(join(dir, 'mmproj-Qwen3VL-4B-Instruct-F16.gguf'), '');
+    assert.equal(await detectMmproj(model), undefined);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

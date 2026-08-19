@@ -15,25 +15,33 @@
     local: loadLocalConfig(),
     localStatus: { status: 'stopped', running: false, logs: [] },
     localBusy: false,
-    detectedRuntimes: []
+    detectedRuntimes: [],
+    pendingDetectedModel: '',
+    pendingDetectedBaseUrl: '',
+    downloadDirectory: ''
   };
 
   const $ = (id) => document.getElementById(id);
   const els = {
     messages: $('messages'), prompt: $('prompt'), send: $('send'), attach: $('attach'), fileInput: $('fileInput'), attachments: $('attachments'),
-    provider: $('provider'), model: $('model'), modelAction: $('modelAction'), localStatusPill: $('localStatusPill'),
+    model: $('model'), testConnection: $('testConnection'), localStatusPill: $('localStatusPill'),
     settings: $('settings'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
-    apiKey: $('apiKey'), baseUrl: $('baseUrl'), modelId: $('modelId'), saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
+    autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
+    localRuntimeFields: $('localRuntimeFields'), downloadFields: $('downloadFields'),
+    apiKey: $('apiKey'), saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
     chatHistory: $('chatHistory'), refreshHistory: $('refreshHistory'),
-    localDialog: $('localDialog'), localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
+    localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
     localModelPath: $('localModelPath'), localMmprojPath: $('localMmprojPath'), localServerPath: $('localServerPath'), localPort: $('localPort'), localContext: $('localContext'),
     localGpuLayers: $('localGpuLayers'), localSplitMode: $('localSplitMode'), localTimeout: $('localTimeout'), localExtraArgs: $('localExtraArgs'), localCpuMoe: $('localCpuMoe'),
     localDevice: $('localDevice'), localGpuInfo: $('localGpuInfo'),
-    localNoMmap: $('localNoMmap'), chooseLocalModel: $('chooseLocalModel'), chooseMmproj: $('chooseMmproj'), chooseLlamaServer: $('chooseLlamaServer'), startLocalModel: $('startLocalModel'),
-    stopLocalModel: $('stopLocalModel'), localLogs: $('localLogs'), localModelSearch: $('localModelSearch'), searchLocalModels: $('searchLocalModels'), localModelResults: $('localModelResults')
+    localNoMmap: $('localNoMmap'), chooseLocalModel: $('chooseLocalModel'), chooseMmproj: $('chooseMmproj'), chooseLlamaServer: $('chooseLlamaServer'), startLocalModel: $('settingsTestConnection'),
+    stopLocalModel: $('stopLocalModel'), localLogs: $('localLogs'), localModelSearch: $('localModelSearch'), searchLocalModels: $('searchLocalModels'), chooseModelFolder: $('chooseModelFolder'), localModelResults: $('localModelResults'),
+    downloadModelHint: $('downloadModelHint'), downloadModelList: $('downloadModelList'),
+    downloadModelSearch: $('downloadModelSearch'), searchDownloadModels: $('searchDownloadModels'), downloadModelProgress: $('downloadModelProgress'),
+    stopDownloadModel: $('stopDownloadModel'), downloadDirectory: $('downloadDirectory'), chooseDownloadDirectory: $('chooseDownloadDirectory')
   };
 
-  els.provider.value = state.provider;
+  if (![...els.settingsProvider.options].some((option) => option.value === state.provider)) state.provider = 'openai';
   els.settingsProvider.value = state.provider;
   syncLocalFormFromState();
   syncModelSelect();
@@ -45,20 +53,51 @@
   els.newChat.addEventListener('click', newChat);
   els.refreshHistory.addEventListener('click', () => loadHistory().catch((error) => alert(error.message)));
   els.settings.addEventListener('click', openSettings);
-  els.settingsProvider.addEventListener('change', updateSettingsProviderUi);
-  els.provider.addEventListener('change', async () => {
-    state.provider = els.provider.value;
-    sessionStorage.setItem('vectra.provider', state.provider);
-    applyProviderDefaults();
-    syncSettingsFromState();
-    syncModelSelect();
-    updateProviderUi();
-    if (state.provider === 'llamaCpp') await refreshLocalStatus().catch(() => {});
-    if (state.provider === 'localAuto') await loadModels();
+  els.settingsProvider.addEventListener('change', () => {
+    const value = els.settingsProvider.value;
+    updateSettingsProviderUi();
+    if (value === 'llamaCpp') {
+      adoptActiveModelAsLocalPathIfNeeded();
+      syncLocalFormFromState();
+      void refreshLocalStatus().catch(() => {});
+      void refreshGpuInfo().catch(() => {});
+      void autoDiscoverLocalModels();
+    } else if (value === 'localAuto') {
+      void loadDetectedModelsForSettings();
+    } else if (value === 'download') {
+      void loadDownloadCatalog();
+    } else {
+      // state.apiKey/baseUrl/model are one flat slot shared across every
+      // cloud/local provider (pre-existing app design) — previewing a
+      // provider the session isn't actually using must not show whatever
+      // another provider (often a local GGUF path/URL) left in there.
+      els.apiKey.value = state.provider === value ? state.apiKey : '';
+    }
   });
-  els.modelAction.addEventListener('click', async () => {
-    if (state.provider === 'llamaCpp') await openLocalDialog();
-    else await loadModels();
+  els.refreshDetectedModels.addEventListener('click', () => void loadDetectedModelsForSettings());
+  els.addDetectedModelFolder.addEventListener('click', async () => {
+    await runLocalAction(els.addDetectedModelFolder, 'Choosing…', async () => {
+      const selected = await api('/api/local/choose-model-directory', {});
+      if (!selected.cancelled) await loadDetectedModelsForSettings();
+    });
+  });
+  els.testConnection.addEventListener('click', testConnection);
+  els.startLocalModel.addEventListener('click', testSettingsConnection);
+  // For llamaCpp there is nothing to pick from a dropdown — the model comes
+  // from the Local Model dialog. Intercept the open attempt (mousedown fires
+  // before the native option list appears; Enter/Space open it from the
+  // keyboard) and send the user there instead of showing an empty picker.
+  els.model.addEventListener('mousedown', (event) => {
+    if (state.provider !== 'llamaCpp') return;
+    event.preventDefault();
+    void openLocalDialog();
+  });
+  els.model.addEventListener('keydown', (event) => {
+    if (state.provider !== 'llamaCpp') return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      void openLocalDialog();
+    }
   });
   els.model.addEventListener('change', () => {
     state.model = els.model.value;
@@ -79,25 +118,33 @@
   ['dragleave', 'drop'].forEach((type) => els.dropZone.addEventListener(type, (event) => { event.preventDefault(); els.dropZone.classList.remove('dragging'); }));
   els.dropZone.addEventListener('drop', async (event) => { await addFiles([...event.dataTransfer.files]); });
 
-  els.saveSettings.addEventListener('click', (event) => {
-    event.preventDefault();
-    state.provider = els.settingsProvider.value;
+  els.saveSettings.addEventListener('click', () => {
+    const selectedSource = els.settingsProvider.value;
+    if (selectedSource === 'download') { els.dialog.close(); return; }
+    const providerChanged = state.provider !== selectedSource;
+    state.provider = selectedSource;
     if (!['llamaCpp', 'localAuto'].includes(state.provider)) {
       state.apiKey = els.apiKey.value.trim();
-      state.baseUrl = els.baseUrl.value.trim();
-      state.model = els.modelId.value.trim();
+      state.baseUrl = '';
+      if (providerChanged) state.model = '';
     } else if (state.provider === 'localAuto') {
       state.apiKey = '';
-      state.baseUrl = '';
-      state.model = '';
+      state.model = state.pendingDetectedModel || state.model;
+      state.baseUrl = state.pendingDetectedBaseUrl || state.baseUrl;
+    } else if (state.provider === 'llamaCpp') {
+      syncLocalStateFromForm();
     }
     persistSession();
-    els.provider.value = state.provider;
     updateProviderUi();
     syncModelSelect();
+    if (state.provider === 'llamaCpp') {
+      void refreshLocalStatus().catch((error) => setLocalInlineError(error.message));
+    }
     els.dialog.close();
-    if (state.provider === 'llamaCpp') void openLocalDialog();
-    if (state.provider === 'localAuto') void loadModels();
+    // Populates the model dropdown from the newly saved key/endpoint right
+    // away, since the topbar no longer has a separate "Model" button to
+    // trigger this manually (that slot is now Test Connection).
+    if (state.provider !== 'llamaCpp') void loadModels().catch(() => {});
   });
 
   els.chooseLocalModel.addEventListener('click', async () => {
@@ -105,10 +152,11 @@
       const data = await api('/api/local/choose-model', {});
       if (!data.cancelled) {
         state.local.modelPath = data.modelPath || '';
-        if (data.mmprojPath) state.local.mmprojPath = data.mmprojPath;
+        state.local.mmprojPath = data.mmprojPath || '';
         saveLocalConfig();
         syncLocalFormFromState();
         renderLocalStatus();
+        await startLocalModel();
       }
     });
   });
@@ -123,8 +171,26 @@
   });
   els.searchLocalModels.addEventListener('click', async () => {
     await runLocalAction(els.searchLocalModels, 'Searching…', async () => {
-      const data = await api('/api/local/search-models', { query: els.localModelSearch.value.trim(), limit: 200 });
+      const data = await api('/api/local/search-models', { query: els.localModelSearch.value.trim(), limit: 1000 });
       renderLocalModelResults(data.models || []);
+    });
+  });
+  els.chooseModelFolder.addEventListener('click', async () => {
+    await runLocalAction(els.chooseModelFolder, 'Choosing…', async () => {
+      const selected = await api('/api/local/choose-model-directory', {});
+      if (selected.cancelled) return;
+      const data = await api('/api/local/search-models', { query: els.localModelSearch.value.trim(), limit: 1000 });
+      renderLocalModelResults(data.models || []);
+    });
+  });
+  els.chooseDownloadDirectory.addEventListener('click', () => void chooseDownloadFolder());
+  els.stopDownloadModel.addEventListener('click', () => activeDownloadController?.abort());
+  els.searchDownloadModels.addEventListener('click', async () => {
+    await runLocalAction(els.searchDownloadModels, 'Searching…', async () => {
+      const query = els.downloadModelSearch.value.trim();
+      if (!query) { renderDownloadCandidates([], 'Type something to search Hugging Face for.'); return; }
+      const data = await api('/api/local/models/search', { query });
+      renderHfSearchResults(data.results || []);
     });
   });
   els.chooseLlamaServer.addEventListener('click', async () => {
@@ -136,7 +202,6 @@
       }
     });
   });
-  els.startLocalModel.addEventListener('click', startLocalModel);
   els.stopLocalModel.addEventListener('click', stopLocalModel);
   for (const input of [els.localModelPath, els.localMmprojPath, els.localServerPath, els.localPort, els.localContext, els.localGpuLayers, els.localSplitMode, els.localTimeout, els.localExtraArgs, els.localCpuMoe, els.localNoMmap, els.localDevice]) {
     input.addEventListener('change', syncLocalStateFromForm);
@@ -144,7 +209,7 @@
   els.localDevice.addEventListener('change', () => refreshGpuInfo().catch(() => {}));
 
   setInterval(() => {
-    if (state.provider === 'llamaCpp' || els.localDialog.open || ['starting', 'ready'].includes(state.localStatus.status)) void refreshLocalStatus().catch(() => {});
+    if (state.provider === 'llamaCpp' || els.dialog.open || ['starting', 'ready'].includes(state.localStatus.status)) void refreshLocalStatus().catch(() => {});
   }, 2500);
 
   function newChat() {
@@ -175,7 +240,6 @@
     state.editingIndex = -1;
     if (chat.provider) state.provider = chat.provider;
     if (chat.model) state.model = chat.model;
-    els.provider.value = state.provider;
     persistSession();
     syncModelSelect();
     updateProviderUi();
@@ -226,12 +290,48 @@
     await loadHistory();
   }
 
-  function openSettings() { syncSettingsFromState(); updateSettingsProviderUi(); els.dialog.showModal(); }
+  function openSettings() {
+    syncSettingsFromState();
+    updateSettingsProviderUi();
+    if (!els.dialog.open) els.dialog.showModal();
+    if (state.provider === 'localAuto') void loadDetectedModelsForSettings();
+    if (state.provider === 'llamaCpp') void autoDiscoverLocalModels();
+  }
+  /** Opens the unified settings dialog pre-focused on local llama.cpp — used wherever the old separate Local Model dialog used to open. */
   async function openLocalDialog() {
+    els.settingsProvider.value = 'llamaCpp';
+    adoptActiveModelAsLocalPathIfNeeded();
     syncLocalFormFromState();
-    if (!els.localDialog.open) els.localDialog.showModal();
+    updateSettingsProviderUi();
+    if (!els.dialog.open) els.dialog.showModal();
+    void autoDiscoverLocalModels();
     await refreshLocalStatus().catch((error) => setLocalInlineError(error.message));
     await refreshGpuInfo().catch(() => {});
+  }
+
+  /**
+   * A model can already be active as a full filesystem path in state.model
+   * (e.g. reported back by an OpenAI-compatible/llama.cpp endpoint the user
+   * pointed at directly, or a local server started outside this dialog's own
+   * Choose GGUF/Download flow) without ever having been written into
+   * state.local.modelPath. Left alone, the local section then looks blank
+   * for a model that is in fact running — adopt it once so the GGUF path
+   * field isn't empty for no reason.
+   */
+  function adoptActiveModelAsLocalPathIfNeeded() {
+    if (state.local.modelPath || !/[\\/]/.test(state.model || '')) return;
+    state.local.modelPath = state.model;
+    saveLocalConfig();
+  }
+
+  /** Lists every GGUF file already on this computer (with its full path) the moment the local section is shown, instead of waiting on a manual "Search computer" click — an empty query matches everything /api/local/search-models can find. */
+  async function autoDiscoverLocalModels() {
+    try {
+      const data = await api('/api/local/search-models', { query: '', limit: 1000 });
+      renderLocalModelResults(data.models || []);
+    } catch {
+      // Non-fatal: the manual search box and Choose GGUF picker still work.
+    }
   }
 
   /** Only probes hardware when the user is actually looking at the local runtime dialog. */
@@ -248,14 +348,17 @@
   function syncSettingsFromState() {
     els.settingsProvider.value = state.provider;
     els.apiKey.value = state.apiKey;
-    els.baseUrl.value = state.baseUrl;
-    els.modelId.value = state.model;
   }
   function updateSettingsProviderUi() {
-    const local = ['llamaCpp', 'localAuto'].includes(els.settingsProvider.value);
-    els.apiFields.hidden = local;
-    els.localSettingsHint.hidden = !local;
-    els.saveSettings.textContent = els.settingsProvider.value === 'llamaCpp' ? 'Open Local Model' : 'Use settings';
+    const value = els.settingsProvider.value;
+    const apiProvider = ['openai', 'anthropic', 'gemini'].includes(value);
+    els.apiFields.hidden = !apiProvider;
+    els.autoDetectFields.hidden = value !== 'localAuto';
+    els.localRuntimeFields.hidden = value !== 'llamaCpp';
+    els.downloadFields.hidden = value !== 'download';
+    els.saveSettings.hidden = false;
+    if (value === 'llamaCpp') renderLocalStatus();
+    else setSettingsConnectionResult('stopped', 'Not tested');
   }
   function persistSession() {
     sessionStorage.setItem('vectra.provider', state.provider);
@@ -277,8 +380,85 @@
   function updateProviderUi() {
     const local = state.provider === 'llamaCpp';
     els.localStatusPill.hidden = !local;
-    els.modelAction.textContent = local ? 'Model' : 'Model';
     renderLocalStatus();
+  }
+
+  async function testConnection() {
+    if (state.provider === 'llamaCpp' && !(state.localStatus.running && state.localStatus.status === 'ready') && state.local.modelPath) {
+      if (!confirm(`The selected model is not running. Start ${fileName(state.local.modelPath)} now?`)) return;
+      await startLocalModel();
+      if (!(state.localStatus.running && state.localStatus.status === 'ready')) return;
+    }
+    const previous = els.testConnection.textContent;
+    els.testConnection.textContent = 'Testing…';
+    els.testConnection.disabled = true;
+    try {
+      const data = await api('/api/test-connection', {
+        provider: state.provider,
+        apiKey: state.apiKey,
+        baseUrl: state.baseUrl,
+        model: state.model
+      });
+      alert(data.message);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      els.testConnection.textContent = previous;
+      els.testConnection.disabled = false;
+    }
+  }
+
+  async function testSettingsConnection() {
+    const source = els.settingsProvider.value;
+    const previous = els.startLocalModel.textContent;
+    els.startLocalModel.disabled = true;
+    els.startLocalModel.textContent = 'Testing…';
+    setSettingsConnectionResult('testing', 'Testing…');
+    try {
+      if (source === 'download') {
+        setSettingsConnectionResult('error', 'Not connected', 'Choose and download a model first.');
+        return;
+      }
+      if (source === 'llamaCpp') {
+        syncLocalStateFromForm();
+        const runningSelectedModel = state.localStatus.running && state.localStatus.status === 'ready' &&
+          (!state.localStatus.modelPath || state.localStatus.modelPath === state.local.modelPath);
+        if (!runningSelectedModel) await startLocalModel();
+        if (!(state.localStatus.running && state.localStatus.status === 'ready')) {
+          setSettingsConnectionResult('error', 'Not connected', state.localStatus.lastError || 'The selected local model could not be started.');
+          return;
+        }
+        const data = await api('/api/test-connection', {
+          provider: 'llamaCpp', apiKey: '', baseUrl: state.localStatus.baseUrl || '', model: state.localStatus.modelId || ''
+        });
+        setSettingsConnectionResult(data.ok ? 'ready' : 'error', data.ok ? 'Connected' : 'Not connected', data.message);
+        return;
+      }
+      if (source === 'localAuto') {
+        const data = await api('/api/test-connection', { provider: 'localAuto', apiKey: '', baseUrl: '', model: state.pendingDetectedModel || '' });
+        setSettingsConnectionResult(data.ok ? 'ready' : 'error', data.ok ? 'Connected' : 'Not connected', data.message);
+        return;
+      }
+      const data = await api('/api/test-connection', {
+        provider: source,
+        apiKey: els.apiKey.value.trim(),
+        baseUrl: '',
+        model: ''
+      });
+      setSettingsConnectionResult(data.ok ? 'ready' : 'error', data.ok ? 'Connected' : 'Not connected', data.message);
+    } catch (error) {
+      setSettingsConnectionResult('error', 'Not connected', error.message);
+    } finally {
+      els.startLocalModel.disabled = false;
+      els.startLocalModel.textContent = previous;
+    }
+  }
+
+  function setSettingsConnectionResult(status, label, detail = '') {
+    els.localDialogStatus.dataset.status = status;
+    els.localDialogStatusText.dataset.status = status;
+    els.localDialogStatusText.textContent = label;
+    els.localDialogStatusText.title = detail || label;
   }
 
   async function loadModels() {
@@ -286,8 +466,8 @@
       await openLocalDialog();
       return;
     }
-    const previous = els.modelAction.textContent;
-    els.modelAction.textContent = 'Loading…'; els.modelAction.disabled = true;
+    const previous = els.model.disabled;
+    els.model.disabled = true;
     try {
       const data = await api('/api/models', { provider: state.provider, apiKey: state.apiKey, baseUrl: state.baseUrl });
       state.detectedRuntimes = data.runtimes || [];
@@ -302,7 +482,63 @@
       if (state.provider === 'llamaCpp') await openLocalDialog();
       else if (state.provider !== 'localAuto') openSettings();
     } finally {
-      els.modelAction.textContent = previous; els.modelAction.disabled = false;
+      els.model.disabled = previous;
+    }
+  }
+
+  async function loadDetectedModelsForSettings() {
+    els.detectedModelList.hidden = false;
+    els.detectedModelList.textContent = 'Scanning local runtimes and GGUF model folders…';
+    els.refreshDetectedModels.disabled = true;
+    try {
+      const [data, files] = await Promise.all([
+        api('/api/models', { provider: 'localAuto', apiKey: '', baseUrl: '' }).catch(() => ({ runtimes: [] })),
+        api('/api/local/search-models', { query: '', limit: 1000 }).catch(() => ({ models: [] }))
+      ]);
+      state.detectedRuntimes = data.runtimes || [];
+      els.detectedModelList.replaceChildren();
+      const runtimeChoices = state.detectedRuntimes.flatMap((runtime) =>
+        (runtime.models || []).map((model) => ({ model, runtime }))
+      );
+      const fileChoices = files.models || [];
+      if (!runtimeChoices.length && !fileChoices.length) {
+        els.detectedModelList.textContent = 'No local models found. Start a local runtime, add a model folder under llama.cpp, or download a model.';
+        return;
+      }
+      for (const { model, runtime } of runtimeChoices) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `model-result${model === (state.pendingDetectedModel || state.model) ? ' selected' : ''}`;
+        button.textContent = `${model} — ${runtime.name}`;
+        button.addEventListener('click', () => {
+          state.pendingDetectedModel = model;
+          state.pendingDetectedBaseUrl = runtime.baseUrl;
+          els.detectedModelList.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button));
+        });
+        els.detectedModelList.appendChild(button);
+      }
+      for (const modelPath of fileChoices) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `model-result${state.local.modelPath === modelPath ? ' selected' : ''}`;
+        button.textContent = `${fileName(modelPath)} — GGUF on this PC`;
+        button.title = modelPath;
+        button.addEventListener('click', () => {
+          state.local.modelPath = modelPath;
+          state.local.mmprojPath = '';
+          saveLocalConfig();
+          syncLocalFormFromState();
+          els.settingsProvider.value = 'llamaCpp';
+          updateSettingsProviderUi();
+          void autoDiscoverLocalModels();
+          void startLocalModel();
+        });
+        els.detectedModelList.appendChild(button);
+      }
+    } catch (error) {
+      els.detectedModelList.textContent = error.message;
+    } finally {
+      els.refreshDetectedModels.disabled = false;
     }
   }
 
@@ -325,13 +561,20 @@
     els.startLocalModel.disabled = true;
     els.startLocalModel.textContent = 'Loading model…';
     try {
-      const data = await api('/api/local/start', state.local);
+      let data;
+      try {
+        data = await api('/api/local/start', state.local);
+      } catch (error) {
+        if (error.code !== 'LLAMA_SERVER_MISSING' || !confirm(`${error.message}\n\nDownload and install llama.cpp automatically now?`)) throw error;
+        await installLlamaCpp();
+        els.startLocalModel.textContent = 'Loading model…';
+        data = await api('/api/local/start', state.local);
+      }
       state.localStatus = data;
       state.provider = 'llamaCpp';
       if (data.port) state.local.port = data.port;
       state.baseUrl = data.baseUrl || `http://127.0.0.1:${state.local.port}/v1`;
       state.model = data.modelId || state.model || fileName(state.local.modelPath);
-      els.provider.value = 'llamaCpp';
       persistSession(); saveLocalConfig(); syncLocalFormFromState(); updateProviderUi();
       await loadModels();
     } catch (error) {
@@ -340,8 +583,32 @@
     } finally {
       state.localBusy = false;
       els.startLocalModel.disabled = false;
-      els.startLocalModel.textContent = 'Start model';
+      els.startLocalModel.textContent = 'Test';
       renderLocalStatus();
+    }
+  }
+
+  /** Downloads the llama.cpp build matching this machine (CPU or CUDA) and verifies it runs, mirroring the VS Code extension's "Install llama.cpp automatically" prompt. Only runs once per machine: the resolved path is saved into the local config, so every later start finds it immediately. */
+  async function installLlamaCpp() {
+    els.startLocalModel.disabled = true;
+    els.startLocalModel.textContent = 'Installing llama.cpp…';
+    try {
+      const data = await streamProgressRequest('/api/local/llama-cpp/install', {}, (event) => {
+        if (typeof event.bytesDone !== 'number') return;
+        els.startLocalModel.textContent = `Installing llama.cpp: ${progressText(event.bytesDone, event.totalBytes)}`;
+      });
+      state.local.serverPath = data.serverPath;
+      saveLocalConfig();
+      syncLocalFormFromState();
+      setLocalInlineError(data.fellBackToCpu
+        ? `Installed llama.cpp (${data.name}). The CUDA build did not run on this machine, so the CPU build was installed instead.`
+        : `Installed llama.cpp (${data.name}). Starting the model…`);
+    } catch (error) {
+      setLocalInlineError(`Could not install llama.cpp automatically: ${error.message}`);
+      throw error;
+    } finally {
+      els.startLocalModel.disabled = false;
+      els.startLocalModel.textContent = 'Test';
     }
   }
 
@@ -382,8 +649,7 @@
     const label = labels[status] || status;
     els.localStatusPill.textContent = label;
     els.localStatusPill.dataset.status = status;
-    els.localDialogStatus.dataset.status = status;
-    els.localDialogStatusText.textContent = label;
+    if (els.settingsProvider.value === 'llamaCpp') setSettingsConnectionResult(status, label, state.localStatus.lastError || '');
     let detail = 'Choose a GGUF model to begin.';
     if (status === 'ready') detail = `${state.localStatus.modelId || fileName(state.localStatus.modelPath)} · ${state.localStatus.baseUrl || ''}`;
     else if (status === 'starting') detail = `Loading ${fileName(state.local.modelPath) || 'local model'}… Large models can take several minutes.`;
@@ -401,10 +667,13 @@
   }
 
   function syncLocalStateFromForm() {
+    const modelPath = els.localModelPath.value.trim();
+    const modelChanged = modelPath !== state.local.modelPath;
+    if (modelChanged) els.localMmprojPath.value = '';
     state.local = {
       ...state.local,
-      modelPath: els.localModelPath.value.trim(),
-      mmprojPath: els.localMmprojPath.value.trim(),
+      modelPath,
+      mmprojPath: modelChanged ? '' : els.localMmprojPath.value.trim(),
       serverPath: els.localServerPath.value.trim(),
       port: Number(els.localPort.value || 8080),
       contextSize: Number(els.localContext.value || 16384),
@@ -489,8 +758,8 @@
     // generating, producing — just dressed up as something fun to watch
     // instead of one line silently overwriting itself.
     const stages = payloadAttachments.length
-      ? ["Analyzin' the file-friends…", "Parsin' the documents, nom nom…", "Generatin' stuff…", "Wrappin' it all up…"]
-      : ["Analyzin' errythin'…", "Generatin' stuff…", "Wrappin' it all up…"];
+      ? ["Lookin' at the file-friends…", "Nom nom nommin' the documents…", "Makin' stuff, yay!…", "All done-done, wrappy-wrap!…"]
+      : ["Snoopy-snoopin' at errythin'…", "Makin' stuff, yay!…", "All done-done, wrappy-wrap!…"];
     const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [stages[0]], artifacts: [], createdAt: Date.now() };
     state.messages.push(placeholder); render();
     await persistChat().catch((error) => console.warn('Could not save chat history:', error));
@@ -538,11 +807,138 @@
       button.title = path;
       button.addEventListener('click', () => {
         state.local.modelPath = path;
+        state.local.mmprojPath = '';
         saveLocalConfig();
         syncLocalFormFromState();
         els.localModelResults.hidden = true;
+        void startLocalModel();
       });
       els.localModelResults.appendChild(button);
+    }
+  }
+
+  /** Hardware-aware shortlist first (same catalog/recommend logic as the VS Code extension's Download Model flow), Hugging Face search as a fallback. Loaded once per settings-dialog open — cheap and cached server-side. */
+  let downloadCatalogLoaded = false;
+  let activeDownloadController = null;
+  async function loadDownloadCatalog() {
+    if (downloadCatalogLoaded) return;
+    els.downloadModelHint.textContent = 'Loading recommendations for your hardware…';
+    try {
+      const data = await api('/api/local/models/catalog', {});
+      const recommended = data.recommended || [];
+      els.downloadModelHint.textContent = recommended.length
+        ? 'Recommended for your hardware:'
+        : 'No curated model fits your detected hardware — search Hugging Face instead.';
+      renderDownloadCandidates(recommended);
+      downloadCatalogLoaded = true;
+    } catch (error) {
+      els.downloadModelHint.textContent = error.message;
+    }
+  }
+
+  function renderDownloadCandidates(entries, emptyText) {
+    els.downloadModelList.replaceChildren();
+    els.downloadModelList.hidden = false;
+    if (!entries.length) {
+      els.downloadModelList.textContent = emptyText || 'Nothing to show yet.';
+      return;
+    }
+    for (const entry of entries) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'model-result';
+      const sizeText = entry.sizeBytes ? formatSize(entry.sizeBytes) : 'unknown size';
+      const kindText = entry.kind === 'vlm' ? ' · vision' : '';
+      button.textContent = `${entry.label}  —  ${sizeText}${kindText}`;
+      button.title = entry.label;
+      button.addEventListener('click', () => void downloadModel(entry));
+      els.downloadModelList.appendChild(button);
+    }
+  }
+
+  function renderHfSearchResults(results) {
+    els.downloadModelList.replaceChildren();
+    els.downloadModelList.hidden = false;
+    if (!results.length) {
+      els.downloadModelList.textContent = 'No Hugging Face GGUF results found.';
+      return;
+    }
+    for (const result of results) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'model-result';
+      button.textContent = `${result.label}  —  ${result.downloads.toLocaleString()} downloads`;
+      button.title = result.id;
+      button.addEventListener('click', async () => {
+        els.downloadModelProgress.hidden = false;
+        els.downloadModelProgress.textContent = `Resolving ${result.id}…`;
+        try {
+          const resolved = await api('/api/local/models/resolve', { repoId: result.id });
+          await downloadModel({ id: result.id, label: `${result.id} (${resolved.filename})`, ...resolved });
+        } catch (error) {
+          els.downloadModelProgress.textContent = `${error.message} Opening the Hugging Face page instead…`;
+          window.open(`https://huggingface.co/${result.id}`, '_blank', 'noopener');
+        }
+      });
+      els.downloadModelList.appendChild(button);
+    }
+  }
+
+  async function downloadModel(entry) {
+    if (!state.downloadDirectory && !(await chooseDownloadFolder())) return;
+    const sizeText = entry.sizeBytes ? ` (${formatSize(entry.sizeBytes)})` : '';
+    if (!confirm(`Download ${entry.label}${sizeText}?\n\nFolder: ${state.downloadDirectory}\n\nThe download will only begin after you confirm.`)) return;
+    els.downloadModelProgress.hidden = false;
+    els.downloadModelProgress.textContent = `Downloading ${entry.label}… this can take a while for multi-GB models.`;
+    els.downloadModelList.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    const controller = new AbortController();
+    activeDownloadController = controller;
+    els.stopDownloadModel.hidden = false;
+    els.stopDownloadModel.disabled = false;
+    try {
+      const data = await streamProgressRequest('/api/local/models/download', {
+        downloadUrl: entry.downloadUrl,
+        filename: entry.filename,
+        mmprojUrl: entry.mmprojUrl,
+        mmprojFilename: entry.mmprojFilename
+      }, (event) => {
+        if (typeof event.bytesDone !== 'number') return;
+        const part = event.phase === 'mmproj' ? 'vision projector' : 'model';
+        els.downloadModelProgress.textContent = `Downloading ${entry.label} — ${part}: ${progressText(event.bytesDone, event.totalBytes)}`;
+      }, controller.signal);
+      state.local.modelPath = data.modelPath;
+      state.local.mmprojPath = data.mmprojPath || '';
+      saveLocalConfig();
+      syncLocalFormFromState();
+      els.downloadModelProgress.textContent = 'Download complete. The model is selected and ready to start.';
+      els.settingsProvider.value = 'llamaCpp';
+      updateSettingsProviderUi();
+      void autoDiscoverLocalModels();
+    } catch (error) {
+      els.downloadModelProgress.textContent = error.name === 'AbortError' ? 'Download stopped.' : `Download failed: ${error.message}`;
+    } finally {
+      els.downloadModelList.querySelectorAll('button').forEach((button) => { button.disabled = false; });
+      els.stopDownloadModel.hidden = true;
+      activeDownloadController = null;
+    }
+  }
+
+  async function chooseDownloadFolder() {
+    const previous = els.chooseDownloadDirectory.textContent;
+    els.chooseDownloadDirectory.disabled = true;
+    els.chooseDownloadDirectory.textContent = 'Choosing…';
+    try {
+      const data = await api('/api/local/choose-download-directory', {});
+      if (data.cancelled) return false;
+      state.downloadDirectory = data.directory || '';
+      els.downloadDirectory.value = state.downloadDirectory;
+      return Boolean(state.downloadDirectory);
+    } catch (error) {
+      alert(error.message);
+      return false;
+    } finally {
+      els.chooseDownloadDirectory.disabled = false;
+      els.chooseDownloadDirectory.textContent = previous;
     }
   }
 
@@ -575,7 +971,15 @@
     } else {
       state.messages.forEach((message, index) => {
         const wrap = document.createElement('article'); wrap.className = `web-message ${message.role}${message.pending ? ' pending' : ''}`;
-        const avatar = document.createElement('div'); avatar.className = 'avatar'; avatar.textContent = message.role === 'assistant' ? 'V' : 'Y';
+        const avatar = document.createElement('div'); avatar.className = `avatar ${message.role === 'assistant' ? 'vectra-avatar' : 'user-avatar'}`;
+        if (message.role === 'assistant') {
+          const logo = document.createElement('img');
+          logo.src = '/VectraLogo.png';
+          logo.alt = 'Vectra';
+          avatar.appendChild(logo);
+        } else {
+          avatar.textContent = 'Y';
+        }
         const body = document.createElement('div'); body.className = 'web-message-body';
         const name = document.createElement('div'); name.className = 'web-message-name'; name.textContent = message.role === 'assistant' ? 'Vectra' : 'You';
         const content = document.createElement('div'); content.className = 'web-message-content';
@@ -633,7 +1037,8 @@
   }
 
   function syncModelSelect() {
-    els.model.replaceChildren(new Option(state.model || 'Select model', state.model || ''));
+    const placeholder = state.provider === 'llamaCpp' && !state.model ? 'Configure local model…' : 'Select model';
+    els.model.replaceChildren(new Option(state.model || placeholder, state.model || ''));
     els.model.value = state.model || '';
   }
   function autoGrow() { els.prompt.style.height = 'auto'; els.prompt.style.height = `${Math.min(180, Math.max(28, els.prompt.scrollHeight))}px`; }
@@ -657,7 +1062,11 @@
     }
     const response = await fetch(path, init);
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Request failed: HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(data.error || `Request failed: HTTP ${response.status}`);
+      error.code = data.code;
+      throw error;
+    }
     return data;
   }
   async function api(path, body) {
@@ -706,6 +1115,55 @@
       }
     }
     return result;
+  }
+
+  /**
+   * Same SSE contract as streamChat() but for a long-running download: the
+   * server sends {bytesDone,totalBytes} progress events instead of text
+   * deltas, and a final event carrying whatever the operation returns
+   * (modelPath/mmprojPath, or serverPath for a llama.cpp install).
+   */
+  async function streamProgressRequest(url, body, onProgress, signal) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal
+    });
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Request failed: HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let event;
+        try { event = JSON.parse(payload); } catch { continue; }
+        if (event.error) throw new Error(event.error);
+        if (event.done) result = event;
+        else onProgress?.(event);
+      }
+    }
+    if (!result) throw new Error('The server closed the connection before finishing.');
+    return result;
+  }
+
+  function progressText(bytesDone, totalBytes) {
+    if (!totalBytes) return formatSize(bytesDone);
+    const percent = Math.min(100, Math.floor((bytesDone / totalBytes) * 100));
+    return `${percent}% (${formatSize(bytesDone)} / ${formatSize(totalBytes)})`;
   }
 
   /**

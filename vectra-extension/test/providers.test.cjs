@@ -11,7 +11,7 @@ test('OpenAI-compatible provider sends content array',async()=>{await withServer
 test('llama.cpp compatible mode requests schema-constrained JSON', async () => {
   await withServer((req, body) => {
     if (req.url === '/v1/chat/completions') {
-      assert.equal(body.response_format.type, 'json_schema');
+      assert.equal(body.response_format.type, 'json_object');
       assert.ok(body.response_format.schema.properties.actions);
       return { body: { choices: [{ message: { content: '{"message":"ok","actions":[],"done":true}' } }] } };
     }

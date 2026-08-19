@@ -1,5 +1,7 @@
 import { AgentEnvelope, AgentMode } from '../types';
-import { AGENT_ACTION_SCHEMA, AGENT_TOOL_GUIDANCE } from './AgentToolCatalog';
+import { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS, AGENT_TOOL_GUIDANCE } from './AgentToolCatalog';
+
+const AGENT_TOOL_NAMES = new Set<string>(AGENT_TOOL_DEFINITIONS.map((definition) => definition.name));
 
 /** Structured envelope requested from local/compatible models. */
 export const AGENT_ENVELOPE_SCHEMA = {
@@ -71,6 +73,15 @@ export function parseAgentEnvelope(raw: string): AgentEnvelope {
     try {
       const parsed = JSON.parse(candidate) as Partial<AgentEnvelope>;
       if (typeof parsed.message === 'string' && Array.isArray(parsed.actions) && typeof parsed.done === 'boolean') {
+        const invalidIndex = parsed.actions.findIndex((action) => !isDispatchableAction(action));
+        if (invalidIndex >= 0) {
+          return {
+            message: parsed.message,
+            actions: [],
+            done: false,
+            actionError: `Action ${invalidIndex + 1} must be an object with a recognized string type.`
+          };
+        }
         return {
           message: parsed.message,
           actions: parsed.actions as AgentEnvelope['actions'],
@@ -96,6 +107,12 @@ export function parseAgentEnvelope(raw: string): AgentEnvelope {
     return { message: 'Let me try that again — I ran into a formatting hiccup.', actions: [], done: true };
   }
   return { message: trimmed, actions: [], done: true };
+}
+
+function isDispatchableAction(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const type = (value as { type?: unknown }).type;
+  return typeof type === 'string' && AGENT_TOOL_NAMES.has(type);
 }
 
 function looksLikeRawJson(value: string): boolean {

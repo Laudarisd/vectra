@@ -57,6 +57,7 @@ export class AgentToolRegistry {
    * recognizable even through the playful wording.
    */
   describe(action: AgentAction): string {
+    if (!action || typeof action !== 'object' || Array.isArray(action)) return "Fixing a wonky tool step…";
     switch (action.type) {
       case 'workspace_summary': return "Analyzin' the whole workspace…";
       case 'list_directory': return "Peekin' in the foldie…";
@@ -88,6 +89,7 @@ export class AgentToolRegistry {
       case 'web_fetch': return `Fetchin' ${action.url}…`;
       case 'delegate_task': return "Delegatin' a sub-task…";
     }
+    return "Checking a tool step…";
   }
 
   async execute(action: AgentAction, context: ToolExecutionContext): Promise<ToolExecutionResult> {
@@ -353,23 +355,33 @@ export class AgentToolRegistry {
   }
 }
 
-function summarizeAction(action: AgentAction): unknown {
-  if (action.type === 'propose_files') {
+function summarizeAction(action: unknown): unknown {
+  if (!action || typeof action !== 'object' || Array.isArray(action)) {
+    return { type: 'invalid_action', receivedType: Array.isArray(action) ? 'array' : typeof action };
+  }
+  const record = action as Record<string, unknown>;
+  if (record.type === 'propose_files') {
+    const files = record.files;
     return {
-      type: action.type,
-      files: Array.isArray(action.files)
-        ? action.files.map((file) => ({
-            path: typeof file?.path === 'string' ? file.path : '(invalid path)',
-            characters: typeof file?.content === 'string' ? file.content.length : 0
-          }))
+      type: record.type,
+      files: Array.isArray(files)
+        ? files.map((file: unknown) => {
+            const item = file && typeof file === 'object' && !Array.isArray(file)
+              ? file as Record<string, unknown>
+              : {};
+            return {
+              path: typeof item.path === 'string' ? item.path : '(invalid path)',
+              characters: typeof item.content === 'string' ? item.content.length : 0
+            };
+          })
         : []
     };
   }
-  if ('content' in action && typeof action.content === 'string') {
-    const { content: _content, ...summary } = action;
-    return { ...summary, contentCharacters: action.content.length };
+  if (typeof record.content === 'string') {
+    const { content: _content, ...summary } = record;
+    return { ...summary, contentCharacters: record.content.length };
   }
-  return action;
+  return record;
 }
 
 function validateStringArray(value: unknown, label: string, maxItems: number): string[] {

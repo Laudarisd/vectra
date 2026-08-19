@@ -61,6 +61,19 @@ test('agent exposes workspace discovery and language-aware execution tools', () 
   assert.equal(parsed.actions[1].type, 'run_file');
 });
 
+test('rejects string actions from small local models before tool dispatch', () => {
+  const parsed = parseAgentEnvelope('{"message":"listing","actions":["list directory(resize)"],"done":false}');
+  assert.deepEqual(parsed.actions, []);
+  assert.equal(parsed.done, false);
+  assert.match(parsed.actionError, /must be an object/i);
+});
+
+test('rejects action objects with unknown tool types', () => {
+  const parsed = parseAgentEnvelope('{"message":"working","actions":[{"type":"list directory"}],"done":false}');
+  assert.deepEqual(parsed.actions, []);
+  assert.match(parsed.actionError, /recognized string type/i);
+});
+
 test('recovers the message from truncated tool JSON without exposing stale actions', () => {
   const parsed = parseAgentEnvelope('{"message":"Old analysis complete","actions":[{"type":"create_document","path":"test.md","content":"unfinished');
   assert.equal(parsed.message, 'Old analysis complete');

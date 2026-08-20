@@ -13,6 +13,8 @@
 
 Vectra is a local-first AI coding agent for VS Code and the web. It understands your workspace, helps create and review changes, works with documents, and can run approved tools—without forcing every conversation through a paid cloud model.
 
+> The VS Code extension is published on the Marketplace as **Vectra AI** (`laudarisd.vectra-ai`) — an upgraded, continued release of the original Vectra agent, now under a new Marketplace listing.
+
 Download a GGUF model once, load it through llama.cpp, and run your coding agent locally. Your model and prompts remain on your machine, and you avoid recurring API-token costs.
 
 ![Vectra running a local Qwen3 4B model](src/1.png)
@@ -21,7 +23,7 @@ Download a GGUF model once, load it through llama.cpp, and run your coding agent
 
 | Package | Description | Documentation |
 | --- | --- | --- |
-| Vectra for VS Code | Repository-aware coding agent with local GGUF and optional cloud models | [Extension guide](vectra/README.md) |
+| Vectra for VS Code (published as Vectra AI) | Repository-aware coding agent with local GGUF and optional cloud models | [Extension guide](vectra/README.md) |
 | Vectra Web | Browser-based local AI chat with file and document support | [Web guide](vectra-web/README.md) |
 
 ## Requirements

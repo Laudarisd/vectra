@@ -9,6 +9,8 @@
 
 **Your own AI pair programmer — running on your machine, not someone else's GPU.**
 
+> Published on the VS Code Marketplace as **Vectra AI** (`laudarisd.vectra-ai`) — an upgraded, continued release of the original Vectra agent, now under a new Marketplace listing.
+
 Vectra is a repo-aware coding agent for VS Code. Point it at a GGUF model and llama.cpp, and it reads your code, proposes reviewed edits, and runs approved commands — no API key, no per-token bill, no code leaving your laptop.
 
 ![Vectra with a local Qwen3 4B model selected](https://raw.githubusercontent.com/Laudarisd/vectra/main/src/1.png)

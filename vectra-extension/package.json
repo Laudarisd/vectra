@@ -1,6 +1,6 @@
 {
-  "name": "vectra",
-  "displayName": "Vectra",
+  "name": "vectra-ai",
+  "displayName": "Vectra AI",
   "description": "A fast, local-first AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
   "version": "1.0.0",
   "publisher": "laudarisd",

@@ -155,7 +155,7 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
       }
     }),
     vscode.commands.registerCommand('vectra.openSettings', async () => {
-      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:laudarisd.vectra');
+      await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:laudarisd.vectra-ai');
     }),
     vscode.commands.registerCommand('vectra.supportDeveloper', async () => {
       const url = getConfig().supportDeveloperUrl.trim();

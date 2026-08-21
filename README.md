@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="vectra/media/VectraLogo.png" alt="Vectra logo" width="128" height="128">
+  <img src="vectra-extension/media/VectraLogo.png" alt="Vectra logo" width="128" height="128">
 </p>
 
 <h1 align="center">Vectra</h1>

@@ -40,6 +40,7 @@ const vscode = __importStar(require("vscode"));
 const path_1 = require("../utils/path");
 const text_1 = require("../utils/text");
 const DocumentService_1 = require("./DocumentService");
+const shared_core_1 = require("../../shared-core");
 /**
  * Owns Vectra's review-before-write boundary.
  *
@@ -52,6 +53,7 @@ const DocumentService_1 = require("./DocumentService");
 class PatchManager {
     tools;
     proposals = new Map();
+    approvals = new shared_core_1.ApprovalState();
     constructor(tools) {
         this.tools = tools;
     }
@@ -200,6 +202,7 @@ class PatchManager {
         await this.prepareCreateDirectories([proposal]);
         await this.applyProposal(proposal);
         proposal.status = 'accepted';
+        this.approvals.approve(id);
     }
     async acceptAllPending() {
         const pending = this.list().filter((proposal) => proposal.status === 'pending');
@@ -209,11 +212,13 @@ class PatchManager {
         for (const proposal of pending) {
             await this.applyProposal(proposal);
             proposal.status = 'accepted';
+            this.approvals.approve(proposal.id);
         }
     }
     reject(id) {
         const proposal = this.requireProposal(id);
         proposal.status = 'rejected';
+        this.approvals.reject(id);
     }
     /**
      * Reverse an already-written change back to its pre-accept content. Only
@@ -235,8 +240,10 @@ class PatchManager {
     }
     rejectAllPending() {
         for (const proposal of this.proposals.values()) {
-            if (proposal.status === 'pending')
+            if (proposal.status === 'pending') {
                 proposal.status = 'rejected';
+                this.approvals.reject(proposal.id);
+            }
         }
     }
     clearCompleted() {
@@ -247,6 +254,7 @@ class PatchManager {
     }
     store(proposal) {
         this.proposals.set(proposal.id, proposal);
+        this.approvals.request('edit', proposal, proposal.id);
         return proposal;
     }
     requireProposal(id) {

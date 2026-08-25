@@ -30,7 +30,17 @@ async function main() {
   // extension host itself requires, not vectra-web's standalone minimum.
   const sourcePkg = JSON.parse(await readFile(resolve(source, 'package.json'), 'utf8'));
   const targetPkgPath = resolve(target, 'package.json');
-  const targetPkg = JSON.parse(await readFile(targetPkgPath, 'utf8'));
+  let targetPkg;
+  try {
+    targetPkg = JSON.parse(await readFile(targetPkgPath, 'utf8'));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    targetPkg = {
+      ...sourcePkg,
+      name: 'vectra-web-bundled',
+      engines: { node: '>=20' }
+    };
+  }
   targetPkg.version = sourcePkg.version;
   targetPkg.scripts = sourcePkg.scripts;
   await writeFile(targetPkgPath, `${JSON.stringify(targetPkg, null, 2)}\n`);

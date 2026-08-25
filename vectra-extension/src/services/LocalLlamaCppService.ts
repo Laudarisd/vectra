@@ -30,7 +30,8 @@ import {
 import { findLatestAsset, installDirFor, installLatestLlamaCpp, LlamaCppAsset } from './LlamaCppInstaller';
 import { CatalogEntry, CURATED_MODELS } from './ModelCatalog';
 import { downloadFile } from './ModelDownloader';
-import { recommendCatalogEntries } from './ModelRecommender';
+import { recommendCatalogTiers } from './ModelRecommender';
+import { buildLlamaRuntimeProfile, parseLlamaServerFlags } from './LlamaRuntimeProfile';
 
 const execFileAsync = promisify(execFile);
 
@@ -49,6 +50,7 @@ export class LocalLlamaCppService implements vscode.Disposable {
   private currentModelPath = '';
   private currentMmprojPath = '';
   private lastArgsKey = '';
+  private readonly capabilityCache = new Map<string, ReadonlySet<string>>();
 
   get isRunning(): boolean { return Boolean(this.process && !this.process.killed); }
   get baseUrl(): string { return `http://127.0.0.1:${getConfig().llamaCppPort}/v1`; }
@@ -312,11 +314,11 @@ export class LocalLlamaCppService implements vscode.Disposable {
 
   private async pickCatalogEntry(): Promise<CatalogEntry | undefined> {
     const hw = await getHardwareSnapshot();
-    const recommended = recommendCatalogEntries(hw, CURATED_MODELS);
-    return this.showCatalogPicker(recommended);
+    const recommendations = recommendCatalogTiers(hw, CURATED_MODELS);
+    return this.showCatalogPicker(recommendations.fast, recommendations.hybrid);
   }
 
-  private async showCatalogPicker(recommended: CatalogEntry[]): Promise<CatalogEntry | undefined> {
+  private async showCatalogPicker(recommended: CatalogEntry[], hybrid: CatalogEntry[] = []): Promise<CatalogEntry | undefined> {
     const llmEntries = recommended.filter((entry) => entry.kind === 'llm');
     const vlmEntries = recommended.filter((entry) => entry.kind === 'vlm');
 
@@ -328,6 +330,10 @@ export class LocalLlamaCppService implements vscode.Disposable {
     if (vlmEntries.length) {
       items.push({ label: 'Vision models', kind: vscode.QuickPickItemKind.Separator });
       items.push(...vlmEntries.map(toCatalogPickItem));
+    }
+    if (hybrid.length) {
+      items.push({ label: 'Larger models (hybrid GPU + RAM, slower)', kind: vscode.QuickPickItemKind.Separator });
+      items.push(...hybrid.map(toCatalogPickItem));
     }
     items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
     items.push({ label: '$(search) Search Hugging Face for more…', action: 'search' });
@@ -342,7 +348,7 @@ export class LocalLlamaCppService implements vscode.Disposable {
     });
     if (!picked) return undefined;
     if (picked.entry) return picked.entry;
-    if (picked.action === 'search') return this.showSearchFlow(recommended);
+    if (picked.action === 'search') return this.showSearchFlow([...recommended, ...hybrid]);
     return undefined;
   }
 
@@ -481,22 +487,28 @@ export class LocalLlamaCppService implements vscode.Disposable {
     const config = getConfig();
     const normalized = normalizeShardPath(modelPath);
     const mmproj = await this.resolveMmproj(normalized);
-    // Forcing CPU overrides whatever GPU layer count is configured; auto/gpu
-    // keep the configured value, which is what already gives multi-GPU
-    // placement for free (llama.cpp's layer split mode spreads offloaded
-    // layers across every visible CUDA device on its own).
-    const gpuLayers = config.deviceMode === 'cpu' ? '0' : config.llamaCppGpuLayers;
+    const [hardware, modelStat, supportedFlags] = await Promise.all([
+      getHardwareSnapshot(),
+      fs.stat(normalized),
+      this.probeCapabilities(executable)
+    ]);
+    const profile = buildLlamaRuntimeProfile({
+      hardware,
+      modelBytes: modelStat.size,
+      requestedContextSize: config.llamaCppContextSize,
+      deviceMode: config.deviceMode,
+      gpuLayers: config.llamaCppGpuLayers,
+      splitMode: config.llamaCppSplitMode,
+      cpuMoe: config.llamaCppCpuMoe,
+      noMmap: config.llamaCppNoMmap,
+      supportedFlags
+    });
     const args = [
       '-m', normalized,
       '--host', '127.0.0.1',
       '--port', String(config.llamaCppPort),
-      '-c', String(config.llamaCppContextSize),
-      '--fit', 'on',
-      '--gpu-layers', gpuLayers,
-      '--split-mode', config.llamaCppSplitMode
+      ...profile.args
     ];
-    if (config.llamaCppCpuMoe) args.push('--cpu-moe');
-    if (config.llamaCppNoMmap) args.push('--no-mmap');
     if (mmproj) args.push('--mmproj', mmproj);
     if (config.llamaCppExtraArgs.length) args.push(...config.llamaCppExtraArgs);
 
@@ -515,6 +527,7 @@ export class LocalLlamaCppService implements vscode.Disposable {
     this.output.appendLine(`[Vectra] Model: ${normalized}`);
     if (mmproj) this.output.appendLine(`[Vectra] Vision projector: ${mmproj}`);
     this.output.appendLine(`[Vectra] Endpoint: ${this.baseUrl}`);
+    this.output.appendLine(`[Vectra] Adaptive profile: ${profile.summary}`);
     this.output.appendLine(`[Vectra] Args: ${args.map(shellQuote).join(' ')}`);
 
     const child = spawn(executable, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -531,6 +544,22 @@ export class LocalLlamaCppService implements vscode.Disposable {
 
     await this.waitUntilHealthy(child, config.llamaCppLoadTimeoutSeconds * 1000);
     this.output.appendLine(`[Vectra] Local model is ready${mmproj ? ' with multimodal vision' : ''}.`);
+  }
+
+  private async probeCapabilities(executable: string): Promise<ReadonlySet<string>> {
+    const cached = this.capabilityCache.get(executable);
+    if (cached) return cached;
+    let output = '';
+    try {
+      const result = await execFileAsync(executable, ['--help'], { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 });
+      output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    } catch (error) {
+      const value = error as { stdout?: string; stderr?: string };
+      output = `${value.stdout ?? ''}\n${value.stderr ?? ''}`;
+    }
+    const flags = parseLlamaServerFlags(output);
+    this.capabilityCache.set(executable, flags);
+    return flags;
   }
 
   async stop(): Promise<void> {

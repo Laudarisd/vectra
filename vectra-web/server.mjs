@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir, homedir, totalmem, cpus } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
 import { LocalLlamaManager } from './lib/local-llama.mjs';
 import { extractPdfText as extractPdfTextRobust, extractDocumentText, artifactForRequest } from './lib/documents.mjs';
@@ -17,6 +19,10 @@ import { recommendCatalogEntries } from './lib/model-recommender.mjs';
 import { downloadFile } from './lib/model-downloader.mjs';
 import { searchHuggingFace, resolveDownloadableFile } from './lib/huggingface-search.mjs';
 import { installLatestLlamaCpp } from './lib/llama-cpp-installer.mjs';
+const require=createRequire(import.meta.url);
+let agentCore;
+try{agentCore=require('../vectra-agent-core')}catch{agentCore=require('../shared-core')}
+const{AgentSession,VectraDeepAgentRuntime,createAttachmentTools,describeDeepAgentTool}=agentCore;
 const execFileAsync=promisify(execFile);
 const here=dirname(fileURLToPath(import.meta.url)); const publicRoot=existsSync(join(here,'dist'))?join(here,'dist'):join(here,'public'); const host=process.env.VECTRA_HOST||'127.0.0.1'; let port=Number(process.env.VECTRA_PORT||4173); const MAX_BODY=110*1024*1024; const localLlama=new LocalLlamaManager(); const history=new ChatHistoryStore();
 const server=http.createServer(async(req,res)=>{try{const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);const pathname=url.pathname;if(pathname.startsWith('/api/'))assertApiRequest(req);if(pathname==='/api/chats'||pathname.startsWith('/api/chats/'))return await handleHistory(req,res,pathname,url);if(req.method==='POST'&&pathname==='/api/chat')return await handleChat(req,res);if(req.method==='POST'&&pathname==='/api/models')return await handleModels(req,res);if(req.method==='POST'&&pathname==='/api/test-connection')return await handleTestConnection(req,res);if(req.method==='POST'&&pathname==='/api/attachments/inspect')return await handleAttachmentInspect(req,res);if(req.method==='GET'&&pathname==='/api/local/status')return json(res,200,localLlama.snapshot());if(req.method==='GET'&&pathname==='/api/local/gpu-info'){assertLocalRuntimeAllowed();return json(res,200,{gpus:await detectGpus()})}if(req.method==='POST'&&pathname==='/api/local/discover'){assertLocalRuntimeAllowed();return json(res,200,{runtimes:await discoverRuntimes()})}if(req.method==='POST'&&pathname==='/api/local/search-models'){assertLocalRuntimeAllowed();const body=await readJson(req);return json(res,200,{models:await searchGgufModels({query:body.query,limit:body.limit,roots:localLlama.modelSearchRoots()})})}if(req.method==='POST'&&pathname==='/api/local/models/catalog'){assertLocalRuntimeAllowed();return json(res,200,await handleModelCatalog())}if(req.method==='POST'&&pathname==='/api/local/models/search'){assertLocalRuntimeAllowed();return json(res,200,{results:await searchHuggingFace((await readJson(req)).query)})}if(req.method==='POST'&&pathname==='/api/local/models/resolve'){assertLocalRuntimeAllowed();const resolved=await resolveDownloadableFile((await readJson(req)).repoId);return resolved?json(res,200,resolved):json(res,404,{error:'Could not determine a single downloadable GGUF file for this repo.'})}if(req.method==='POST'&&pathname==='/api/local/models/download'){assertLocalRuntimeAllowed();return await handleModelDownload(req,res,await readJson(req))}if(req.method==='POST'&&pathname==='/api/local/llama-cpp/install'){assertLocalRuntimeAllowed();return await handleLlamaCppInstall(req,res)}if(req.method==='POST'&&pathname==='/api/local/choose-model'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseModel())}if(req.method==='POST'&&pathname==='/api/local/choose-model-directory'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseModelDirectory())}if(req.method==='POST'&&pathname==='/api/local/choose-download-directory'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseDownloadDirectory())}if(req.method==='POST'&&pathname==='/api/local/choose-mmproj'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseMmproj())}if(req.method==='POST'&&pathname==='/api/local/choose-server'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseServer())}if(req.method==='POST'&&pathname==='/api/local/start'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.start(await readJson(req)))}if(req.method==='POST'&&pathname==='/api/local/stop'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.stop())}if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'Method not allowed'});return await serveStatic(req,res)}catch(e){console.error('[Vectra Web]',e instanceof Error?e.message:e);return json(res,500,{error:e instanceof Error?e.message:String(e),code:e?.code})}});
@@ -40,7 +46,7 @@ async function handleHistory(req,res,pathname,url){
 }
 
 async function handleChat(req,res){
-  const b=await readJson(req);let{provider='openai',apiKey='',model='',baseUrl='',messages=[],attachments=[]}=b;
+  const b=await readJson(req);let{provider='openai',apiKey='',model='',baseUrl='',agentHarness='deepagents',conversationId='',messages=[],attachments=[]}=b;
   if(provider==='localAuto'&&!baseUrl){const runtimes=await discoverRuntimes();const runtime=runtimes.find(item=>item.models.includes(model))||runtimes[0];if(!runtime)return json(res,400,{error:'No supported local model server was detected. Start Ollama, LM Studio, llama.cpp, vLLM, or another OpenAI-compatible runtime.'});baseUrl=runtime.baseUrl;model=model||runtime.models[0]}
   let localContextTokens=0;
   if(provider==='llamaCpp'){
@@ -58,6 +64,11 @@ async function handleChat(req,res){
   const isLocalProvider=provider==='llamaCpp'||provider==='localAuto';
   const charBudget=isLocalProvider?estimateContextCharBudget(localContextTokens||8192):600_000;
   const safeMessages=Array.isArray(messages)?messages.slice(-30).map(m=>({role:m.role==='assistant'?'assistant':'user',content:clip(String(m.content||''),Math.floor(charBudget/2))})):[];
+  const session=new AgentSession({messages:safeMessages.map((message,index)=>({
+    id:`${conversationId||'web'}-${index}-${randomUUID()}`,
+    ...message,
+    createdAt:Date.now()
+  }))});
   const safeAttachments=await preprocessAttachments(Array.isArray(attachments)?attachments.slice(0,12).map(sanitizeAttachment):[],provider);
   if(isLocalProvider){const perAttachment=Math.max(2_000,Math.floor((charBudget/2)/Math.max(1,safeAttachments.length)));for(const f of safeAttachments)if(f.text)f.text=clip(f.text,perAttachment)}
 
@@ -71,13 +82,37 @@ async function handleChat(req,res){
   res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});
   const send=(obj)=>{try{res.write(`data: ${JSON.stringify(obj)}\n\n`)}catch{}};
   let closed=false;
-  req.on('close',()=>{closed=true});
+  const requestAbort=new AbortController();
+  req.on('close',()=>{closed=true;requestAbort.abort()});
+  const unsubscribe=session.events.subscribe((event)=>{
+    if(event.type==='ui.delta'&&!closed)send({delta:event.delta});
+    if(event.type==='ui.progress'&&!closed)send({progress:event.message});
+    if(event.type==='deepagent.tool.started'&&!closed&&typeof event.tool==='string')send({progress:describeDeepAgentTool(event.tool)});
+  });
 
   try{
-    let text=streamable
-      ? await compatibleChatStream({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',messages:safeMessages,attachments:safeAttachments},(delta)=>{if(!closed)send({delta})},idleTimeoutMs)
-      : await callProvider(provider,{apiKey,model,baseUrl,messages:safeMessages,attachments:safeAttachments});
-    if(!streamable&&!closed)send({delta:text});
+    let text=await session.run(async({events})=>{
+      events.emit({type:'ui.progress',message:'Generating response'});
+      let generated;
+      if(agentHarness==='deepagents'){
+        const bridge={complete:async({systemPrompt:agentPrompt,userPrompt})=>callProvider(provider,{
+          apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',
+          messages:[{role:'user',content:`${agentPrompt}\n\n${userPrompt}`}],
+          attachments:safeAttachments
+        })};
+        const tools=createAttachmentTools(safeAttachments);
+        const runtime=new VectraDeepAgentRuntime({provider:bridge,model,tools,context:{},events,maxSteps:12,systemPrompt:systemPrompt(safeAttachments)});
+        const last=safeMessages.at(-1)?.content||'Please analyze the attached files.';
+        const deep=await runtime.run({task:last,history:safeMessages.slice(0,-1),threadId:conversationId||undefined,signal:requestAbort.signal});
+        generated=deep.text;
+      }else{
+        generated=streamable
+          ? await compatibleChatStream({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',messages:safeMessages,attachments:safeAttachments},(delta)=>events.emit({type:'ui.delta',delta}),idleTimeoutMs)
+          : await callProvider(provider,{apiKey,model,baseUrl,messages:safeMessages,attachments:safeAttachments});
+      }
+      if(!streamable||agentHarness==='deepagents')events.emit({type:'ui.delta',delta:generated});
+      return generated;
+    },requestAbort.signal);
     if(hasUsableAttachmentContent(safeAttachments)&&looksLikeFalseAttachmentRefusal(text)){
       const retryMessages=[...safeMessages,{role:'user',content:'SYSTEM CORRECTION FROM VECTRA RUNTIME: The attached files have already been parsed and their actual content is included in this request. Answer the original user request using that content now. Do not ask the user to paste the file, and do not say you cannot access attachments.'}];
       text=await callProvider(provider,{apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',messages:retryMessages,attachments:safeAttachments});
@@ -92,6 +127,7 @@ async function handleChat(req,res){
   }catch(error){
     if(!closed)send({error:error instanceof Error?error.message:String(error)});
   }finally{
+    unsubscribe();
     res.end();
   }
 }

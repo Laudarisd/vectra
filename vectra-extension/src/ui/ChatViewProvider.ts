@@ -12,6 +12,7 @@ import { LocalLlamaCppService } from '../services/LocalLlamaCppService';
 import { PatchManager } from '../services/PatchManager';
 import { PlanManager } from '../services/PlanManager';
 import { TodoManager } from '../services/TodoManager';
+import { AgentRuntimeEvent, AgentSession } from '../../shared-core';
 
 interface WebviewMessage {
   type: string;
@@ -30,12 +31,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private static readonly MAX_STORED_MESSAGES = 300;
 
   private view?: vscode.WebviewView;
-  private readonly messages: ChatMessage[] = [];
+  private readonly session: AgentSession<ChatMessage>;
   private readonly pendingAttachments: Attachment[] = [];
   private readonly messageAttachments = new Map<string, Attachment[]>();
   private abortController?: AbortController;
-  private busy = false;
   private pendingSelectionCheck = false;
+
+  private get messages(): ChatMessage[] { return this.session.messages; }
+  private get busy(): boolean { return this.session.isBusy; }
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -54,7 +57,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // ChatMessage only carries attachment metadata, so history survives a
     // reload without workspaceState ballooning from re-stored file content.
     const saved = this.workspaceState.get<ChatMessage[]>(ChatViewProvider.HISTORY_KEY, []);
-    if (Array.isArray(saved)) this.messages.push(...saved);
+    this.session = new AgentSession<ChatMessage>({
+      messages: Array.isArray(saved) ? saved : [],
+      todos: this.todos,
+      plans: this.plans
+    });
+    this.session.events.subscribe((event) => this.forwardRuntimeEvent(event));
   }
 
   private persistMessages(): void {
@@ -141,12 +149,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'accept':
           if (message.id) {
             await this.patches.accept(message.id);
+            this.patches.clearCompleted();
             await this.postState();
           }
           break;
         case 'reject':
           if (message.id) {
             this.patches.reject(message.id);
+            this.patches.clearCompleted();
             await this.postState();
           }
           break;
@@ -158,10 +168,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'acceptAll':
           await this.patches.acceptAllPending();
+          this.patches.clearCompleted();
           await this.postState();
           break;
         case 'rejectAll':
           this.patches.rejectAllPending();
+          this.patches.clearCompleted();
           await this.postState();
           break;
         case 'clearCompleted':
@@ -177,11 +189,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this.postState();
           break;
         case 'clearChat':
-          this.messages.splice(0);
+          this.session.clear();
           this.pendingAttachments.splice(0);
           this.messageAttachments.clear();
-          this.todos.clear();
-          this.plans.reset();
           this.persistMessages();
           await this.postState();
           break;
@@ -257,7 +267,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       mode,
       attachments: attachments.map(toAttachmentMeta)
     };
-    this.messages.push(userMessage);
+    this.session.addMessage(userMessage);
     this.rememberAttachments(userMessage.id, attachments);
     this.persistMessages();
 
@@ -266,42 +276,45 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // but doing it here keeps the very next postState() in sync immediately.
     if (mode === 'agent') this.plans.reset();
 
-    this.busy = true;
     this.abortController = new AbortController();
-    await this.postState();
-    await this.post({ type: 'progress', message: "Wakey-wakey, lookin' 'round…" });
 
     // Streamed deltas (chat/ask replies only — see AgentController.converse)
     // are shown live under this id; the real message pushed below on
     // completion is what actually persists and survives a reload.
     const streamId = randomUUID();
     try {
-      const result = await this.controller.run({
-        mode,
-        userText: text,
-        history: this.messages.slice(0, -1),
-        attachments,
-        signal: this.abortController.signal,
-        onProgress: (progress) => void this.post({ type: 'progress', message: progress }),
-        onDelta: (delta) => void this.post({ type: 'chatDelta', id: streamId, delta }),
-        onTodosChanged: (todos) => void this.post({ type: 'todoUpdate', todos }),
-        onPlanChanged: (plan) => void this.post({ type: 'planUpdate', plan })
-      });
-      this.messages.push({
+      const result = await this.session.run(async ({ events, signal }) => {
+        // AgentSession is already busy here. Publish that state before any
+        // progress or token event so the webview reveals Stop and does not
+        // clear the first playful activity line as a stale idle update.
+        await this.postState();
+        events.emit({ type: 'ui.progress', message: "Wakey-wakey, lookin' 'round..." });
+        return this.controller.run({
+          mode,
+          userText: text,
+          history: this.messages.slice(0, -1),
+          attachments,
+          signal,
+          onProgress: (progress) => events.emit({ type: 'ui.progress', message: progress }),
+          onDelta: (delta) => events.emit({ type: 'ui.delta', id: streamId, delta }),
+          onTodosChanged: (todos) => events.emit({ type: 'ui.todos', todos }),
+          onPlanChanged: (plan) => events.emit({ type: 'ui.plan', plan })
+        });
+      }, this.abortController.signal);
+      this.session.addMessage({
         id: streamId,
         role: 'assistant',
         content: result.text,
         createdAt: Date.now()
       });
     } catch (error) {
-      this.messages.push({
+      this.session.addMessage({
         id: streamId,
         role: 'assistant',
         content: this.abortController.signal.aborted ? 'Request stopped.' : `Error: ${messageOf(error)}`,
         createdAt: Date.now()
       });
     } finally {
-      this.busy = false;
       this.abortController = undefined;
       this.persistMessages();
       await this.postState();
@@ -348,6 +361,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private async postState(): Promise<void> {
     const config = getConfig();
+    const activePlan = this.plans.get();
     const isLocal = config.provider === 'llamaCpp' || config.provider === 'ollama';
     const hasKey = isLocal || config.provider === 'openaiCompatible' || await this.credentials.has(config.provider);
     const localModelName = config.provider === 'llamaCpp'
@@ -360,7 +374,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       messages: this.messages,
       proposals: this.patches.list().map(toWebviewProposal),
       todos: this.todos.list(),
-      plan: this.plans.get(),
+      // Resolved HITL cards are execution state, not permanent chat history.
+      // Keep the approved plan internally for write gating, but remove its UI
+      // card immediately after the user decides.
+      plan: activePlan?.status === 'pending' ? activePlan : undefined,
       attachments: this.pendingAttachments.map(toAttachmentMeta),
       busy: this.busy,
       provider: config.provider,
@@ -391,6 +408,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private async post(payload: unknown): Promise<void> {
     await this.view?.webview.postMessage(payload);
+  }
+
+  /** Translate host-neutral runtime events into the extension webview protocol. */
+  private forwardRuntimeEvent(event: AgentRuntimeEvent): void {
+    switch (event.type) {
+      case 'ui.progress':
+        void this.post({ type: 'progress', message: event.message });
+        break;
+      case 'ui.delta':
+        void this.post({ type: 'chatDelta', id: event.id, delta: event.delta });
+        break;
+      case 'ui.todos':
+        void this.post({ type: 'todoUpdate', todos: event.todos });
+        break;
+      case 'ui.plan':
+        void this.post({ type: 'planUpdate', plan: event.plan });
+        break;
+    }
   }
 
   private getHtml(webview: vscode.Webview): string {

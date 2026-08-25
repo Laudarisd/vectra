@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1
+
+- Added the shared Vectra agent core and Deep Agents orchestration while keeping workspace access behind Vectra's reviewed host tools.
+- Expanded the workspace toolset with explicit folder creation, rename, move, copy, and confirmed directory deletion.
+- Restored live generation progress, token streaming where supported, and the Stop control.
+- Fixed human-in-the-loop plan approval so agent runs pause for a decision and never report unexecuted file or folder creation as complete.
+- Automatically removes resolved plan and file-review cards from chat after approval or rejection.
+- Improved tool naming, local-model discovery, context handling, and extension/web capability parity.
+- Added adaptive llama.cpp launch profiles, native function calling with a compatibility fallback, model-driven tool discovery, prompt-cache reuse, and separate larger hybrid GPU/RAM model recommendations.
+
 ## 1.0.0
 
 Initial public release, published on the VS Code Marketplace as **Vectra AI** (`laudarisd.vectra-ai`) — an upgraded, continued version of the previous Vectra agent, now released under a new Marketplace identifier.

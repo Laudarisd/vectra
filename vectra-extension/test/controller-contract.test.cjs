@@ -66,3 +66,18 @@ test('controller suppresses repeated tool-action loops', () => {
   assert.match(src, /Repeated tool action suppressed/);
   assert.match(src, /duplicateOnlySteps >= 2/);
 });
+
+test('Deep Agents waits for plan approval and rejects narration without a real write', () => {
+  const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
+  assert.match(src, /action\.type === 'propose_plan'/);
+  assert.match(src, /this\.plans\.waitForDecision\(plan\.id, opts\.signal\)/);
+  assert.match(src, /PLAN APPROVED: proceed now using the real Vectra workspace tools/);
+  assert.match(src, /let successfulWorkspaceWrites = 0/);
+  assert.match(src, /successfulWorkspaceWrites === 0/);
+  assert.match(src, /existingPlan\?\.status === 'approved'/);
+  assert.match(src, /requestsWorkspaceMutation\(opts\.task\)/);
+  assert.match(src, /No real workspace action was called/);
+  assert.match(src, /preparing a safe approval plan/);
+  assert.match(src, /this\.plans\.waitForDecision\(fallbackPlan\.id, opts\.signal\)/);
+  assert.match(src, /use real workspace tools now; do not merely describe/);
+});

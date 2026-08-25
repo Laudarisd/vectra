@@ -1,5 +1,6 @@
 const test=require('node:test');const assert=require('node:assert/strict');const http=require('node:http');
 const{OpenAIProvider}=require('../dist/providers/OpenAIProvider.js');const{AnthropicProvider}=require('../dist/providers/AnthropicProvider.js');const{GeminiProvider}=require('../dist/providers/GeminiProvider.js');const{OllamaProvider}=require('../dist/providers/OllamaProvider.js');const{OpenAICompatibleProvider}=require('../dist/providers/OpenAICompatibleProvider.js');
+const{LlamaCppProvider}=require('../dist/providers/LlamaCppProvider.js');
 async function withServer(handler,run){const server=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;const payload=body?JSON.parse(body):undefined;const result=await handler(req,payload);res.statusCode=result.status||200;res.setHeader('content-type','application/json');res.end(JSON.stringify(result.body))});await new Promise(r=>server.listen(0,'127.0.0.1',r));const{port}=server.address();try{await run(`http://127.0.0.1:${port}`)}finally{await new Promise(r=>server.close(r))}}
 const request={systemPrompt:'system',userPrompt:'user',model:'model-x',attachments:[{id:'1',name:'a.txt',mime:'text/plain',size:3,kind:'text',text:'abc'}]};
 test('OpenAI provider sends Responses multimodal content and parses models',async()=>{await withServer((req,body)=>{if(req.url==='/v1/responses'){assert.equal(req.headers.authorization,'Bearer secret');assert.equal(body.model,'model-x');assert.equal(body.input[0].content[0].type,'input_text');assert.equal(body.input[0].content[1].type,'input_text');return{body:{output:[{content:[{type:'output_text',text:'openai-ok'}]}]}}}if(req.url==='/v1/models')return{body:{data:[{id:'gpt-test',owned_by:'openai'}]}};return{status:404,body:{}}},async(base)=>{const p=new OpenAIProvider('secret',`${base}/v1`);assert.equal(await p.complete(request),'openai-ok');assert.equal((await p.listModels())[0].id,'gpt-test')})});
@@ -19,5 +20,23 @@ test('llama.cpp compatible mode requests schema-constrained JSON', async () => {
   }, async (base) => {
     const provider = new OpenAICompatibleProvider(`${base}/v1`, undefined, true);
     assert.match(await provider.complete({ systemPrompt: 's', userPrompt: 'u', model: 'm' }), /"done":true/);
+  });
+});
+
+test('llama.cpp provider sends native functions and parses tool calls', async () => {
+  await withServer((req, body) => {
+    assert.equal(req.url, '/v1/chat/completions');
+    assert.equal(body.tool_choice, 'auto');
+    assert.equal(body.cache_prompt, true);
+    assert.equal(body.tools[0].function.name, 'create_directory');
+    return { body: { choices: [{ message: { content: 'Creating it', tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'create_directory', arguments: '{"path":"education"}' } }] } }] } };
+  }, async (base) => {
+    const provider = new LlamaCppProvider(`${base}/v1`);
+    const result = await provider.completeWithTools({
+      model: 'local',
+      messages: [{ role: 'user', content: 'Create education' }],
+      tools: [{ name: 'create_directory', description: 'Create a folder', parameters: { type: 'object' } }]
+    });
+    assert.deepEqual(result.toolCalls[0], { id: 'call-1', name: 'create_directory', args: { path: 'education' } });
   });
 });

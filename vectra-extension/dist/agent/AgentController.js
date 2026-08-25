@@ -38,12 +38,15 @@ const node_crypto_1 = require("node:crypto");
 const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
 const text_1 = require("../utils/text");
+const PathOperationService_1 = require("../services/PathOperationService");
 const WebTools_1 = require("../services/WebTools");
 const GitTools_1 = require("../services/GitTools");
 const DocumentExtractor_1 = require("../services/DocumentExtractor");
 const AgentToolRegistry_1 = require("./AgentToolRegistry");
 const protocol_1 = require("./protocol");
 const ConversationContext_1 = require("./ConversationContext");
+const AgentToolCatalog_1 = require("./AgentToolCatalog");
+const shared_core_1 = require("../../shared-core");
 const MAX_DELEGATIONS_PER_RUN = 3;
 /**
  * Runs the model/tool loop for one user request.
@@ -60,13 +63,13 @@ class AgentController {
     todos;
     plans;
     toolRegistry;
-    constructor(providers, contextCollector, tools, patches, commands, todos, plans, git = new GitTools_1.GitTools(), web = new WebTools_1.WebTools()) {
+    constructor(providers, contextCollector, tools, patches, commands, todos, plans, git = new GitTools_1.GitTools(), web = new WebTools_1.WebTools(), pathOperations = new PathOperationService_1.PathOperationService()) {
         this.providers = providers;
         this.contextCollector = contextCollector;
         this.patches = patches;
         this.todos = todos;
         this.plans = plans;
-        this.toolRegistry = new AgentToolRegistry_1.AgentToolRegistry(tools, patches, commands, git, todos, plans, web);
+        this.toolRegistry = new AgentToolRegistry_1.AgentToolRegistry(tools, patches, commands, git, todos, plans, web, pathOperations);
     }
     async run(request) {
         if (!vscode.workspace.isTrusted) {
@@ -99,6 +102,28 @@ class AgentController {
         // what lets this run's prompt and final summary stay honest about that
         // state instead of the model guessing from its own past chat claims.
         const proposalIds = new Set(this.patches.list().filter((proposal) => proposal.status === 'pending').map((proposal) => proposal.id));
+        if (config.agentHarness === 'deepagents') {
+            const message = await this.runDeepAgent({
+                task: request.userText,
+                mode: request.mode,
+                history: request.history,
+                workspaceContext,
+                observations: [],
+                mediaAttachments,
+                proposalIds,
+                maxSteps: config.maxAgentSteps,
+                subagent: false,
+                preload: request.mode !== 'selection',
+                provider,
+                config,
+                contextCharBudget,
+                signal: request.signal,
+                onProgress: request.onProgress,
+                onTodosChanged: request.onTodosChanged,
+                onPlanChanged: request.onPlanChanged
+            });
+            return this.finish(message, [...proposalIds]);
+        }
         const message = await this.runLoop({
             task: request.userText,
             mode: request.mode,
@@ -119,6 +144,150 @@ class AgentController {
             onPlanChanged: request.onPlanChanged
         });
         return this.finish(message, [...proposalIds]);
+    }
+    /** Run LangChain Deep Agents while keeping every real capability behind Vectra's tool registry. */
+    async runDeepAgent(opts) {
+        const events = new shared_core_1.AgentEventStream();
+        events.subscribe((event) => {
+            if (event.type === 'deepagent.tool.started' && typeof event.tool === 'string' && !event.tool.startsWith('vectra_')) {
+                opts.onProgress?.((0, shared_core_1.describeDeepAgentTool)(event.tool));
+            }
+            if (event.type === 'deepagent.delta' && typeof event.delta === 'string')
+                opts.onProgress?.('Generating response…');
+        });
+        const executionContext = {
+            mode: opts.mode,
+            mediaAttachments: opts.mediaAttachments,
+            signal: opts.signal,
+            subagent: false
+        };
+        let hostToolCalls = 0;
+        let successfulWorkspaceWrites = 0;
+        // Deep Agents already owns read_file/write_file names for scratch space,
+        // so the shared factory namespaces real project tools as vectra_*.
+        const hostDefinitions = AgentToolCatalog_1.AGENT_TOOL_DEFINITIONS.filter((definition) => definition.name !== 'delegate_task');
+        const executeHostTool = async (toolName, input, context) => {
+            const envelope = (0, protocol_1.parseAgentEnvelope)(JSON.stringify({
+                message: '',
+                actions: [{ type: toolName, ...input }],
+                done: false
+            }));
+            const action = envelope.actions[0];
+            if (!action || envelope.actionError) {
+                throw new Error(envelope.actionError || `Invalid ${toolName} arguments.`);
+            }
+            hostToolCalls++;
+            opts.onProgress?.(this.toolRegistry.describe(action));
+            const result = await this.toolRegistry.execute(action, context);
+            if (result.wrote && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
+                successfulWorkspaceWrites++;
+            }
+            for (const id of result.proposalIds)
+                opts.proposalIds.add(id);
+            opts.onTodosChanged?.(this.todos.list());
+            const plan = this.plans.get();
+            if (plan?.status === 'pending')
+                opts.onPlanChanged?.(plan);
+            if (action.type === 'propose_plan' && plan?.status === 'pending') {
+                opts.onProgress?.('Waiting for you to approve the plan…');
+                const decision = await this.plans.waitForDecision(plan.id, opts.signal);
+                if (decision === 'approved') {
+                    this.todos.set(plan.steps.map((step) => ({ id: step.id, content: step.text, status: 'pending' })));
+                    opts.onTodosChanged?.(this.todos.list());
+                    return `${result.observation}\nPLAN APPROVED: proceed now using the real Vectra workspace tools.`;
+                }
+                return `${result.observation}\nPLAN REJECTED: do not make workspace changes; ask what should be revised.`;
+            }
+            return result.observation;
+        };
+        // Native llama.cpp tool calling gets a small, model-driven discovery pair
+        // instead of embedding every host capability in every agent turn. Other
+        // providers retain the complete direct-tool compatibility path.
+        const tools = opts.provider.completeWithTools
+            ? (0, shared_core_1.createVectraDiscoveryTools)(hostDefinitions, executeHostTool)
+            : (0, shared_core_1.createVectraHostTools)(hostDefinitions, executeHostTool);
+        const prompt = buildUserPrompt(opts.task, [], opts.workspaceContext, [], opts.mediaAttachments, this.resolveProposals([...opts.proposalIds]), this.todos.list(), this.plans.get(), opts.contextCharBudget);
+        const runtime = new shared_core_1.VectraDeepAgentRuntime({
+            provider: opts.provider,
+            model: opts.config.model,
+            tools,
+            context: executionContext,
+            events,
+            maxSteps: opts.maxSteps,
+            systemPrompt: (0, protocol_1.buildSystemPrompt)(opts.mode)
+        });
+        try {
+            opts.onProgress?.('Starting Deep Agents orchestration…');
+            const result = await runtime.run({
+                task: prompt,
+                history: opts.history.map((message) => ({ role: message.role, content: message.content })),
+                signal: opts.signal
+            });
+            this.syncDeepTodos(result.state, opts.onTodosChanged);
+            if (successfulWorkspaceWrites === 0 &&
+                opts.mode === 'agent' &&
+                (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))) {
+                const existingPlan = this.plans.get();
+                if (existingPlan?.status === 'rejected') {
+                    return 'I did not make any workspace changes because the plan was rejected.';
+                }
+                if (existingPlan?.status === 'approved') {
+                    opts.onProgress?.('The approved change was not executed; continuing with the real workspace tools…');
+                    return this.runLoop({
+                        ...opts,
+                        observations: ['PLAN APPROVED: use real workspace tools now; do not merely describe the requested changes.']
+                    });
+                }
+                opts.onProgress?.('No real workspace action was called; preparing a safe approval plan…');
+                const fallbackPlan = this.plans.propose([
+                    'Inspect the requested destination and relevant existing files',
+                    'Apply the requested folder and file changes with real workspace tools',
+                    'Verify the resulting structure and generated content'
+                ], `Complete the requested workspace change safely: ${(0, text_1.truncateMiddle)(opts.task, 180)}`);
+                opts.onPlanChanged?.(fallbackPlan);
+                opts.onProgress?.('Waiting for you to approve the plan…');
+                const decision = await this.plans.waitForDecision(fallbackPlan.id, opts.signal);
+                if (decision !== 'approved') {
+                    return 'I did not make any workspace changes because the fallback plan was rejected.';
+                }
+                this.todos.set(fallbackPlan.steps.map((step) => ({ id: step.id, content: step.text, status: 'pending' })));
+                opts.onTodosChanged?.(this.todos.list());
+                return this.runLoop({
+                    ...opts,
+                    observations: ['PLAN APPROVED: use real workspace tools now; do not merely describe the requested changes.']
+                });
+            }
+            return result.text || 'Deep Agents completed the task without a final text response.';
+        }
+        catch (error) {
+            // If the harness/model fails before any capability ran, the compact
+            // Vectra loop is a safe compatibility fallback. Never replay after a
+            // host tool ran because that could duplicate proposals or commands.
+            if (hostToolCalls === 0 && !opts.signal?.aborted) {
+                opts.onProgress?.('Deep Agents unavailable for this model; using Vectra compatibility mode…');
+                return this.runLoop(opts);
+            }
+            throw error;
+        }
+    }
+    syncDeepTodos(state, callback) {
+        const raw = state?.todos;
+        if (!Array.isArray(raw) || !raw.length)
+            return;
+        const todos = raw.slice(0, 100).flatMap((item, index) => {
+            if (!item || typeof item !== 'object')
+                return [];
+            const record = item;
+            const content = String(record.content ?? '').trim();
+            const status = record.status;
+            if (!content || !['pending', 'in_progress', 'completed'].includes(String(status)))
+                return [];
+            return [{ id: String(record.id ?? index + 1), content, status: status }];
+        });
+        if (!todos.length)
+            return;
+        this.todos.set(todos);
+        callback?.(this.todos.list());
     }
     /**
      * The shared step loop. The top-level run() and a delegate_task sub-run both
@@ -170,20 +339,18 @@ class AgentController {
                 opts.onProgress?.("Wrappin' it all up…");
                 const answer = envelope.message || lastMessage;
                 // A model can skip tools entirely and just narrate success in prose.
-                // There is no create_directory action at all, so any "created a
-                // folder" claim reaching here is fabricated by definition. Give it
-                // one real chance to back the claim with an actual action, or retract
-                // it, instead of forwarding an assertion nothing supports.
+                // Any creation claim reaching here without a real workspace action is
+                // fabricated by definition. Give it one chance to call the tool or
+                // retract the claim instead of forwarding an unsupported assertion.
                 if (opts.mode === 'agent' &&
                     !this.resolveProposals([...opts.proposalIds]).length &&
                     !verificationTurnUsed &&
                     claimsUnverifiedCreation(answer)) {
                     verificationTurnUsed = true;
                     opts.onProgress?.("Checky-checky my own work…");
-                    observations.push('GROUNDING CHECK: Your last reply claimed file or folder creation, but no propose_file(s)/create_file ' +
-                        'action was ever executed this run and no proposal is pending. There is no create_directory action — ' +
-                        'folders only ever appear as a side effect of an accepted file proposal. Either call the real action now ' +
-                        '(propose_files, create_file, etc.) to actually do this, or reply again with actions=[] and an honest ' +
+                    observations.push('GROUNDING CHECK: Your last reply claimed file or folder creation, but no real workspace write action ' +
+                        'was executed this run and no proposal is pending. Call the appropriate tool now ' +
+                        '(create_directory, propose_files, create_file, etc.) to actually do this, or reply with actions=[] and an honest ' +
                         'message that does not claim anything was created, written, or saved.');
                     continue;
                 }
@@ -435,6 +602,11 @@ function actionFingerprint(action) {
 const CREATION_CLAIM_PATTERN = /\b(?:created|creating|generated|generating|built|building|wrote|written|writing|saved|saving|added|adding|implemented|implementing|set up|setting up|prepared|preparing|made|making)\b[\s\S]{0,80}\b(?:file|files|folder|folders|directory|directories|pipeline|pipelines|project|script|scripts|module|modules|component|components)\b/i;
 function claimsUnverifiedCreation(message) {
     return CREATION_CLAIM_PATTERN.test(message);
+}
+/** Concrete mutation requests must never finish as a zero-tool Deep Agent narration. */
+const WORKSPACE_MUTATION_REQUEST_PATTERN = /\b(?:create|make|generate|add|write|rename|move|copy|delete|remove|edit|update|change|fix)\b[\s\S]{0,120}\b(?:file|files|folder|folders|directory|directories|readme|document|documents|project|script|scripts|module|modules|component|components)\b/i;
+function requestsWorkspaceMutation(task) {
+    return WORKSPACE_MUTATION_REQUEST_PATTERN.test(task);
 }
 /** Framing prepended to a delegated task: the sub-agent has no memory of the parent conversation and a hard-restricted tool set. */
 function buildSubagentTask(task) {

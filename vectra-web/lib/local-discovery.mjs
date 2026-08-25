@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -39,25 +39,37 @@ async function probeRuntime(runtime) {
   }
 }
 
+/**
+ * extraRoots and app-specific caches (huggingface/lm-studio/jan/...) are
+ * walked to completion in a first pass before touching broad personal
+ * folders (Downloads/Documents/Desktop) in a second pass, sharing the same
+ * visited set and result limit. walk() is a full depth-first traversal per
+ * root, so scanning a large Downloads/Documents tree first would exhaust the
+ * 20,000-directory visit budget before ever reaching the app caches that
+ * actually hold models.
+ */
 export async function searchGgufModels({ query = '', roots = [], limit = 500 } = {}) {
   const needle = String(query || '').trim().toLowerCase();
-  const candidates = [...new Set([...roots, ...defaultModelRoots()].filter(Boolean).map((root) => resolve(root)))];
   const output = [];
   const visited = new Set();
-  for (const root of candidates) {
+  const priority = [...new Set([...roots, ...appModelRoots()].filter(Boolean).map((root) => resolve(root)))];
+  for (const root of priority) {
     if (output.length >= limit) break;
-    await walk(resolve(root), 0, output, visited, needle, limit);
+    await walk(root, 0, output, visited, needle, limit);
+  }
+  const broad = [...new Set(broadModelRoots().filter(Boolean).map((root) => resolve(root)))];
+  for (const root of broad) {
+    if (output.length >= limit) break;
+    await walk(root, 0, output, visited, needle, limit);
   }
   return [...new Set(output)].sort((a, b) => natural(basename(a), basename(b))).slice(0, limit);
 }
 
-export function defaultModelRoots() {
+/** Narrow, app-specific caches that are worth scanning to completion first — this is where real models actually live. */
+export function appModelRoots() {
   const home = homedir();
   const roots = [
     join(home, '.vectra', 'models'),
-    join(home, 'Downloads'),
-    join(home, 'Documents'),
-    join(home, 'Desktop'),
     join(home, 'Models'),
     join(home, 'models'),
     join(home, '.cache', 'huggingface', 'hub'),
@@ -79,7 +91,19 @@ export function defaultModelRoots() {
   if (process.env.LOCALAPPDATA) roots.push(join(process.env.LOCALAPPDATA, 'nomic.ai', 'GPT4All'));
   if (process.env.LOCALAPPDATA) roots.push(join(process.env.LOCALAPPDATA, 'Jan', 'data', 'models'));
   if (process.env.APPDATA) roots.push(join(process.env.APPDATA, 'jan', 'models'));
+  if (process.env.APPDATA) roots.push(join(process.env.APPDATA, 'GPT4All'));
+  if (process.env.PROGRAMDATA) roots.push(join(process.env.PROGRAMDATA, 'GPT4All', 'models'));
   return [...new Set(roots.filter(Boolean))];
+}
+
+/** Broad personal folders that can contain models but are large enough to exhaust the scan budget if searched first. */
+export function broadModelRoots() {
+  const home = homedir();
+  return [join(home, 'Downloads'), join(home, 'Documents'), join(home, 'Desktop')];
+}
+
+export function defaultModelRoots() {
+  return [...appModelRoots(), ...broadModelRoots()];
 }
 
 async function walk(directory, depth, output, visited, needle, limit) {
@@ -90,8 +114,22 @@ async function walk(directory, depth, output, visited, needle, limit) {
   for (const entry of entries) {
     if (output.length >= limit) return;
     const full = join(directory, entry.name);
-    if (entry.isFile() && isSelectableGguf(entry.name) && (!needle || entry.name.toLowerCase().includes(needle))) output.push(full);
-    else if (entry.isDirectory() && !entry.isSymbolicLink() && !SKIPPED_DIRECTORIES.has(entry.name)) await walk(full, depth + 1, output, visited, needle, limit);
+    // A symlink/junction (common when a models folder is redirected to
+    // another drive) reports false from both isDirectory() and isFile() on
+    // Windows — resolve it with stat() instead of silently dropping it.
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (entry.isSymbolicLink()) {
+      try {
+        const resolved = await stat(full);
+        isDir = resolved.isDirectory();
+        isFile = resolved.isFile();
+      } catch {
+        continue;
+      }
+    }
+    if (isFile && isSelectableGguf(entry.name) && (!needle || entry.name.toLowerCase().includes(needle))) output.push(full);
+    else if (isDir && !SKIPPED_DIRECTORIES.has(entry.name)) await walk(full, depth + 1, output, visited, needle, limit);
   }
 }
 

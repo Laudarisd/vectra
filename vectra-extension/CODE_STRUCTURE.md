@@ -40,6 +40,7 @@ vectra/
 │   ├── services/                     # everything the agent tools + UI call into
 │   │   ├── WorkspaceTools.ts         # list/search/read files inside the trusted workspace
 │   │   ├── PatchManager.ts           # turns writes into reviewable EditProposal objects (diff/accept/reject)
+│   │   ├── PathOperationService.ts   # confirmed create/rename/move/copy/delete path operations
 │   │   ├── DiffContentProvider.ts    # renders EditProposal diffs via a vscode:// content scheme
 │   │   ├── CommandRunner.ts          # runs shell commands, only after explicit user confirmation
 │   │   ├── GitTools.ts               # read-only git_status/git_diff (no stage/commit/push)

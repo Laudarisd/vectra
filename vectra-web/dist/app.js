@@ -771,6 +771,8 @@
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
         model: state.model,
+        agentHarness: 'deepagents',
+        conversationId: state.currentChatId,
         messages: state.messages.filter((message) => !message.pending),
         attachments: payloadAttachments
       }, state.chatAbort.signal, (text) => {

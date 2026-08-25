@@ -1,6 +1,9 @@
 # Packaged archives
 *.zip
 
+# Installed JavaScript dependencies
+**/node_modules/
+
 # macOS metadata
 .DS_Store
 
@@ -11,3 +14,7 @@
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Generated extension bundles
+vectra-extension/shared-core/
+vectra-extension/web/

@@ -50,6 +50,7 @@ const LlamaCppInstaller_1 = require("./LlamaCppInstaller");
 const ModelCatalog_1 = require("./ModelCatalog");
 const ModelDownloader_1 = require("./ModelDownloader");
 const ModelRecommender_1 = require("./ModelRecommender");
+const LlamaRuntimeProfile_1 = require("./LlamaRuntimeProfile");
 const execFileAsync = (0, node_util_1.promisify)(node_child_process_1.execFile);
 /** Owns local model selection and the llama.cpp child-process lifecycle. */
 class LocalLlamaCppService {
@@ -58,6 +59,7 @@ class LocalLlamaCppService {
     currentModelPath = '';
     currentMmprojPath = '';
     lastArgsKey = '';
+    capabilityCache = new Map();
     get isRunning() { return Boolean(this.process && !this.process.killed); }
     get baseUrl() { return `http://127.0.0.1:${(0, config_1.getConfig)().llamaCppPort}/v1`; }
     get modelPath() { return this.currentModelPath || (0, config_1.getConfig)().localModelPath; }
@@ -295,10 +297,10 @@ class LocalLlamaCppService {
     }
     async pickCatalogEntry() {
         const hw = await (0, hardware_1.getHardwareSnapshot)();
-        const recommended = (0, ModelRecommender_1.recommendCatalogEntries)(hw, ModelCatalog_1.CURATED_MODELS);
-        return this.showCatalogPicker(recommended);
+        const recommendations = (0, ModelRecommender_1.recommendCatalogTiers)(hw, ModelCatalog_1.CURATED_MODELS);
+        return this.showCatalogPicker(recommendations.fast, recommendations.hybrid);
     }
-    async showCatalogPicker(recommended) {
+    async showCatalogPicker(recommended, hybrid = []) {
         const llmEntries = recommended.filter((entry) => entry.kind === 'llm');
         const vlmEntries = recommended.filter((entry) => entry.kind === 'vlm');
         const items = [];
@@ -309,6 +311,10 @@ class LocalLlamaCppService {
         if (vlmEntries.length) {
             items.push({ label: 'Vision models', kind: vscode.QuickPickItemKind.Separator });
             items.push(...vlmEntries.map(toCatalogPickItem));
+        }
+        if (hybrid.length) {
+            items.push({ label: 'Larger models (hybrid GPU + RAM, slower)', kind: vscode.QuickPickItemKind.Separator });
+            items.push(...hybrid.map(toCatalogPickItem));
         }
         items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
         items.push({ label: '$(search) Search Hugging Face for more…', action: 'search' });
@@ -325,7 +331,7 @@ class LocalLlamaCppService {
         if (picked.entry)
             return picked.entry;
         if (picked.action === 'search')
-            return this.showSearchFlow(recommended);
+            return this.showSearchFlow([...recommended, ...hybrid]);
         return undefined;
     }
     async showSearchFlow(recommended) {
@@ -458,24 +464,28 @@ class LocalLlamaCppService {
         const config = (0, config_1.getConfig)();
         const normalized = (0, LocalModelDiscovery_1.normalizeShardPath)(modelPath);
         const mmproj = await this.resolveMmproj(normalized);
-        // Forcing CPU overrides whatever GPU layer count is configured; auto/gpu
-        // keep the configured value, which is what already gives multi-GPU
-        // placement for free (llama.cpp's layer split mode spreads offloaded
-        // layers across every visible CUDA device on its own).
-        const gpuLayers = config.deviceMode === 'cpu' ? '0' : config.llamaCppGpuLayers;
+        const [hardware, modelStat, supportedFlags] = await Promise.all([
+            (0, hardware_1.getHardwareSnapshot)(),
+            node_fs_1.promises.stat(normalized),
+            this.probeCapabilities(executable)
+        ]);
+        const profile = (0, LlamaRuntimeProfile_1.buildLlamaRuntimeProfile)({
+            hardware,
+            modelBytes: modelStat.size,
+            requestedContextSize: config.llamaCppContextSize,
+            deviceMode: config.deviceMode,
+            gpuLayers: config.llamaCppGpuLayers,
+            splitMode: config.llamaCppSplitMode,
+            cpuMoe: config.llamaCppCpuMoe,
+            noMmap: config.llamaCppNoMmap,
+            supportedFlags
+        });
         const args = [
             '-m', normalized,
             '--host', '127.0.0.1',
             '--port', String(config.llamaCppPort),
-            '-c', String(config.llamaCppContextSize),
-            '--fit', 'on',
-            '--gpu-layers', gpuLayers,
-            '--split-mode', config.llamaCppSplitMode
+            ...profile.args
         ];
-        if (config.llamaCppCpuMoe)
-            args.push('--cpu-moe');
-        if (config.llamaCppNoMmap)
-            args.push('--no-mmap');
         if (mmproj)
             args.push('--mmproj', mmproj);
         if (config.llamaCppExtraArgs.length)
@@ -495,6 +505,7 @@ class LocalLlamaCppService {
         if (mmproj)
             this.output.appendLine(`[Vectra] Vision projector: ${mmproj}`);
         this.output.appendLine(`[Vectra] Endpoint: ${this.baseUrl}`);
+        this.output.appendLine(`[Vectra] Adaptive profile: ${profile.summary}`);
         this.output.appendLine(`[Vectra] Args: ${args.map(shellQuote).join(' ')}`);
         const child = (0, node_child_process_1.spawn)(executable, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
         this.process = child;
@@ -510,6 +521,23 @@ class LocalLlamaCppService {
         });
         await this.waitUntilHealthy(child, config.llamaCppLoadTimeoutSeconds * 1000);
         this.output.appendLine(`[Vectra] Local model is ready${mmproj ? ' with multimodal vision' : ''}.`);
+    }
+    async probeCapabilities(executable) {
+        const cached = this.capabilityCache.get(executable);
+        if (cached)
+            return cached;
+        let output = '';
+        try {
+            const result = await execFileAsync(executable, ['--help'], { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 });
+            output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+        }
+        catch (error) {
+            const value = error;
+            output = `${value.stdout ?? ''}\n${value.stderr ?? ''}`;
+        }
+        const flags = (0, LlamaRuntimeProfile_1.parseLlamaServerFlags)(output);
+        this.capabilityCache.set(executable, flags);
+        return flags;
     }
     async stop() {
         const child = this.process;

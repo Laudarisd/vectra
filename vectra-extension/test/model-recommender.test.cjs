@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { effectiveBudgetMiB, recommendCatalogEntries } = require('../dist/services/ModelRecommender.js');
+const { effectiveBudgetMiB, recommendCatalogEntries, recommendCatalogTiers } = require('../dist/services/ModelRecommender.js');
 
 const CATALOG = [
   { id: 'small', label: 'Small', family: 'llama', paramCount: 1, quant: 'Q4_K_M', kind: 'llm', sizeBytes: 1, minVramMiB: 1024, minRamMiB: 1536 },
@@ -37,4 +37,11 @@ test('recommendCatalogEntries respects the limit parameter', () => {
   const hw = { gpus: [], maxVramMiB: 40000, cpuCores: 16, totalRamMiB: 65536, platform: 'linux' };
   const result = recommendCatalogEntries(hw, CATALOG, 2);
   assert.equal(result.length, 2);
+});
+
+test('recommendCatalogTiers offers a larger RAM-backed model separately', () => {
+  const hw = { gpus: [{}], maxVramMiB: 8000, cpuCores: 16, totalRamMiB: 65536, platform: 'linux' };
+  const tiers = recommendCatalogTiers(hw, CATALOG);
+  assert.ok(tiers.fast.some((entry) => entry.id === 'mid'));
+  assert.ok(tiers.hybrid.some((entry) => entry.id === 'large'));
 });

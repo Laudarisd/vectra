@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.effectiveBudgetMiB = effectiveBudgetMiB;
 exports.recommendCatalogEntries = recommendCatalogEntries;
+exports.recommendCatalogTiers = recommendCatalogTiers;
 /**
  * A GPU with known VRAM sizes the recommendation directly (llama.cpp offloads
  * to it). Without one (no GPU, or a non-NVIDIA GPU the platform fallback
@@ -28,5 +29,19 @@ function recommendCatalogEntries(hw, catalog, limit = 6) {
     return fits
         .sort((left, right) => right.paramCount - left.paramCount)
         .slice(0, limit);
+}
+/** Offer larger partial-offload models without confusing them with the
+ * latency-first, fully resident recommendation. */
+function recommendCatalogTiers(hw, catalog, limitPerTier = 6) {
+    const fast = recommendCatalogEntries(hw, catalog, limitPerTier);
+    if (!hw.maxVramMiB)
+        return { fast, hybrid: [] };
+    const fastIds = new Set(fast.map((entry) => entry.id));
+    const ramBudget = Math.floor(hw.totalRamMiB * CPU_RAM_FRACTION);
+    const hybrid = catalog
+        .filter((entry) => !fastIds.has(entry.id) && entry.minRamMiB <= ramBudget)
+        .sort((left, right) => right.paramCount - left.paramCount)
+        .slice(0, limitPerTier);
+    return { fast, hybrid };
 }
 //# sourceMappingURL=ModelRecommender.js.map

@@ -168,7 +168,7 @@ function activateVectra(context, output) {
             void vscode.window.showErrorMessage(`Vectra connection failed: ${messageOf(error)}`);
         }
     }), vscode.commands.registerCommand('vectra.openSettings', async () => {
-        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:laudarisd.vectra');
+        await vscode.commands.executeCommand('workbench.action.openSettings', '@ext:laudarisd.vectra-ai');
     }), vscode.commands.registerCommand('vectra.supportDeveloper', async () => {
         const url = (0, config_1.getConfig)().supportDeveloperUrl.trim();
         if (!url) {

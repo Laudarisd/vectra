@@ -6,6 +6,7 @@ import { normalizeAgentPath, resolveWorkspacePath } from '../utils/path';
 import { sha256, sha256Bytes, stripEnclosingCodeFence } from '../utils/text';
 import { createDocumentBytes, documentFormatForPath, extractDocumentText, isWritableDocumentFormat } from './DocumentService';
 import { WorkspaceTools } from './WorkspaceTools';
+import { ApprovalState } from '../../shared-core';
 
 /**
  * Owns Vectra's review-before-write boundary.
@@ -18,6 +19,7 @@ import { WorkspaceTools } from './WorkspaceTools';
  */
 export class PatchManager {
   private readonly proposals = new Map<string, EditProposal>();
+  private readonly approvals = new ApprovalState();
 
   constructor(private readonly tools: WorkspaceTools) {}
 
@@ -188,6 +190,7 @@ export class PatchManager {
     await this.prepareCreateDirectories([proposal]);
     await this.applyProposal(proposal);
     proposal.status = 'accepted';
+    this.approvals.approve(id);
   }
 
   async acceptAllPending(): Promise<void> {
@@ -197,12 +200,14 @@ export class PatchManager {
     for (const proposal of pending) {
       await this.applyProposal(proposal);
       proposal.status = 'accepted';
+      this.approvals.approve(proposal.id);
     }
   }
 
   reject(id: string): void {
     const proposal = this.requireProposal(id);
     proposal.status = 'rejected';
+    this.approvals.reject(id);
   }
 
   /**
@@ -223,7 +228,10 @@ export class PatchManager {
 
   rejectAllPending(): void {
     for (const proposal of this.proposals.values()) {
-      if (proposal.status === 'pending') proposal.status = 'rejected';
+      if (proposal.status === 'pending') {
+        proposal.status = 'rejected';
+        this.approvals.reject(proposal.id);
+      }
     }
   }
 
@@ -235,6 +243,7 @@ export class PatchManager {
 
   private store(proposal: EditProposal): EditProposal {
     this.proposals.set(proposal.id, proposal);
+    this.approvals.request('edit', proposal, proposal.id);
     return proposal;
   }
 

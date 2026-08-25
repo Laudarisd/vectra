@@ -44,18 +44,47 @@ const SKIPPED_DIRECTORIES = new Set([
 /**
  * Search common model locations without crawling the entire computer.
  * Directory and result caps keep detection responsive on very large homes.
+ *
+ * extraRoots and the app-specific caches (huggingface/lm-studio/jan/...) are
+ * scanned to completion in a first pass before touching broad personal
+ * folders (Downloads/Documents/Desktop) in a second pass, sharing the same
+ * budget and results. A single interleaved BFS across every root would let a
+ * large Downloads/Documents tree exhaust maxDirectories before the scan ever
+ * reaches the app caches that actually hold models.
  */
 export async function discoverGgufModels(
   extraRoots: string[] = [],
   maxDirectories = 20_000,
   maxModels = 500
 ): Promise<DiscoveredGgufModel[]> {
-  const roots = uniqueExistingCandidates([...extraRoots, ...commonModelDirectories()]);
-  const queue = roots.map((directory) => ({ directory, depth: 0 }));
   const visited = new Set<string>();
   const models: DiscoveredGgufModel[] = [];
+  const budget = () => maxDirectories - visited.size;
 
-  while (queue.length && visited.size < maxDirectories && models.length < maxModels) {
+  await scanRoots(
+    uniqueExistingCandidates([...extraRoots, ...appModelDirectories()]),
+    visited, models, budget(), maxModels
+  );
+  await scanRoots(
+    uniqueExistingCandidates(broadModelDirectories()),
+    visited, models, budget(), maxModels
+  );
+
+  return deduplicate(models, (model) => model.id.toLowerCase())
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+async function scanRoots(
+  roots: string[],
+  visited: Set<string>,
+  models: DiscoveredGgufModel[],
+  directoryBudget: number,
+  maxModels: number
+): Promise<void> {
+  const queue = roots.map((directory) => ({ directory, depth: 0 }));
+  const visitLimit = visited.size + Math.max(0, directoryBudget);
+
+  while (queue.length && visited.size < visitLimit && models.length < maxModels) {
     const current = queue.shift()!;
     const key = path.resolve(current.directory).toLowerCase();
     if (visited.has(key)) continue;
@@ -71,13 +100,27 @@ export async function discoverGgufModels(
     for (const entry of entries) {
       if (models.length >= maxModels) break;
       const fullPath = path.join(current.directory, entry.name);
-      if (entry.isDirectory()) {
+      // A symlink/junction (common when a models folder is redirected to
+      // another drive) reports false from both isDirectory() and isFile() on
+      // Windows — resolve it with stat() instead of silently dropping it.
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const resolved = await fs.stat(fullPath);
+          isDir = resolved.isDirectory();
+          isFile = resolved.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDir) {
         if (current.depth < 12 && !SKIPPED_DIRECTORIES.has(entry.name)) {
           queue.push({ directory: fullPath, depth: current.depth + 1 });
         }
         continue;
       }
-      if (!entry.isFile() || !isSelectableGguf(entry.name)) continue;
+      if (!isFile || !isSelectableGguf(entry.name)) continue;
 
       try {
         const stat = await fs.stat(fullPath);
@@ -93,9 +136,6 @@ export async function discoverGgufModels(
       }
     }
   }
-
-  return deduplicate(models, (model) => model.id.toLowerCase())
-    .sort((left, right) => left.label.localeCompare(right.label));
 }
 
 /** Detect models exposed by a locally running Ollama installation. */
@@ -137,7 +177,8 @@ export async function discoverOllamaModels(baseUrl: string): Promise<DiscoveredO
   }
 }
 
-export function commonModelDirectories(): string[] {
+/** Narrow, app-specific caches that are worth scanning to completion first — this is where real models actually live. */
+export function appModelDirectories(): string[] {
   const home = os.homedir();
   const localAppData = process.env.LOCALAPPDATA || '';
   const appData = process.env.APPDATA || '';
@@ -147,9 +188,6 @@ export function commonModelDirectories(): string[] {
     path.join(home, '.vectra', 'models'),
     path.join(home, 'models'),
     path.join(home, 'Models'),
-    path.join(home, 'Downloads'),
-    path.join(home, 'Documents'),
-    path.join(home, 'Desktop'),
     path.join(home, '.cache', 'huggingface', 'hub'),
     hfHome && path.join(hfHome, 'hub'),
     path.join(home, '.cache', 'lm-studio', 'models'),
@@ -172,6 +210,20 @@ export function commonModelDirectories(): string[] {
     appData && path.join(appData, 'GPT4All'),
     programData && path.join(programData, 'GPT4All', 'models')
   ].filter(Boolean);
+}
+
+/** Broad personal folders that can contain models but are large enough to exhaust the scan budget if searched first. */
+export function broadModelDirectories(): string[] {
+  const home = os.homedir();
+  return [
+    path.join(home, 'Downloads'),
+    path.join(home, 'Documents'),
+    path.join(home, 'Desktop')
+  ];
+}
+
+export function commonModelDirectories(): string[] {
+  return [...appModelDirectories(), ...broadModelDirectories()];
 }
 
 /** Detect models exposed by common local OpenAI-compatible runtimes. */

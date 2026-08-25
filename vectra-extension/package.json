@@ -2,7 +2,7 @@
   "name": "vectra-ai",
   "displayName": "Vectra AI",
   "description": "A fast, local-first AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -245,6 +245,19 @@
           "default": "https://generativelanguage.googleapis.com/v1",
           "description": "Gemini API base URL."
         },
+        "vectra.agentHarness": {
+          "type": "string",
+          "enum": [
+            "deepagents",
+            "vectra"
+          ],
+          "enumDescriptions": [
+            "Use the LangChain Deep Agents harness with Vectra tools and safety policies.",
+            "Use Vectra's compact legacy JSON tool loop."
+          ],
+          "default": "deepagents",
+          "description": "Agent orchestration harness. The Vectra loop remains available as a compatibility fallback."
+        },
         "vectra.maxAgentSteps": {
           "type": "number",
           "default": 12,
@@ -371,10 +384,11 @@
     }
   },
   "scripts": {
-    "check": "tsc --noEmit -p .",
-    "compile": "tsc -p .",
+    "build:core": "node ./node_modules/typescript/bin/tsc -p ../vectra-agent-core && node scripts/sync-agent-core.mjs",
+    "check": "npm run build:core && tsc --noEmit -p .",
+    "compile": "npm run build:core && tsc -p .",
     "watch": "tsc -watch -p .",
-    "test": "npm run compile && node --test",
+    "test": "npm run compile && node --test --test-isolation=none test/*.test.cjs && npm run test:web",
     "package": "npm run test && vsce package --no-dependencies",
     "sync:web": "node scripts/sync-web.mjs",
     "build:web": "npm run sync:web && node web/scripts/build.mjs",

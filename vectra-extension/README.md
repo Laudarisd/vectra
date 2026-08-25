@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://code.visualstudio.com/"><img src="https://img.shields.io/badge/VS_Code-1.90%2B-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version 1.0.0"></a>
+  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.1-blue" alt="Version 1.0.1"></a>
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
@@ -18,6 +18,7 @@ Vectra is a repo-aware coding agent for VS Code. Point it at a GGUF model and ll
 ## Why Vectra
 
 - **Local-first** — run instruction-tuned GGUF models through llama.cpp; your model and prompts never leave your machine.
+- **Adaptive local runtime** — Vectra profiles the selected llama.cpp build and hardware, enables supported acceleration/cache options, and offers larger hybrid GPU/RAM models separately from latency-first choices.
 - **Repo-aware agent** — reads, searches, and edits your workspace; every write is a reviewed diff, never a silent change.
 - **Approved execution** — files, tests, and commands only run after you confirm them.
 - **Documents built in** — parse and generate PDF, DOCX, PPTX, XLSX, RTF, code, and images.

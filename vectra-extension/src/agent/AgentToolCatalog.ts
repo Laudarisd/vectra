@@ -1,42 +1,19 @@
 import { AgentAction } from '../types';
+import {
+  VECTRA_TOOL_DEFINITIONS,
+  VectraToolDefinition
+} from '../../shared-core';
 
-interface ToolDefinition {
-  name: AgentAction['type'];
-  description: string;
-}
+type ToolDefinition = VectraToolDefinition<AgentAction['type']>;
+type CoreToolName = (typeof VECTRA_TOOL_DEFINITIONS)[number]['name'];
+type AssertNever<T extends never> = T;
+// These fail compilation if the canonical core catalog and extension action
+// union ever drift apart in either direction.
+type AllCoreToolsHaveExtensionActions = AssertNever<Exclude<CoreToolName, AgentAction['type']>>;
+type AllExtensionActionsAreInCore = AssertNever<Exclude<AgentAction['type'], CoreToolName>>;
 
 /** Pure tool metadata shared by prompts, structured schemas, and tests. */
-export const AGENT_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
-  { name: 'workspace_summary', description: 'Count and summarize a workspace or subdirectory.' },
-  { name: 'list_directory', description: 'Recursively list files and directories with bounded depth.' },
-  { name: 'list_files', description: 'Find workspace files using a glob.' },
-  { name: 'read_file', description: 'Read a line-numbered window from one text file.' },
-  { name: 'read_files', description: 'Read up to 20 related text files in one call.' },
-  { name: 'read_document', description: 'Extract text from PDF, DOCX, PPTX, XLSX, or RTF.' },
-  { name: 'inspect_file', description: 'Attach an image or visual document for model inspection.' },
-  { name: 'search_text', description: 'Search text across bounded workspace files.' },
-  { name: 'get_diagnostics', description: 'Read VS Code errors and warnings.' },
-  { name: 'git_status', description: 'Read git branch and working-tree status (read-only).' },
-  { name: 'git_diff', description: 'Read a git diff, optionally scoped to one path or the staged set (read-only).' },
-  { name: 'create_file', description: 'Prepare one complete new text/code file for review.' },
-  { name: 'propose_file', description: 'Prepare one complete new or replacement file for review.' },
-  { name: 'propose_files', description: 'Prepare a coherent batch of up to 30 complete files for review.' },
-  { name: 'replace_lines', description: 'Prepare a focused line replacement for review.' },
-  { name: 'delete_lines', description: 'Prepare a focused line deletion for review.' },
-  { name: 'insert_lines', description: 'Prepare a focused line insertion for review.' },
-  { name: 'create_document', description: 'Prepare a generated PDF or DOCX for review.' },
-  { name: 'edit_document', description: 'Prepare a replacement PDF or DOCX for review.' },
-  { name: 'delete_file', description: 'Prepare a file deletion for review.' },
-  { name: 'run_file', description: 'Request approval to run a source file.' },
-  { name: 'run_project', description: 'Request approval to run an auto-detected project.' },
-  { name: 'run_command', description: 'Request approval to run an explicit command.' },
-  { name: 'run_tests', description: 'Request approval to run auto-detected or explicit tests.' },
-  { name: 'todo_write', description: 'Create or update a live checklist of steps for a multi-step task.' },
-  { name: 'propose_plan', description: 'Propose a short multi-step plan and wait for the user to approve it before writing or running anything.' },
-  { name: 'web_search', description: 'Search the public web for current information or documentation (read-only).' },
-  { name: 'web_fetch', description: 'Fetch and extract readable text from a public URL (read-only).' },
-  { name: 'delegate_task', description: 'Delegate an isolated, read-only exploration sub-task to a bounded sub-agent and get back only its summary.' }
-] as const;
+export const AGENT_TOOL_DEFINITIONS: readonly ToolDefinition[] = VECTRA_TOOL_DEFINITIONS;
 
 const TOOL_NAMES = AGENT_TOOL_DEFINITIONS.map((definition) => definition.name);
 
@@ -46,6 +23,9 @@ export const AGENT_ACTION_SCHEMA = {
   properties: {
     type: { type: 'string', enum: TOOL_NAMES },
     path: { type: 'string' },
+    destinationPath: { type: 'string' },
+    recursive: { type: 'boolean' },
+    file_path: { type: 'string' },
     paths: { type: 'array', items: { type: 'string' }, maxItems: 20 },
     files: {
       type: 'array',
@@ -70,6 +50,14 @@ export const AGENT_ACTION_SCHEMA = {
     query: { type: 'string' },
     caseSensitive: { type: 'boolean' },
     content: { type: 'string' },
+    old_string: { type: 'string' },
+    new_string: { type: 'string' },
+    replace_all: { type: 'boolean' },
+    offset: { type: 'integer' },
+    limit: { type: 'integer' },
+    pattern: { type: 'string' },
+    max_count: { type: 'integer' },
+    output_mode: { type: 'string', enum: ['files_with_matches', 'content', 'count'] },
     title: { type: 'string' },
     reason: { type: 'string' },
     command: { type: 'string' },
@@ -80,6 +68,12 @@ export const AGENT_ACTION_SCHEMA = {
     steps: { type: 'array', items: { type: 'string' }, maxItems: 20 },
     url: { type: 'string' },
     task: { type: 'string' },
+    description: { type: 'string' },
+    subagent_type: { type: 'string' },
+    agentName: { type: 'string' },
+    taskId: { type: 'string' },
+    message: { type: 'string' },
+    statusFilter: { type: 'string' },
     todos: {
       type: 'array',
       maxItems: 40,
@@ -90,7 +84,7 @@ export const AGENT_ACTION_SCHEMA = {
           content: { type: 'string' },
           status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] }
         },
-        required: ['id', 'content', 'status']
+        required: ['content', 'status']
       }
     }
   },
@@ -122,7 +116,7 @@ OPERATING LOOP
 - After preparing files, verify your own work before finishing: list_directory to confirm the layout, read_file on what you prepared, and search_text to confirm imports, names, and references resolve. Report what you verified in the final summary.
 
 PLANNING (MANDATORY)
-- Before the FIRST write or execution action of an Agent-mode run (create_file, propose_file, propose_files, replace_lines, delete_lines, insert_lines, create_document, edit_document, delete_file, run_file, run_project, run_command, run_tests), you MUST call propose_plan exactly once. This is a hard requirement, not a judgment call.
+- Before the FIRST write or execution action of an Agent-mode run (create_file, propose_file, propose_files, replace_lines, delete_lines, insert_lines, create_document, edit_document, delete_file, create_directory, rename_path, move_path, copy_path, delete_directory, run_file, run_project, run_command, run_tests), you MUST call propose_plan exactly once. This is a hard requirement, not a judgment call.
 - propose_plan: {"type":"propose_plan","reason":"one sentence on why","steps":["Read the router files","Add the new endpoint","Update tests"]}
 - Use 2-8 short, concrete steps describing what you are about to do.
 - Every write/execution action is denied until the user approves the plan from the chat panel. Once you call propose_plan, stop and wait; do not repeat it and do not attempt any write/execution action in the same step.
@@ -146,6 +140,8 @@ REVIEWED PROJECT AND FILE CHANGES
 - replace_lines, delete_lines, and insert_lines are for small focused edits to files already read.
 - create_document/edit_document generate reviewed PDF or DOCX output.
 - delete_file prepares a reviewed deletion.
+- create_directory creates an empty folder. rename_path renames within the same parent folder; move_path relocates a file or folder; copy_path duplicates it. Each requires host confirmation.
+- delete_directory removes an empty folder by default. Set recursive=true only when the user explicitly requested deleting the folder and everything inside it; the host still asks for confirmation.
 - Every file must contain complete, runnable content. No ellipses, TODO-only bodies, placeholder comments, or one-line stubs unless the user explicitly requests them.
 - The "content" value is the raw file exactly as it will be written to disk — never wrap it in a markdown code fence (no leading/trailing \`\`\`), and never prefix it with commentary. A .py/.cs/.cpp/etc. file that starts with \`\`\`python is broken output, not valid source.
 - Include the supporting files a professional project needs: configuration, entry points, implementation, styles/assets where relevant, documentation, and focused tests when practical.

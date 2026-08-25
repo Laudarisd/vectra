@@ -107,3 +107,24 @@ test('agent exposes multi-file context and complete project batch tools', () => 
   assert.equal(parsed.actions[0].type, 'propose_files');
   assert.equal(parsed.actions[0].files.length, 2);
 });
+
+test('agent exposes confirmed file and directory path operations', () => {
+  const prompt = buildSystemPrompt('agent');
+  for (const name of ['create_directory', 'rename_path', 'move_path', 'copy_path', 'delete_directory']) {
+    assert.match(prompt, new RegExp(name));
+  }
+  const parsed = parseAgentEnvelope(JSON.stringify({
+    message: 'organizing workspace',
+    actions: [
+      { type: 'create_directory', path: 'src/empty' },
+      { type: 'rename_path', path: 'src/old.ts', destinationPath: 'src/new.ts' },
+      { type: 'move_path', path: 'src/new.ts', destinationPath: 'archive/new.ts' },
+      { type: 'copy_path', path: 'assets/logo.svg', destinationPath: 'public/logo.svg' },
+      { type: 'delete_directory', path: 'tmp/generated', recursive: true }
+    ],
+    done: false
+  }));
+  assert.deepEqual(parsed.actions.map((action) => action.type), [
+    'create_directory', 'rename_path', 'move_path', 'copy_path', 'delete_directory'
+  ]);
+});

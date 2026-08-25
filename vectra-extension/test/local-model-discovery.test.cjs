@@ -1,12 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mkdtemp, writeFile, rm } = require('node:fs/promises');
+const { mkdtemp, mkdir, symlink, writeFile, rm } = require('node:fs/promises');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const {
   discoverGgufModels,
   discoverOllamaModels,
-  normalizeShardPath
+  normalizeShardPath,
+  appModelDirectories,
+  broadModelDirectories
 } = require('../dist/services/LocalModelDiscovery.js');
 
 test('local discovery finds GGUF models while excluding projectors and later shards', async () => {
@@ -26,6 +28,42 @@ test('local discovery finds GGUF models while excluding projectors and later sha
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('local discovery follows a symlinked/junctioned models directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'vectra-discovery-link-'));
+  try {
+    const realDirectory = join(root, 'real-models');
+    await mkdir(realDirectory);
+    await writeFile(join(realDirectory, 'linked-model.gguf'), Buffer.alloc(64));
+    const linkPath = join(root, 'linked-models');
+    try {
+      await symlink(realDirectory, linkPath, 'junction');
+    } catch (error) {
+      // Symlink creation can require elevated privileges on some CI/Windows
+      // setups; skip rather than fail the suite when the platform refuses.
+      if (error.code === 'EPERM') return;
+      throw error;
+    }
+    // A generous directory budget: extraRoots share the scan queue with the
+    // app-specific cache directories (huggingface, lm-studio, jan, ...), most
+    // of which won't exist on the test machine but each still costs one
+    // visit before the queue reaches this root's own children.
+    const models = await discoverGgufModels([root], 500, 20);
+    assert.ok(models.some((model) => model.label === 'linked-model.gguf'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('broad personal folders are scanned separately from app-specific caches, not mixed into the same priority tier', () => {
+  // Downloads/Documents/Desktop can be huge; keeping them out of the
+  // priority tier is what stops them from starving the maxDirectories
+  // budget before app caches (huggingface, lm-studio, jan, ...) are reached.
+  const broad = broadModelDirectories();
+  const app = appModelDirectories();
+  assert.deepEqual(broad.map((entry) => entry.split(/[\\/]/).pop()).sort(), ['Desktop', 'Documents', 'Downloads']);
+  for (const entry of broad) assert.ok(!app.includes(entry), `${entry} should not also appear in the priority tier`);
 });
 
 test('local discovery normalizes a selected shard to the first shard', () => {

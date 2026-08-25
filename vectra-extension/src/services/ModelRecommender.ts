@@ -29,3 +29,22 @@ export function recommendCatalogEntries(hw: HardwareSnapshot, catalog: CatalogEn
     .sort((left, right) => right.paramCount - left.paramCount)
     .slice(0, limit);
 }
+
+export interface CatalogRecommendations {
+  fast: CatalogEntry[];
+  hybrid: CatalogEntry[];
+}
+
+/** Offer larger partial-offload models without confusing them with the
+ * latency-first, fully resident recommendation. */
+export function recommendCatalogTiers(hw: HardwareSnapshot, catalog: CatalogEntry[], limitPerTier = 6): CatalogRecommendations {
+  const fast = recommendCatalogEntries(hw, catalog, limitPerTier);
+  if (!hw.maxVramMiB) return { fast, hybrid: [] };
+  const fastIds = new Set(fast.map((entry) => entry.id));
+  const ramBudget = Math.floor(hw.totalRamMiB * CPU_RAM_FRACTION);
+  const hybrid = catalog
+    .filter((entry) => !fastIds.has(entry.id) && entry.minRamMiB <= ramBudget)
+    .sort((left, right) => right.paramCount - left.paramCount)
+    .slice(0, limitPerTier);
+  return { fast, hybrid };
+}

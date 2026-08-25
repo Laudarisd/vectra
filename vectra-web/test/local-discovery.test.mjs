@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { discoverLocalRuntimes, searchGgufModels } from '../lib/local-discovery.mjs';
@@ -29,6 +29,28 @@ test('GGUF search is bounded and excludes vision projectors', async () => {
     await writeFile(join(root, 'nested', 'Qwen-Code-Q4.gguf'), '');
     await writeFile(join(root, 'nested', 'mmproj-Qwen.gguf'), '');
     assert.deepEqual(await searchGgufModels({ roots: [root], query: 'code' }), [join(root, 'nested', 'Qwen-Code-Q4.gguf')]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('GGUF search follows a symlinked/junctioned models directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'vectra-model-search-link-'));
+  try {
+    const realDirectory = join(root, 'real-models');
+    await mkdir(realDirectory);
+    await writeFile(join(realDirectory, 'linked-model.gguf'), '');
+    const linkPath = join(root, 'linked-models');
+    try {
+      await symlink(realDirectory, linkPath, 'junction');
+    } catch (error) {
+      // Symlink creation can require elevated privileges on some CI/Windows
+      // setups; skip rather than fail the suite when the platform refuses.
+      if (error.code === 'EPERM') return;
+      throw error;
+    }
+    const results = await searchGgufModels({ roots: [root] });
+    assert.ok(results.includes(join(linkPath, 'linked-model.gguf')), 'should find the model through the symlinked directory');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

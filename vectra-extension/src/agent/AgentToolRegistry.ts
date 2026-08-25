@@ -2,12 +2,14 @@ import { AgentAction, AgentMode, Attachment, TodoItem } from '../types';
 import { CommandRunner } from '../services/CommandRunner';
 import { GitTools } from '../services/GitTools';
 import { PatchManager } from '../services/PatchManager';
+import { PathOperationService } from '../services/PathOperationService';
 import { PlanManager } from '../services/PlanManager';
 import { TodoManager } from '../services/TodoManager';
 import { WebTools } from '../services/WebTools';
 import { WorkspaceTools } from '../services/WorkspaceTools';
 import { normalizeAgentPath } from '../utils/path';
 import { safeJson, truncateMiddle } from '../utils/text';
+import { AgentToolRouter } from '../../shared-core';
 
 interface ToolExecutionContext {
   mode: AgentMode;
@@ -22,6 +24,7 @@ const WRITE_OR_EXEC_TYPES = new Set<AgentAction['type']>([
   'create_file', 'propose_file', 'propose_files',
   'replace_lines', 'delete_lines', 'insert_lines',
   'create_document', 'edit_document', 'delete_file',
+  'create_directory', 'rename_path', 'move_path', 'copy_path', 'delete_directory',
   'run_file', 'run_project', 'run_command', 'run_tests'
 ]);
 
@@ -40,6 +43,8 @@ export interface ToolExecutionResult {
  * command capabilities.
  */
 export class AgentToolRegistry {
+  private readonly router: AgentToolRouter<AgentAction, ToolExecutionContext, ToolExecutionResult>;
+
   constructor(
     private readonly workspace: WorkspaceTools,
     private readonly patches: PatchManager,
@@ -47,8 +52,12 @@ export class AgentToolRegistry {
     private readonly git: GitTools,
     private readonly todos: TodoManager,
     private readonly plans: PlanManager,
-    private readonly web: WebTools
-  ) {}
+    private readonly web: WebTools,
+    private readonly pathOperations: PathOperationService
+  ) {
+    this.router = new AgentToolRouter<AgentAction, ToolExecutionContext, ToolExecutionResult>((action) => action.type)
+      .registerFallback((action, context) => this.executeTrusted(action, context));
+  }
 
   /**
    * Toddler-speak on purpose: this is the live step log the user watches
@@ -79,6 +88,11 @@ export class AgentToolRegistry {
       case 'create_document': return `Generatin' the document ${action.path}…`;
       case 'edit_document': return `Fixin' up the document ${action.path}…`;
       case 'delete_file': return `Gettin' ready to bye-bye ${action.path}…`;
+      case 'create_directory': return `Makin' the lil' folder ${action.path}…`;
+      case 'rename_path': return `Giving ${action.path} a shiny new name…`;
+      case 'move_path': return `Scootin' ${action.path} to its new home…`;
+      case 'copy_path': return `Making a file-friend copy of ${action.path}…`;
+      case 'delete_directory': return `Gettin' ready to bye-bye the folder ${action.path}…`;
       case 'run_file': return `Runny-run ${action.path}…`;
       case 'run_project': return "Runny-run the whole project…";
       case 'run_command': return "Runny-run a lil' command…";
@@ -95,7 +109,7 @@ export class AgentToolRegistry {
   async execute(action: AgentAction, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     if (context.signal?.aborted) throw new Error('Request cancelled.');
     try {
-      return await this.executeTrusted(action, context);
+      return await this.router.execute(action, context);
     } catch (error) {
       return this.result(action, `ERROR: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -286,6 +300,26 @@ export class AgentToolRegistry {
 
       const proposal = await this.patches.proposeDelete(action.path, action.reason);
       return this.result(action, `Prepared reviewed deletion for ${proposal.path}.`, [proposal.id], true);
+    }
+
+    if (
+      action.type === 'create_directory' || action.type === 'rename_path' || action.type === 'move_path' ||
+      action.type === 'copy_path' || action.type === 'delete_directory'
+    ) {
+      if (context.mode !== 'agent') return this.denied(action, 'Path operations are available only in Agent mode.');
+      if (this.patches.list().some((proposal) => proposal.status === 'pending')) {
+        return this.denied(action, 'Pending file proposals must be accepted or rejected before changing workspace paths.');
+      }
+      const output = action.type === 'create_directory'
+        ? await this.pathOperations.createDirectory(action.path, action.reason, context.signal)
+        : action.type === 'rename_path'
+          ? await this.pathOperations.rename(action.path, action.destinationPath, action.reason, context.signal)
+          : action.type === 'move_path'
+            ? await this.pathOperations.move(action.path, action.destinationPath, action.reason, context.signal)
+            : action.type === 'copy_path'
+              ? await this.pathOperations.copy(action.path, action.destinationPath, action.reason, context.signal)
+              : await this.pathOperations.deleteDirectory(action.path, action.recursive === true, action.reason, context.signal);
+      return this.result(action, output, [], true);
     }
 
     if (action.type === 'run_file' || action.type === 'run_project' || action.type === 'run_command' || action.type === 'run_tests') {

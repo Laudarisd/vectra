@@ -30,7 +30,12 @@ export interface ModelInfo { id: string; label?: string; detail?: string }
  * providers that can pin a JSON schema return natural prose instead.
  */
 export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; structured?: boolean; signal?: AbortSignal; onDelta?: (delta: string) => void }
-export interface TextProvider { readonly id: ProviderId; complete(request: ProviderRequest): Promise<string>; listModels(signal?: AbortSignal): Promise<ModelInfo[]>; testConnection(signal?: AbortSignal): Promise<string> }
+export interface NativeToolMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string; toolCalls?: NativeToolCall[] }
+export interface NativeToolCall { id: string; name: string; args: Record<string, unknown> }
+export interface NativeToolDefinition { name: string; description?: string; parameters: unknown }
+export interface NativeToolRequest { messages: NativeToolMessage[]; tools: NativeToolDefinition[]; model: string; signal?: AbortSignal }
+export interface NativeToolResult { text: string; toolCalls: NativeToolCall[] }
+export interface TextProvider { readonly id: ProviderId; complete(request: ProviderRequest): Promise<string>; completeWithTools?(request: NativeToolRequest): Promise<NativeToolResult>; listModels(signal?: AbortSignal): Promise<ModelInfo[]>; testConnection(signal?: AbortSignal): Promise<string> }
 
 /** A complete file included in one reviewed, multi-file proposal batch. */
 export interface ProposedFileInput {
@@ -82,6 +87,11 @@ export type AgentAction =
   | { type: 'create_document'; path: string; content: string; title?: string; reason?: string }
   | { type: 'edit_document'; path: string; content: string; title?: string; reason?: string }
   | { type: 'delete_file'; path: string; reason?: string }
+  | { type: 'create_directory'; path: string; reason?: string }
+  | { type: 'rename_path'; path: string; destinationPath: string; reason?: string }
+  | { type: 'move_path'; path: string; destinationPath: string; reason?: string }
+  | { type: 'copy_path'; path: string; destinationPath: string; reason?: string }
+  | { type: 'delete_directory'; path: string; recursive?: boolean; reason?: string }
   | { type: 'run_file'; path: string; args?: string[]; timeoutMs?: number; reason?: string }
   | { type: 'run_project'; path?: string; timeoutMs?: number; reason?: string }
   | { type: 'run_command'; command: string; cwd?: string; timeoutMs?: number; reason?: string }

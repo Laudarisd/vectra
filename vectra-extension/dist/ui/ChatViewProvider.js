@@ -39,6 +39,7 @@ const path = __importStar(require("node:path"));
 const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
 const gpu_1 = require("../utils/gpu");
+const shared_core_1 = require("../../shared-core");
 /** Coordinates the sidebar webview with extension-owned session state. */
 class ChatViewProvider {
     extensionUri;
@@ -56,12 +57,13 @@ class ChatViewProvider {
     static HISTORY_KEY = 'vectra.chatHistory';
     static MAX_STORED_MESSAGES = 300;
     view;
-    messages = [];
+    session;
     pendingAttachments = [];
     messageAttachments = new Map();
     abortController;
-    busy = false;
     pendingSelectionCheck = false;
+    get messages() { return this.session.messages; }
+    get busy() { return this.session.isBusy; }
     constructor(extensionUri, controller, patches, todos, plans, diffs, credentials, localLlama, attachmentService, workspaceState, extensionVersion = '') {
         this.extensionUri = extensionUri;
         this.controller = controller;
@@ -78,8 +80,12 @@ class ChatViewProvider {
         // ChatMessage only carries attachment metadata, so history survives a
         // reload without workspaceState ballooning from re-stored file content.
         const saved = this.workspaceState.get(ChatViewProvider.HISTORY_KEY, []);
-        if (Array.isArray(saved))
-            this.messages.push(...saved);
+        this.session = new shared_core_1.AgentSession({
+            messages: Array.isArray(saved) ? saved : [],
+            todos: this.todos,
+            plans: this.plans
+        });
+        this.session.events.subscribe((event) => this.forwardRuntimeEvent(event));
     }
     persistMessages() {
         const trimmed = this.messages.length > ChatViewProvider.MAX_STORED_MESSAGES
@@ -162,12 +168,14 @@ class ChatViewProvider {
                 case 'accept':
                     if (message.id) {
                         await this.patches.accept(message.id);
+                        this.patches.clearCompleted();
                         await this.postState();
                     }
                     break;
                 case 'reject':
                     if (message.id) {
                         this.patches.reject(message.id);
+                        this.patches.clearCompleted();
                         await this.postState();
                     }
                     break;
@@ -179,10 +187,12 @@ class ChatViewProvider {
                     break;
                 case 'acceptAll':
                     await this.patches.acceptAllPending();
+                    this.patches.clearCompleted();
                     await this.postState();
                     break;
                 case 'rejectAll':
                     this.patches.rejectAllPending();
+                    this.patches.clearCompleted();
                     await this.postState();
                     break;
                 case 'clearCompleted':
@@ -198,11 +208,9 @@ class ChatViewProvider {
                     await this.postState();
                     break;
                 case 'clearChat':
-                    this.messages.splice(0);
+                    this.session.clear();
                     this.pendingAttachments.splice(0);
                     this.messageAttachments.clear();
-                    this.todos.clear();
-                    this.plans.reset();
                     this.persistMessages();
                     await this.postState();
                     break;
@@ -277,7 +285,7 @@ class ChatViewProvider {
             mode,
             attachments: attachments.map(toAttachmentMeta)
         };
-        this.messages.push(userMessage);
+        this.session.addMessage(userMessage);
         this.rememberAttachments(userMessage.id, attachments);
         this.persistMessages();
         // A resolved plan from a finished task must not linger in the UI as if it
@@ -285,27 +293,31 @@ class ChatViewProvider {
         // but doing it here keeps the very next postState() in sync immediately.
         if (mode === 'agent')
             this.plans.reset();
-        this.busy = true;
         this.abortController = new AbortController();
-        await this.postState();
-        await this.post({ type: 'progress', message: "Wakey-wakey, lookin' 'round…" });
         // Streamed deltas (chat/ask replies only — see AgentController.converse)
         // are shown live under this id; the real message pushed below on
         // completion is what actually persists and survives a reload.
         const streamId = (0, node_crypto_1.randomUUID)();
         try {
-            const result = await this.controller.run({
-                mode,
-                userText: text,
-                history: this.messages.slice(0, -1),
-                attachments,
-                signal: this.abortController.signal,
-                onProgress: (progress) => void this.post({ type: 'progress', message: progress }),
-                onDelta: (delta) => void this.post({ type: 'chatDelta', id: streamId, delta }),
-                onTodosChanged: (todos) => void this.post({ type: 'todoUpdate', todos }),
-                onPlanChanged: (plan) => void this.post({ type: 'planUpdate', plan })
-            });
-            this.messages.push({
+            const result = await this.session.run(async ({ events, signal }) => {
+                // AgentSession is already busy here. Publish that state before any
+                // progress or token event so the webview reveals Stop and does not
+                // clear the first playful activity line as a stale idle update.
+                await this.postState();
+                events.emit({ type: 'ui.progress', message: "Wakey-wakey, lookin' 'round..." });
+                return this.controller.run({
+                    mode,
+                    userText: text,
+                    history: this.messages.slice(0, -1),
+                    attachments,
+                    signal,
+                    onProgress: (progress) => events.emit({ type: 'ui.progress', message: progress }),
+                    onDelta: (delta) => events.emit({ type: 'ui.delta', id: streamId, delta }),
+                    onTodosChanged: (todos) => events.emit({ type: 'ui.todos', todos }),
+                    onPlanChanged: (plan) => events.emit({ type: 'ui.plan', plan })
+                });
+            }, this.abortController.signal);
+            this.session.addMessage({
                 id: streamId,
                 role: 'assistant',
                 content: result.text,
@@ -313,7 +325,7 @@ class ChatViewProvider {
             });
         }
         catch (error) {
-            this.messages.push({
+            this.session.addMessage({
                 id: streamId,
                 role: 'assistant',
                 content: this.abortController.signal.aborted ? 'Request stopped.' : `Error: ${messageOf(error)}`,
@@ -321,7 +333,6 @@ class ChatViewProvider {
             });
         }
         finally {
-            this.busy = false;
             this.abortController = undefined;
             this.persistMessages();
             await this.postState();
@@ -364,6 +375,7 @@ class ChatViewProvider {
     }
     async postState() {
         const config = (0, config_1.getConfig)();
+        const activePlan = this.plans.get();
         const isLocal = config.provider === 'llamaCpp' || config.provider === 'ollama';
         const hasKey = isLocal || config.provider === 'openaiCompatible' || await this.credentials.has(config.provider);
         const localModelName = config.provider === 'llamaCpp'
@@ -376,7 +388,10 @@ class ChatViewProvider {
             messages: this.messages,
             proposals: this.patches.list().map(toWebviewProposal),
             todos: this.todos.list(),
-            plan: this.plans.get(),
+            // Resolved HITL cards are execution state, not permanent chat history.
+            // Keep the approved plan internally for write gating, but remove its UI
+            // card immediately after the user decides.
+            plan: activePlan?.status === 'pending' ? activePlan : undefined,
             attachments: this.pendingAttachments.map(toAttachmentMeta),
             busy: this.busy,
             provider: config.provider,
@@ -408,6 +423,23 @@ class ChatViewProvider {
     }
     async post(payload) {
         await this.view?.webview.postMessage(payload);
+    }
+    /** Translate host-neutral runtime events into the extension webview protocol. */
+    forwardRuntimeEvent(event) {
+        switch (event.type) {
+            case 'ui.progress':
+                void this.post({ type: 'progress', message: event.message });
+                break;
+            case 'ui.delta':
+                void this.post({ type: 'chatDelta', id: event.id, delta: event.delta });
+                break;
+            case 'ui.todos':
+                void this.post({ type: 'todoUpdate', todos: event.todos });
+                break;
+            case 'ui.plan':
+                void this.post({ type: 'planUpdate', plan: event.plan });
+                break;
+        }
     }
     getHtml(webview) {
         const nonce = (0, node_crypto_1.randomBytes)(16).toString('hex');

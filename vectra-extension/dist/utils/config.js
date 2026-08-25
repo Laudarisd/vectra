@@ -47,16 +47,75 @@ exports.updateLlamaMmprojPath = updateLlamaMmprojPath;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("node:path"));
 const SECTION = 'vectra';
-function getConfig() { const c = vscode.workspace.getConfiguration(SECTION); return { provider: c.get('provider', 'llamaCpp'), model: c.get('model', '').trim(), localModelPath: c.get('localModelPath', '').trim(), localModelDirectory: c.get('localModelDirectory', '').trim(), modelsDirectory: c.get('modelsDirectory', '').trim(), llamaCppServerPath: c.get('llamaCppServerPath', '').trim(), llamaCppPort: c.get('llamaCppPort', 8080), llamaCppContextSize: c.get('llamaCppContextSize', 16384), llamaCppLoadTimeoutSeconds: c.get('llamaCppLoadTimeoutSeconds', 600), llamaCppGpuLayers: c.get('llamaCppGpuLayers', 'auto').trim() || 'auto', llamaCppSplitMode: c.get('llamaCppSplitMode', 'layer'), llamaCppCpuMoe: c.get('llamaCppCpuMoe', false), llamaCppNoMmap: c.get('llamaCppNoMmap', false), llamaCppMmprojPath: c.get('llamaCppMmprojPath', '').trim(), llamaCppExtraArgs: c.get('llamaCppExtraArgs', []), deviceMode: c.get('deviceMode', 'auto'), theme: c.get('theme', 'auto'), ollamaBaseUrl: trim(c.get('ollamaBaseUrl', 'http://localhost:11434')), ollamaContextSize: c.get('ollamaContextSize', 8192), openaiCompatibleBaseUrl: trim(c.get('openaiCompatibleBaseUrl', 'http://localhost:1234/v1')), openaiBaseUrl: trim(c.get('openaiBaseUrl', 'https://api.openai.com/v1')), anthropicBaseUrl: trim(c.get('anthropicBaseUrl', 'https://api.anthropic.com/v1')), geminiBaseUrl: trim(c.get('geminiBaseUrl', 'https://generativelanguage.googleapis.com/v1beta')), maxAgentSteps: c.get('maxAgentSteps', 12), maxSubagentSteps: c.get('maxSubagentSteps', 6), maxFileBytes: c.get('maxFileBytes', 1_000_000), maxContextCharacters: c.get('maxContextCharacters', 180_000), localRequestTimeoutSeconds: c.get('localRequestTimeoutSeconds', 900), excludeGlob: c.get('excludeGlob', '**/{node_modules,.git,dist,build,out,.next,.venv,venv,__pycache__,coverage}/**'), supportDeveloperUrl: c.get('supportDeveloperUrl', 'https://github.com/Laudarisd/vectra'), showDiagnosticsInContext: c.get('showDiagnosticsInContext', true), allowSensitiveFiles: c.get('allowSensitiveFiles', false) }; }
-async function updateProvider(v) { await vscode.workspace.getConfiguration(SECTION).update('provider', v, vscode.ConfigurationTarget.Global); }
-async function updateDeviceMode(v) { await vscode.workspace.getConfiguration(SECTION).update('deviceMode', v, vscode.ConfigurationTarget.Global); }
-async function updateTheme(v) { await vscode.workspace.getConfiguration(SECTION).update('theme', v, vscode.ConfigurationTarget.Global); }
-async function updateModel(v) { await vscode.workspace.getConfiguration(SECTION).update('model', v, vscode.ConfigurationTarget.Global); }
-async function updateLocalModel(v) { const c = vscode.workspace.getConfiguration(SECTION); await c.update('localModelPath', v, vscode.ConfigurationTarget.Global); await c.update('localModelDirectory', path.dirname(v), vscode.ConfigurationTarget.Global); }
-async function updateLocalModelDirectory(v) { await vscode.workspace.getConfiguration(SECTION).update('localModelDirectory', v, vscode.ConfigurationTarget.Global); }
-async function updateModelsDirectory(v) { await vscode.workspace.getConfiguration(SECTION).update('modelsDirectory', v, vscode.ConfigurationTarget.Global); }
-async function updateOpenAICompatibleBaseUrl(v) { await vscode.workspace.getConfiguration(SECTION).update('openaiCompatibleBaseUrl', v, vscode.ConfigurationTarget.Global); }
-async function updateLlamaServerPath(v) { await vscode.workspace.getConfiguration(SECTION).update('llamaCppServerPath', v, vscode.ConfigurationTarget.Global); }
-async function updateLlamaMmprojPath(v) { await vscode.workspace.getConfiguration(SECTION).update('llamaCppMmprojPath', v, vscode.ConfigurationTarget.Global); }
-function trim(v) { return v.replace(/\/+$/, ''); }
+function getConfig() {
+    const c = vscode.workspace.getConfiguration(SECTION);
+    return {
+        provider: c.get('provider', 'llamaCpp'),
+        model: c.get('model', '').trim(),
+        agentHarness: c.get('agentHarness', 'deepagents'),
+        localModelPath: c.get('localModelPath', '').trim(),
+        localModelDirectory: c.get('localModelDirectory', '').trim(),
+        modelsDirectory: c.get('modelsDirectory', '').trim(),
+        llamaCppServerPath: c.get('llamaCppServerPath', '').trim(),
+        llamaCppPort: c.get('llamaCppPort', 8080),
+        llamaCppContextSize: c.get('llamaCppContextSize', 16384),
+        llamaCppLoadTimeoutSeconds: c.get('llamaCppLoadTimeoutSeconds', 600),
+        llamaCppGpuLayers: c.get('llamaCppGpuLayers', 'auto').trim() || 'auto',
+        llamaCppSplitMode: c.get('llamaCppSplitMode', 'layer'),
+        llamaCppCpuMoe: c.get('llamaCppCpuMoe', false),
+        llamaCppNoMmap: c.get('llamaCppNoMmap', false),
+        llamaCppMmprojPath: c.get('llamaCppMmprojPath', '').trim(),
+        llamaCppExtraArgs: c.get('llamaCppExtraArgs', []),
+        deviceMode: c.get('deviceMode', 'auto'),
+        theme: c.get('theme', 'auto'),
+        ollamaBaseUrl: trim(c.get('ollamaBaseUrl', 'http://localhost:11434')),
+        ollamaContextSize: c.get('ollamaContextSize', 8192),
+        openaiCompatibleBaseUrl: trim(c.get('openaiCompatibleBaseUrl', 'http://localhost:1234/v1')),
+        openaiBaseUrl: trim(c.get('openaiBaseUrl', 'https://api.openai.com/v1')),
+        anthropicBaseUrl: trim(c.get('anthropicBaseUrl', 'https://api.anthropic.com/v1')),
+        geminiBaseUrl: trim(c.get('geminiBaseUrl', 'https://generativelanguage.googleapis.com/v1beta')),
+        maxAgentSteps: c.get('maxAgentSteps', 12),
+        maxSubagentSteps: c.get('maxSubagentSteps', 6),
+        maxFileBytes: c.get('maxFileBytes', 1_000_000),
+        maxContextCharacters: c.get('maxContextCharacters', 180_000),
+        localRequestTimeoutSeconds: c.get('localRequestTimeoutSeconds', 900),
+        excludeGlob: c.get('excludeGlob', '**/{node_modules,.git,dist,build,out,.next,.venv,venv,__pycache__,coverage}/**'),
+        supportDeveloperUrl: c.get('supportDeveloperUrl', 'https://github.com/Laudarisd/vectra'),
+        showDiagnosticsInContext: c.get('showDiagnosticsInContext', true),
+        allowSensitiveFiles: c.get('allowSensitiveFiles', false)
+    };
+}
+async function updateProvider(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('provider', value, vscode.ConfigurationTarget.Global);
+}
+async function updateDeviceMode(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('deviceMode', value, vscode.ConfigurationTarget.Global);
+}
+async function updateTheme(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('theme', value, vscode.ConfigurationTarget.Global);
+}
+async function updateModel(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('model', value, vscode.ConfigurationTarget.Global);
+}
+async function updateLocalModel(value) {
+    const config = vscode.workspace.getConfiguration(SECTION);
+    await config.update('localModelPath', value, vscode.ConfigurationTarget.Global);
+    await config.update('localModelDirectory', path.dirname(value), vscode.ConfigurationTarget.Global);
+}
+async function updateLocalModelDirectory(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('localModelDirectory', value, vscode.ConfigurationTarget.Global);
+}
+async function updateModelsDirectory(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('modelsDirectory', value, vscode.ConfigurationTarget.Global);
+}
+async function updateOpenAICompatibleBaseUrl(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('openaiCompatibleBaseUrl', value, vscode.ConfigurationTarget.Global);
+}
+async function updateLlamaServerPath(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('llamaCppServerPath', value, vscode.ConfigurationTarget.Global);
+}
+async function updateLlamaMmprojPath(value) {
+    await vscode.workspace.getConfiguration(SECTION).update('llamaCppMmprojPath', value, vscode.ConfigurationTarget.Global);
+}
+function trim(value) { return value.replace(/\/+$/, ''); }
 //# sourceMappingURL=config.js.map

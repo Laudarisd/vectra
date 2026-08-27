@@ -16,5 +16,4 @@
 *.sqlite-shm
 
 # Generated extension bundles
-vectra-extension/shared-core/
-vectra-extension/web/
+vectra-extension/generated/

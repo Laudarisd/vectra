@@ -4,7 +4,7 @@ import http from 'node:http';
 import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { discoverLocalRuntimes, searchGgufModels } from '../lib/local-discovery.mjs';
+import { discoverInstalledModels, discoverLocalRuntimes, searchGgufModels } from '../server/services/local-discovery.mjs';
 
 test('local runtime discovery reads OpenAI-compatible model listings', async () => {
   const server = http.createServer((_request, response) => {
@@ -51,6 +51,20 @@ test('GGUF search follows a symlinked/junctioned models directory', async () => 
     }
     const results = await searchGgufModels({ roots: [root] });
     assert.ok(results.includes(join(linkPath, 'linked-model.gguf')), 'should find the model through the symlinked directory');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('shared installed-model inventory includes offline GGUF files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'vectra-installed-models-'));
+  try {
+    const file = join(root, 'local-coder.gguf');
+    await writeFile(file, 'model');
+    const inventory = await discoverInstalledModels({ extraRoots: [root], maxDirectories: 1, maxModels: 10 });
+    assert.ok(inventory.gguf.some((item) => item.id === file));
+    assert.ok(Array.isArray(inventory.ollama));
+    assert.ok(Array.isArray(inventory.runtimes));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

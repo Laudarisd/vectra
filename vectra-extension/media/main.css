@@ -78,6 +78,7 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .activity-check{width:12px;height:12px;flex:0 0 12px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:var(--vscode-charts-green,var(--vscode-progressBar-background,currentColor))}
 @keyframes spin{to{transform:rotate(360deg)}}
 .todo-panel{display:flex;flex-direction:column;gap:6px;margin:9px 0;padding:9px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;background:var(--vscode-editorWidget-background)}
+.todo-title{font-size:.8em;font-weight:700;letter-spacing:.04em;text-transform:uppercase;opacity:.72;margin-bottom:2px}
 .todo-item{display:flex;align-items:center;gap:8px;font-size:.92em}
 .todo-item.completed{opacity:.55;text-decoration:line-through}
 .todo-bullet{width:12px;height:12px;flex:0 0 12px;border:1.5px solid var(--vscode-widget-border,currentColor);border-radius:50%;opacity:.7}

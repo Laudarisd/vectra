@@ -14,6 +14,7 @@ test('llama.cpp compatible mode requests schema-constrained JSON', async () => {
     if (req.url === '/v1/chat/completions') {
       assert.equal(body.response_format.type, 'json_object');
       assert.ok(body.response_format.schema.properties.actions);
+      assert.equal(body.cache_prompt, true);
       return { body: { choices: [{ message: { content: '{"message":"ok","actions":[],"done":true}' } }] } };
     }
     return { body: { data: [] } };

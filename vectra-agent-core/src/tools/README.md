@@ -12,6 +12,11 @@ and host-neutral implementations used by Vectra Extension and Vectra Web.
 - `deepAgentBuiltins.ts` explicitly catalogs every Deep Agents middleware tool,
   its availability requirements, fallback action alias, and progress label.
 - `attachments.ts` implements attachment listing/reading shared by web hosts.
+- `policy.ts` owns shared risk groups and the playful live-operation wording.
+- `extension/` exports the complete VS Code-facing inventory; execution remains
+  in the VS Code adapter because it requires trust, diagnostics, diff, and
+  confirmation APIs.
+- `web/` implements the portable uploaded-file and downloadable-artifact tools.
 
 Deep Agents scratch tools and Vectra workspace tools are deliberately separate.
 Native tool calling uses the upstream names (`read_file`, `task`, and so on).
@@ -28,3 +33,8 @@ Host adapters remain close to their platform. VS Code workspace, diagnostics,
 diff UI, and command confirmation require the VS Code API; browser/server file
 access requires a separately selected sandbox. Both adapters use the contracts
 and catalog here instead of defining a second agent tool system.
+
+Capability vocabulary such as `create_files`, `generate_folder_files`, and
+`parse_files` is stored as searchable aliases of `propose_files` and
+`read_files`. Aliases improve small-model discovery without creating duplicate
+tools, competing schemas, or multiple security implementations.

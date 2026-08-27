@@ -1,21 +1,21 @@
 import * as vscode from 'vscode';
 import { AgentController } from './agent/AgentController';
 import { ProviderManager } from './providers/ProviderManager';
-import { ContextCollector } from './services/ContextCollector';
-import { DIFF_SCHEME, DiffContentProvider } from './services/DiffContentProvider';
-import { PatchManager } from './services/PatchManager';
-import { PlanManager } from './services/PlanManager';
-import { TodoManager } from './services/TodoManager';
-import { LocalCredentialStore } from './services/LocalCredentialStore';
-import { LocalLlamaCppService } from './services/LocalLlamaCppService';
-import { WorkspaceTools } from './services/WorkspaceTools';
-import { CommandRunner } from './services/CommandRunner';
-import { AttachmentService } from './services/AttachmentService';
+import { ContextCollector } from './workspace/ContextCollector';
+import { DIFF_SCHEME, DiffContentProvider } from './workspace/DiffContentProvider';
+import { EditProposalManager } from './workspace/EditProposalManager';
+import { PlanManager } from './state/PlanManager';
+import { TodoManager } from './state/TodoManager';
+import { LocalCredentialStore } from './providers/LocalCredentialStore';
+import { LlamaCppRuntime } from './runtime/llama/LlamaCppRuntime';
+import { WorkspaceTools } from './workspace/WorkspaceTools';
+import { CommandRunner } from './workspace/CommandRunner';
+import { AttachmentService } from './documents/AttachmentService';
 import { ChatViewProvider } from './ui/ChatViewProvider';
 import { ModelInfo, ProviderId } from './types';
 import { getConfig, updateModel, updateProvider } from './utils/config';
 
-let localLlama: LocalLlamaCppService | undefined;
+let localLlama: LlamaCppRuntime | undefined;
 let extensionOutput: vscode.OutputChannel | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -38,12 +38,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
 function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
   const credentials = new LocalCredentialStore();
-  localLlama = new LocalLlamaCppService();
+  localLlama = new LlamaCppRuntime();
   const providers = new ProviderManager(credentials);
   const tools = new WorkspaceTools();
   const commands = new CommandRunner();
   const attachments = new AttachmentService();
-  const patches = new PatchManager(tools);
+  const patches = new EditProposalManager(tools);
   const todos = new TodoManager();
   const plans = new PlanManager();
   const diffs = new DiffContentProvider(patches);

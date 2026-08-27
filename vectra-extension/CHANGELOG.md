@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- Unified tool metadata, aliases, risk policy, progress wording, web-safe file generation, and installed-model discovery in the shared TypeScript core used by both the extension and Node.js web host.
+
 ## 1.0.1
 
 - Added the shared Vectra agent core and Deep Agents orchestration while keeping workspace access behind Vectra's reviewed host tools.

@@ -5,14 +5,14 @@ import { AgentController } from '../agent/AgentController';
 import { AgentMode, Attachment, ChatMessage, EditProposal } from '../types';
 import { DeviceMode, getConfig, updateDeviceMode, updateTheme } from '../utils/config';
 import { detectGpus } from '../utils/gpu';
-import { AttachmentService } from '../services/AttachmentService';
-import { DiffContentProvider } from '../services/DiffContentProvider';
-import { LocalCredentialStore } from '../services/LocalCredentialStore';
-import { LocalLlamaCppService } from '../services/LocalLlamaCppService';
-import { PatchManager } from '../services/PatchManager';
-import { PlanManager } from '../services/PlanManager';
-import { TodoManager } from '../services/TodoManager';
-import { AgentRuntimeEvent, AgentSession } from '../../shared-core';
+import { AttachmentService } from '../documents/AttachmentService';
+import { DiffContentProvider } from '../workspace/DiffContentProvider';
+import { LocalCredentialStore } from '../providers/LocalCredentialStore';
+import { LlamaCppRuntime } from '../runtime/llama/LlamaCppRuntime';
+import { EditProposalManager } from '../workspace/EditProposalManager';
+import { PlanManager } from '../state/PlanManager';
+import { TodoManager } from '../state/TodoManager';
+import { AgentRuntimeEvent, AgentSession } from '../../generated/agent-core';
 
 interface WebviewMessage {
   type: string;
@@ -43,12 +43,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly controller: AgentController,
-    private readonly patches: PatchManager,
+    private readonly patches: EditProposalManager,
     private readonly todos: TodoManager,
     private readonly plans: PlanManager,
     private readonly diffs: DiffContentProvider,
     private readonly credentials: LocalCredentialStore,
-    private readonly localLlama: LocalLlamaCppService,
+    private readonly localLlama: LlamaCppRuntime,
     private readonly attachmentService: AttachmentService,
     private readonly workspaceState: vscode.Memento,
     private readonly extensionVersion: string = ''

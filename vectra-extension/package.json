@@ -2,7 +2,7 @@
   "name": "vectra-ai",
   "displayName": "Vectra AI",
   "description": "A fast, local-first AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -386,15 +386,16 @@
   "scripts": {
     "build:core": "node ./node_modules/typescript/bin/tsc -p ../vectra-agent-core && node scripts/sync-agent-core.mjs",
     "check": "npm run build:core && tsc --noEmit -p .",
+    "check:release": "node scripts/check-release.mjs",
     "compile": "npm run build:core && tsc -p .",
     "watch": "tsc -watch -p .",
     "test": "npm run compile && node --test --test-isolation=none test/*.test.cjs && npm run test:web",
-    "package": "npm run test && vsce package --no-dependencies",
+    "package": "npm run test && npm run build:web && npm run check:release && vsce package --no-dependencies",
     "sync:web": "node scripts/sync-web.mjs",
-    "build:web": "npm run sync:web && node web/scripts/build.mjs",
-    "web": "npm run sync:web && node web/server.mjs",
+    "build:web": "npm run sync:web && node generated/web/scripts/build.mjs",
+    "web": "npm run sync:web && node generated/web/server/server.mjs",
     "build:all": "npm run compile && npm run build:web && npm run test:web",
-    "test:web": "npm run sync:web && cd web && npm test"
+    "test:web": "npm run sync:web && cd generated/web && npm test"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

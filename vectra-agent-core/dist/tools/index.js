@@ -20,4 +20,7 @@ __exportStar(require("./contracts"), exports);
 __exportStar(require("./deepAgentBuiltins"), exports);
 __exportStar(require("./deepTools"), exports);
 __exportStar(require("./router"), exports);
+__exportStar(require("./policy"), exports);
+__exportStar(require("./extension"), exports);
+__exportStar(require("./web"), exports);
 //# sourceMappingURL=index.js.map

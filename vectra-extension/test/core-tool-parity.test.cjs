@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { VECTRA_TOOL_DEFINITIONS } = require('../shared-core');
-const { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS } = require('../dist/agent/AgentToolCatalog.js');
+const { VECTRA_TOOL_DEFINITIONS, describeVectraTool } = require('../generated/agent-core');
+const { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS } = require('../dist/agent/ExtensionToolCatalog.js');
 
 test('extension exposes every canonical core host tool', () => {
   assert.deepEqual(
@@ -23,10 +23,11 @@ test('legacy extension schema advertises only actions its registry can execute',
   assert.ok(!AGENT_ACTION_SCHEMA.properties.type.enum.some((name) => name.startsWith('deep_')));
 });
 
-test('every canonical core host tool has extension execution and playful progress handling', () => {
-  const source = fs.readFileSync('src/agent/AgentToolRegistry.ts', 'utf8');
+test('every canonical core host tool has shared playful progress handling', () => {
+  const source = fs.readFileSync('src/agent/ExtensionToolExecutor.ts', 'utf8');
   for (const tool of VECTRA_TOOL_DEFINITIONS) {
-    assert.match(source, new RegExp(`case '${tool.name}'`), `${tool.name} needs an extension registry handler`);
+    assert.notEqual(describeVectraTool(tool.name, {}), 'Checking a tool step…', `${tool.name} needs shared progress text`);
   }
   assert.match(source, /Toddler-speak on purpose/);
+  assert.match(source, /describeVectraTool/);
 });

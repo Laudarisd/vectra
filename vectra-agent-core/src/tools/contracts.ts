@@ -5,6 +5,8 @@ export type VectraToolSurface = 'extension' | 'web' | 'all';
 
 export interface VectraToolDefinition<TName extends string = string> {
   name: TName;
+  /** Human vocabulary indexed by model-driven discovery; aliases do not create duplicate tools. */
+  aliases?: readonly string[];
   /** Friendly label for settings, logs, capability lists, and review UI. */
   displayName: string;
   description: string;

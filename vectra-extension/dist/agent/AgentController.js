@@ -38,15 +38,15 @@ const node_crypto_1 = require("node:crypto");
 const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
 const text_1 = require("../utils/text");
-const PathOperationService_1 = require("../services/PathOperationService");
-const WebTools_1 = require("../services/WebTools");
-const GitTools_1 = require("../services/GitTools");
-const DocumentExtractor_1 = require("../services/DocumentExtractor");
-const AgentToolRegistry_1 = require("./AgentToolRegistry");
+const WorkspacePathOperations_1 = require("../workspace/WorkspacePathOperations");
+const WebTools_1 = require("../tools/WebTools");
+const GitTools_1 = require("../workspace/GitTools");
+const DocumentExtractor_1 = require("../documents/DocumentExtractor");
+const ExtensionToolExecutor_1 = require("./ExtensionToolExecutor");
 const protocol_1 = require("./protocol");
 const ConversationContext_1 = require("./ConversationContext");
-const AgentToolCatalog_1 = require("./AgentToolCatalog");
-const shared_core_1 = require("../../shared-core");
+const ExtensionToolCatalog_1 = require("./ExtensionToolCatalog");
+const agent_core_1 = require("../../generated/agent-core");
 const MAX_DELEGATIONS_PER_RUN = 3;
 /**
  * Runs the model/tool loop for one user request.
@@ -63,13 +63,13 @@ class AgentController {
     todos;
     plans;
     toolRegistry;
-    constructor(providers, contextCollector, tools, patches, commands, todos, plans, git = new GitTools_1.GitTools(), web = new WebTools_1.WebTools(), pathOperations = new PathOperationService_1.PathOperationService()) {
+    constructor(providers, contextCollector, tools, patches, commands, todos, plans, git = new GitTools_1.GitTools(), web = new WebTools_1.WebTools(), pathOperations = new WorkspacePathOperations_1.WorkspacePathOperations()) {
         this.providers = providers;
         this.contextCollector = contextCollector;
         this.patches = patches;
         this.todos = todos;
         this.plans = plans;
-        this.toolRegistry = new AgentToolRegistry_1.AgentToolRegistry(tools, patches, commands, git, todos, plans, web, pathOperations);
+        this.toolRegistry = new ExtensionToolExecutor_1.ExtensionToolExecutor(tools, patches, commands, git, todos, plans, web, pathOperations);
     }
     async run(request) {
         if (!vscode.workspace.isTrusted) {
@@ -147,10 +147,15 @@ class AgentController {
     }
     /** Run LangChain Deep Agents while keeping every real capability behind Vectra's tool registry. */
     async runDeepAgent(opts) {
-        const events = new shared_core_1.AgentEventStream();
+        const events = new agent_core_1.AgentEventStream();
         events.subscribe((event) => {
             if (event.type === 'deepagent.tool.started' && typeof event.tool === 'string' && !event.tool.startsWith('vectra_')) {
-                opts.onProgress?.((0, shared_core_1.describeDeepAgentTool)(event.tool));
+                opts.onProgress?.((0, agent_core_1.describeDeepAgentTool)(event.tool));
+                // Deep Agents writes its checklist through the built-in write_todos
+                // middleware. Mirror the tool input immediately instead of waiting for
+                // the entire agent run to finish, so the extension shows live progress.
+                if (event.tool === 'write_todos')
+                    this.syncDeepTodos(event.input, opts.onTodosChanged);
             }
             if (event.type === 'deepagent.delta' && typeof event.delta === 'string')
                 opts.onProgress?.('Generating response…');
@@ -165,7 +170,7 @@ class AgentController {
         let successfulWorkspaceWrites = 0;
         // Deep Agents already owns read_file/write_file names for scratch space,
         // so the shared factory namespaces real project tools as vectra_*.
-        const hostDefinitions = AgentToolCatalog_1.AGENT_TOOL_DEFINITIONS.filter((definition) => definition.name !== 'delegate_task');
+        const hostDefinitions = ExtensionToolCatalog_1.AGENT_TOOL_DEFINITIONS.filter((definition) => definition.name !== 'delegate_task');
         const executeHostTool = async (toolName, input, context) => {
             const envelope = (0, protocol_1.parseAgentEnvelope)(JSON.stringify({
                 message: '',
@@ -204,10 +209,10 @@ class AgentController {
         // instead of embedding every host capability in every agent turn. Other
         // providers retain the complete direct-tool compatibility path.
         const tools = opts.provider.completeWithTools
-            ? (0, shared_core_1.createVectraDiscoveryTools)(hostDefinitions, executeHostTool)
-            : (0, shared_core_1.createVectraHostTools)(hostDefinitions, executeHostTool);
+            ? (0, agent_core_1.createVectraDiscoveryTools)(hostDefinitions, executeHostTool)
+            : (0, agent_core_1.createVectraHostTools)(hostDefinitions, executeHostTool);
         const prompt = buildUserPrompt(opts.task, [], opts.workspaceContext, [], opts.mediaAttachments, this.resolveProposals([...opts.proposalIds]), this.todos.list(), this.plans.get(), opts.contextCharBudget);
-        const runtime = new shared_core_1.VectraDeepAgentRuntime({
+        const runtime = new agent_core_1.VectraDeepAgentRuntime({
             provider: opts.provider,
             model: opts.config.model,
             tools,
@@ -294,7 +299,7 @@ class AgentController {
      * call this — a sub-run passes subagent: true, fresh empty history/
      * observations/proposalIds, an independent (smaller) step budget, and no
      * plan/todo callbacks, so it can never see or mutate the parent's plan or
-     * todo state. AgentToolRegistry additionally denies it any write, execution,
+     * todo state. ExtensionToolExecutor additionally denies it any write, execution,
      * plan, todo, or further-delegation action regardless of what it requests.
      */
     async runLoop(opts) {
@@ -375,7 +380,7 @@ class AgentController {
                 // A legitimate (non-subagent) delegation runs a nested, bounded,
                 // read-only step loop and folds its summary back in as one
                 // observation. A subagent requesting this itself falls through to
-                // the normal dispatch below, where AgentToolRegistry denies it —
+                // the normal dispatch below, where ExtensionToolExecutor denies it —
                 // recursion is never allowed, not even once.
                 if (action.type === 'delegate_task' && !opts.subagent) {
                     if (delegateCallCount >= MAX_DELEGATIONS_PER_RUN) {
@@ -519,7 +524,7 @@ class AgentController {
      * The model's `message` is free text it writes about its own turn, and a
      * weak or local model will sometimes narrate file/folder creation it never
      * actually attempted through a tool call. When there ARE pending proposals,
-     * PatchManager — the one source of truth for what is written vs. pending —
+     * EditProposalManager — the one source of truth for what is written vs. pending —
      * still gets the final word, appended as a plain, useful next step. When
      * there is nothing pending, the model's own natural reply is left alone: a
      * conversational answer (e.g. "I can't generate images, but I could write

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ChatHistoryStore } from '../lib/history.mjs';
+import { ChatHistoryStore } from '../server/services/history.mjs';
 
 test('SQLite history creates, updates, lists, and deletes conversations', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'vectra-history-'));

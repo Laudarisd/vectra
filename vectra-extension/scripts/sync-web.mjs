@@ -2,21 +2,21 @@ import { cp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The extension bundles its own copy of the Vectra Web product (`vectra/web`)
+// The extension bundles its own copy of Vectra Web under `generated/web`.
 // so `vectra.package`/`vectra.web` don't depend on a sibling checkout at
 // runtime. That copy previously drifted from the canonical `vectra-web/`
 // package by hand-edits (missing chat history, GPU detection, and local
 // runtime discovery entirely) and produced the same "bad request"/no-timeout
 // bugs fixed there. This script makes the bundled copy a build artifact
-// instead of a second source of truth: it always overwrites `web/` from
+// instead of a second source of truth: it always overwrites `generated/web/` from
 // `../vectra-web` before packaging or testing, so the two can no longer
 // silently diverge.
 const here = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(here, '..');
 const source = resolve(extensionRoot, '..', 'vectra-web');
-const target = resolve(extensionRoot, 'web');
+const target = resolve(extensionRoot, 'generated', 'web');
 
-const ENTRIES = ['lib', 'public', 'scripts', 'test', 'server.mjs', 'README.md'];
+const ENTRIES = ['server', 'public', 'scripts', 'test', 'README.md'];
 
 async function main() {
   await mkdir(target, { recursive: true });

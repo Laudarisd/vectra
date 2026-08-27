@@ -1,6 +1,6 @@
 import { ModelInfo, ProviderId, TextProvider } from '../types';
 import { getConfig } from '../utils/config';
-import { LocalCredentialStore } from '../services/LocalCredentialStore';
+import { LocalCredentialStore } from './LocalCredentialStore';
 import { AnthropicProvider } from './AnthropicProvider';
 import { GeminiProvider } from './GeminiProvider';
 import { OllamaProvider } from './OllamaProvider';

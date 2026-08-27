@@ -1,12 +1,12 @@
 {
   "name": "vectra-web",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Vectra Web professional AI workspace companion with local/cloud models, pre-parsed PDF/DOCX/PPTX/XLSX attachments, image inputs, GGUF llama.cpp runtime, false-refusal recovery, and downloadable generated documents/code files.",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "start": "node server.mjs",
+    "start": "node server/server.mjs",
     "test": "node --test --test-isolation=none test/*.test.mjs"
   },
   "engines": {

@@ -298,6 +298,10 @@
     if (!state.todos || !state.todos.length) return;
     const wrap = document.createElement('div');
     wrap.className = 'todo-panel';
+    const title = document.createElement('div');
+    title.className = 'todo-title';
+    title.textContent = 'Update Todos';
+    wrap.appendChild(title);
     for (const item of state.todos) {
       const row = document.createElement('div');
       row.className = `todo-item ${item.status}`;

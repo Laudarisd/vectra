@@ -4,21 +4,21 @@ import { AgentMode, AgentRunRequest, AgentRunResult, Attachment, ChatMessage, Pl
 import { ProviderManager } from '../providers/ProviderManager';
 import { AgentConfiguration, getConfig } from '../utils/config';
 import { truncateMiddle, estimateContextCharBudget, safeJson } from '../utils/text';
-import { ContextCollector } from '../services/ContextCollector';
-import { PatchManager } from '../services/PatchManager';
-import { PlanManager } from '../services/PlanManager';
-import { PathOperationService } from '../services/PathOperationService';
-import { TodoManager } from '../services/TodoManager';
-import { WebTools } from '../services/WebTools';
-import { WorkspaceTools } from '../services/WorkspaceTools';
-import { CommandRunner } from '../services/CommandRunner';
-import { GitTools } from '../services/GitTools';
-import { renderPdfPagesFromBuffer } from '../services/DocumentExtractor';
-import { AgentToolRegistry } from './AgentToolRegistry';
+import { ContextCollector } from '../workspace/ContextCollector';
+import { EditProposalManager } from '../workspace/EditProposalManager';
+import { PlanManager } from '../state/PlanManager';
+import { WorkspacePathOperations } from '../workspace/WorkspacePathOperations';
+import { TodoManager } from '../state/TodoManager';
+import { WebTools } from '../tools/WebTools';
+import { WorkspaceTools } from '../workspace/WorkspaceTools';
+import { CommandRunner } from '../workspace/CommandRunner';
+import { GitTools } from '../workspace/GitTools';
+import { renderPdfPagesFromBuffer } from '../documents/DocumentExtractor';
+import { ExtensionToolExecutor } from './ExtensionToolExecutor';
 import { buildChatSystemPrompt, buildSystemPrompt, parseAgentEnvelope } from './protocol';
 import { classifyTurn, formatRecentHistory, isStatusOnlyReply } from './ConversationContext';
-import { AGENT_TOOL_DEFINITIONS } from './AgentToolCatalog';
-import { AgentEventStream, createVectraDiscoveryTools, createVectraHostTools, describeDeepAgentTool, VectraDeepAgentRuntime } from '../../shared-core';
+import { AGENT_TOOL_DEFINITIONS } from './ExtensionToolCatalog';
+import { AgentEventStream, createVectraDiscoveryTools, createVectraHostTools, describeDeepAgentTool, VectraDeepAgentRuntime } from '../../generated/agent-core';
 
 const MAX_DELEGATIONS_PER_RUN = 3;
 
@@ -52,21 +52,21 @@ interface RunLoopOptions {
  * coherent batch for the user to review.
  */
 export class AgentController {
-  private readonly toolRegistry: AgentToolRegistry;
+  private readonly toolRegistry: ExtensionToolExecutor;
 
   constructor(
     private readonly providers: ProviderManager,
     private readonly contextCollector: ContextCollector,
     tools: WorkspaceTools,
-    private readonly patches: PatchManager,
+    private readonly patches: EditProposalManager,
     commands: CommandRunner,
     private readonly todos: TodoManager,
     private readonly plans: PlanManager,
     git: GitTools = new GitTools(),
     web: WebTools = new WebTools(),
-    pathOperations: PathOperationService = new PathOperationService()
+    pathOperations: WorkspacePathOperations = new WorkspacePathOperations()
   ) {
-    this.toolRegistry = new AgentToolRegistry(tools, patches, commands, git, todos, plans, web, pathOperations);
+    this.toolRegistry = new ExtensionToolExecutor(tools, patches, commands, git, todos, plans, web, pathOperations);
   }
 
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
@@ -160,6 +160,10 @@ export class AgentController {
     events.subscribe((event) => {
       if (event.type === 'deepagent.tool.started' && typeof event.tool === 'string' && !event.tool.startsWith('vectra_')) {
         opts.onProgress?.(describeDeepAgentTool(event.tool));
+        // Deep Agents writes its checklist through the built-in write_todos
+        // middleware. Mirror the tool input immediately instead of waiting for
+        // the entire agent run to finish, so the extension shows live progress.
+        if (event.tool === 'write_todos') this.syncDeepTodos(event.input, opts.onTodosChanged);
       }
       if (event.type === 'deepagent.delta' && typeof event.delta === 'string') opts.onProgress?.('Generating response…');
     });
@@ -314,7 +318,7 @@ export class AgentController {
    * call this — a sub-run passes subagent: true, fresh empty history/
    * observations/proposalIds, an independent (smaller) step budget, and no
    * plan/todo callbacks, so it can never see or mutate the parent's plan or
-   * todo state. AgentToolRegistry additionally denies it any write, execution,
+   * todo state. ExtensionToolExecutor additionally denies it any write, execution,
    * plan, todo, or further-delegation action regardless of what it requests.
    */
   private async runLoop(opts: RunLoopOptions): Promise<string> {
@@ -424,7 +428,7 @@ export class AgentController {
         // A legitimate (non-subagent) delegation runs a nested, bounded,
         // read-only step loop and folds its summary back in as one
         // observation. A subagent requesting this itself falls through to
-        // the normal dispatch below, where AgentToolRegistry denies it —
+        // the normal dispatch below, where ExtensionToolExecutor denies it —
         // recursion is never allowed, not even once.
         if (action.type === 'delegate_task' && !opts.subagent) {
           if (delegateCallCount >= MAX_DELEGATIONS_PER_RUN) {
@@ -587,7 +591,7 @@ export class AgentController {
    * The model's `message` is free text it writes about its own turn, and a
    * weak or local model will sometimes narrate file/folder creation it never
    * actually attempted through a tool call. When there ARE pending proposals,
-   * PatchManager — the one source of truth for what is written vs. pending —
+   * EditProposalManager — the one source of truth for what is written vs. pending —
    * still gets the final word, appended as a plain, useful next step. When
    * there is nothing pending, the model's own natural reply is left alone: a
    * conversational answer (e.g. "I can't generate images, but I could write

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDocx, buildPdf, extractDocxText, extractPdfText, artifactForRequest } from '../lib/documents.mjs';
+import { buildDocx, buildPdf, extractDocxText, extractPdfText, artifactForRequest } from '../server/services/documents.mjs';
 
 test('web document codec round-trips DOCX text', () => {
   const bytes=buildDocx('Hello Vectra DOCX\nSecond line','Demo');

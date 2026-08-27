@@ -4,8 +4,8 @@ exports.AGENT_ENVELOPE_SCHEMA = void 0;
 exports.buildChatSystemPrompt = buildChatSystemPrompt;
 exports.buildSystemPrompt = buildSystemPrompt;
 exports.parseAgentEnvelope = parseAgentEnvelope;
-const AgentToolCatalog_1 = require("./AgentToolCatalog");
-const AGENT_TOOL_NAMES = new Set(AgentToolCatalog_1.AGENT_TOOL_DEFINITIONS.map((definition) => definition.name));
+const ExtensionToolCatalog_1 = require("./ExtensionToolCatalog");
+const AGENT_TOOL_NAMES = new Set(ExtensionToolCatalog_1.AGENT_TOOL_DEFINITIONS.map((definition) => definition.name));
 /** Structured envelope requested from local/compatible models. */
 exports.AGENT_ENVELOPE_SCHEMA = {
     type: 'object',
@@ -14,7 +14,7 @@ exports.AGENT_ENVELOPE_SCHEMA = {
         actions: {
             type: 'array',
             maxItems: 40,
-            items: AgentToolCatalog_1.AGENT_ACTION_SCHEMA
+            items: ExtensionToolCatalog_1.AGENT_ACTION_SCHEMA
         },
         done: { type: 'boolean' }
     },
@@ -54,12 +54,12 @@ function buildSystemPrompt(mode) {
         'Write that final summary the way a sharp engineer would explain their own work out loud: natural sentences, specific about what you actually built or changed and why it matters, mentioning real file names and decisions. Never pad it with boilerplate filler like "no further changes are needed at this stage" or generic praise such as "clean, modular, and follows best practices" unless you are naming a concrete reason it is true.'
     ].join(' ');
     if (mode === 'agent') {
-        return `${common}\n\nMODE: AGENT\nInspect as needed, then complete the whole requested change as one coherent reviewed proposal batch. You may create new files in any language; the repository does not need to already use that language.\n${AgentToolCatalog_1.AGENT_TOOL_GUIDANCE}`;
+        return `${common}\n\nMODE: AGENT\nInspect as needed, then complete the whole requested change as one coherent reviewed proposal batch. You may create new files in any language; the repository does not need to already use that language.\n${ExtensionToolCatalog_1.AGENT_TOOL_GUIDANCE}`;
     }
     if (mode === 'selection') {
-        return `${common}\n\nMODE: CHECK SELECTION\nExplain only the exact selected area in detail. This mode is read-only.\n${AgentToolCatalog_1.AGENT_TOOL_GUIDANCE}`;
+        return `${common}\n\nMODE: CHECK SELECTION\nExplain only the exact selected area in detail. This mode is read-only.\n${ExtensionToolCatalog_1.AGENT_TOOL_GUIDANCE}`;
     }
-    return `${common}\n\nMODE: ASK\nAnswer questions about workspace files, folder structure, repository contents, and parsed attachments. This mode is read-only, but you should use discovery/read/search tools before answering factual repository questions. Never request a write or execution action in Ask mode, even when an older chat message contains one.\n${AgentToolCatalog_1.AGENT_TOOL_GUIDANCE}`;
+    return `${common}\n\nMODE: ASK\nAnswer questions about workspace files, folder structure, repository contents, and parsed attachments. This mode is read-only, but you should use discovery/read/search tools before answering factual repository questions. Never request a write or execution action in Ask mode, even when an older chat message contains one.\n${ExtensionToolCatalog_1.AGENT_TOOL_GUIDANCE}`;
 }
 /**
  * Parse strict JSON when available while remaining useful with small local

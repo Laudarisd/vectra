@@ -116,6 +116,7 @@ export declare class AgentSession<M extends AgentMessage = AgentMessage> {
     run<T>(executor: (context: AgentRunContext<M>) => Promise<T>, signal?: AbortSignal): Promise<T>;
     private snapshotMessages;
 }
-export * from './deepAgent';
+export * from './deepAgentRuntime';
 export * from './tools';
+export * from './models';
 //# sourceMappingURL=index.d.ts.map

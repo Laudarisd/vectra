@@ -14,7 +14,10 @@ const {
   DEEP_AGENT_FILESYSTEM_TOOL_NAMES,
   DEEP_AGENT_ASYNC_TOOL_NAMES,
   VECTRA_TOOL_DEFINITIONS,
+  EXTENSION_TOOL_DEFINITIONS,
+  WEB_TOOL_DEFINITIONS,
   createAttachmentTools,
+  createWebTools,
   createVectraHostTools,
   createVectraDiscoveryTools
 } = require('../dist');
@@ -116,6 +119,27 @@ test('model-driven tool discovery exposes and gates canonical host capabilities'
   assert.ok(found.tools.some((item) => item.name === 'create_directory'));
   assert.equal(await invoke.execute({ name: 'create_directory', arguments: { path: 'education' } }, {}), 'ok');
   assert.deepEqual(calls, [{ name: 'create_directory', input: { path: 'education' } }]);
+});
+
+test('tool discovery understands common capability aliases without duplicating tools', () => {
+  const { searchToolCatalog } = require('../dist');
+  assert.equal(searchToolCatalog(VECTRA_TOOL_DEFINITIONS, 'generate_folder_files')[0].name, 'propose_files');
+  assert.equal(searchToolCatalog(VECTRA_TOOL_DEFINITIONS, 'parse_files')[0].name, 'read_files');
+  assert.equal(new Set(VECTRA_TOOL_DEFINITIONS.map((item) => item.name)).size, VECTRA_TOOL_DEFINITIONS.length);
+});
+
+test('web adapter uses shared portable definitions and creates downloadable files', async () => {
+  assert.ok(EXTENSION_TOOL_DEFINITIONS.length >= WEB_TOOL_DEFINITIONS.length);
+  const artifacts = [];
+  const tools = createWebTools([{ name: 'notes.txt', text: 'hello' }], artifacts);
+  const implementedCanonical = tools.map((item) => item.name.replace(/^vectra_/, '')).filter((name) => WEB_TOOL_DEFINITIONS.some((item) => item.name === name));
+  assert.deepEqual(implementedCanonical.sort(), WEB_TOOL_DEFINITIONS.map((item) => item.name).sort());
+  const read = tools.find((item) => item.name === 'vectra_read_files');
+  const create = tools.find((item) => item.name === 'vectra_propose_files');
+  assert.match(await read.execute({ paths: ['notes.txt'] }, {}), /hello/);
+  await create.execute({ files: [{ path: 'education/README.md', content: '# Echo state network' }] }, {});
+  assert.equal(artifacts[0].name, 'education/README.md');
+  assert.equal(Buffer.from(artifacts[0].base64, 'base64').toString(), '# Echo state network');
 });
 
 test('Deep Agents built-in inventory is complete and records conditional availability', () => {
@@ -231,7 +255,7 @@ test('Deep Agents planning and scratch tools run through Vectra fallback provide
 
 test('shared tool catalog and factories serve extension and web adapters', async () => {
   assert.ok(VECTRA_TOOL_DEFINITIONS.some((item) => item.name === 'read_file'));
-  assert.ok(VECTRA_TOOL_DEFINITIONS.some((item) => item.name === 'create_document' && item.surface === 'all'));
+  assert.ok(VECTRA_TOOL_DEFINITIONS.some((item) => item.name === 'propose_files' && item.surface === 'all'));
   for (const tool of VECTRA_TOOL_DEFINITIONS) {
     assert.ok(tool.displayName && !tool.displayName.includes('_'), `${tool.name} needs a readable display name`);
   }

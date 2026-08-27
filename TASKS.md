@@ -8,21 +8,17 @@ Make Vectra more capable than Deep Agents while remaining local-first, cross-pla
 
 ### 1. Shared agent core
 
-- [x] Create a shared TypeScript agent runtime for the extension and web server.
-- [x] Move agent state, tools, plans, todos, streaming, and approvals into the shared core.
-- [x] Give the extension and web version the same agent capabilities.
+- [X] Create a shared TypeScript agent runtime for the extension and web server.
+- [X] Move agent state, tools, plans, todos, streaming, and approvals into the shared core.
+- [X] Give the extension and web version the same agent capabilities.
 
 ### 2. Deep Agents integration
 
-- [x] Add the TypeScript `deepagents` package to the shared Node runtime.
-- [x] Wrap Deep Agents behind a Vectra interface so it is not tied to the UI or one model provider.
-- [x] Connect Vectra workspace, document, Git, command, web, and edit tools.
-- [x] Preserve Vectra's JSON/grammar fallback for small local models without reliable native tool calling.
-- [x] Keep Vectra's human approval rules for file changes, commands, network access, and sensitive tools.
-- [x] Catalog and route the complete Deep Agents tool surface in `core/tools`: `write_todos`, scratch `ls`/`read_file`/`write_file`/`edit_file`/`delete`/`glob`/`grep`, and synchronous `task` delegation.
-- [x] Support sandbox-only `execute` through an execution-capable backend, without granting unreviewed project command access through the default state backend.
-- [x] Support `start_async_task`, `check_async_task`, `update_async_task`, `cancel_async_task`, and `list_async_tasks` when remote async subagents are configured.
-- [x] Expose Deep tool lifecycle/state events to both the extension and web, and keep Deep scratch tools distinct from guarded Vectra workspace tools.
+- [ ] Add the TypeScript `deepagents` package to the shared Node runtime.
+- [ ] Wrap Deep Agents behind a Vectra interface so it is not tied to the UI or one model provider.
+- [ ] Connect Vectra workspace, document, Git, command, web, and edit tools.
+- [ ] Preserve Vectra's JSON/grammar fallback for small local models without reliable native tool calling.
+- [ ] Keep Vectra's human approval rules for file changes, commands, network access, and sensitive tools.
 
 ### 3. Durable execution
 

@@ -6,7 +6,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const extensionRoot = resolve(here, '..');
 const coreRoot = resolve(extensionRoot, '..', 'vectra-agent-core');
 const source = resolve(coreRoot, 'dist');
-const target = resolve(extensionRoot, 'shared-core');
+const target = resolve(extensionRoot, 'generated', 'agent-core');
 
 await rm(target, { recursive: true, force: true });
 await mkdir(target, { recursive: true });

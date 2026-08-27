@@ -23,7 +23,7 @@ class OpenAICompatibleProvider {
         // llama.cpp has supported this schema-bearing json_object form across more
         // releases than the OpenAI-style json_schema wrapper. The latter changed
         // shape between server versions and can be silently accepted but ignored.
-        const body = { model: request.model, messages: [{ role: 'system', content: request.systemPrompt }, { role: 'user', content: userContent }], temperature: request.structured === false ? 0.6 : 0.2, ...(wantsEnvelope ? { response_format: { type: 'json_object', schema: protocol_1.AGENT_ENVELOPE_SCHEMA } } : {}) };
+        const body = { model: request.model, messages: [{ role: 'system', content: request.systemPrompt }, { role: 'user', content: userContent }], temperature: request.structured === false ? 0.6 : 0.2, ...(this.structuredAgentJson ? { cache_prompt: true } : {}), ...(wantsEnvelope ? { response_format: { type: 'json_object', schema: protocol_1.AGENT_ENVELOPE_SCHEMA } } : {}) };
         // Free-form conversational replies stream token-by-token so a slow local
         // model shows visible progress instead of an unresponsive wait. The
         // schema-constrained tool-loop JSON stays non-streaming: partial JSON is

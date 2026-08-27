@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://code.visualstudio.com/"><img src="https://img.shields.io/badge/VS_Code-1.90%2B-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.1-blue" alt="Version 1.0.1"></a>
+  <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.1.0-blue" alt="Version 1.1.0"></a>
   <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
@@ -13,7 +13,7 @@
 
 Vectra is a repo-aware coding agent for VS Code. Point it at a GGUF model and llama.cpp, and it reads your code, proposes reviewed edits, and runs approved commands — no API key, no per-token bill, no code leaving your laptop.
 
-![Vectra with a local Qwen3 4B model selected](https://raw.githubusercontent.com/Laudarisd/vectra/main/src/1.png)
+![Vectra with a local Qwen3 4B model selected](https://raw.githubusercontent.com/Laudarisd/vectra/main/docs/assets/vectra-local-model.png)
 
 ## Why Vectra
 

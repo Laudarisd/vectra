@@ -1,5 +1,5 @@
 import { AgentEnvelope, AgentMode } from '../types';
-import { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS, AGENT_TOOL_GUIDANCE } from './AgentToolCatalog';
+import { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS, AGENT_TOOL_GUIDANCE } from './ExtensionToolCatalog';
 
 const AGENT_TOOL_NAMES = new Set<string>(AGENT_TOOL_DEFINITIONS.map((definition) => definition.name));
 

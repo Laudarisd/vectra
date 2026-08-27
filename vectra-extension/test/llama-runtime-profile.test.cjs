@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildLlamaRuntimeProfile, parseLlamaServerFlags } = require('../dist/services/LlamaRuntimeProfile.js');
+const { buildLlamaRuntimeProfile, parseLlamaServerFlags } = require('../dist/runtime/llama/LlamaRuntimeProfile.js');
 
-const FLAGS = parseLlamaServerFlags('--fit --flash-attn --parallel --cache-prompt --cache-reuse --metrics --cache-type-k --cache-type-v --cpu-moe');
+const FLAGS = parseLlamaServerFlags('--fit --flash-attn --parallel --cache-prompt --cache-reuse --jinja --spec-type --metrics --cache-type-k --cache-type-v --cpu-moe');
 
 test('resident GPU profile keeps context and enables prompt reuse', () => {
   const profile = buildLlamaRuntimeProfile({
@@ -14,6 +14,8 @@ test('resident GPU profile keeps context and enables prompt reuse', () => {
   assert.equal(profile.mode, 'gpu-resident');
   assert.equal(profile.contextSize, 16384);
   assert.ok(profile.args.includes('--cache-prompt'));
+  assert.ok(profile.args.includes('--jinja'));
+  assert.deepEqual(profile.args.slice(profile.args.indexOf('--spec-type'), profile.args.indexOf('--spec-type') + 2), ['--spec-type', 'ngram-cache']);
   assert.ok(!profile.args.includes('--cache-type-k'));
 });
 

@@ -9,7 +9,7 @@ export function createVectraHostTools<TContext>(
 ): VectraDeepTool<TContext>[] {
   return definitions.map((definition) => ({
     name: `${namespace}_${definition.name}`,
-    description: `${definition.description} This operates through Vectra's guarded ${definition.risk} capability.`,
+    description: `${definition.description}${definition.aliases?.length ? ` Related capability terms: ${definition.aliases.join(', ')}.` : ''} This operates through Vectra's guarded ${definition.risk} capability.`,
     execute: (input, context) => execute(definition.name, input, context)
   }));
 }
@@ -42,6 +42,7 @@ export function createVectraDiscoveryTools<TContext>(
         return {
           tools: matches.map((item) => ({
             name: item.name,
+            aliases: item.aliases,
             displayName: item.displayName,
             description: item.description,
             risk: item.risk
@@ -77,7 +78,7 @@ export function searchToolCatalog(
   const broad = /\b(all|every|available|capabilities|tools)\b/i.test(query);
   return definitions
     .map((item, index) => {
-      const haystack = `${item.name} ${item.displayName} ${item.description} ${item.risk}`.toLowerCase();
+      const haystack = `${item.name} ${(item.aliases ?? []).join(' ')} ${item.displayName} ${item.description} ${item.risk}`.toLowerCase();
       const score = broad ? 1 : words.reduce((total, word) => total + (haystack.includes(word) ? (item.name.includes(word) ? 4 : 1) : 0), 0);
       return { item, index, score };
     })

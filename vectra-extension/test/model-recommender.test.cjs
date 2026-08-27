@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { effectiveBudgetMiB, recommendCatalogEntries, recommendCatalogTiers } = require('../dist/services/ModelRecommender.js');
+const { effectiveBudgetMiB, recommendCatalogEntries, recommendCatalogTiers } = require('../dist/models/ModelRecommender.js');
 
 const CATALOG = [
   { id: 'small', label: 'Small', family: 'llama', paramCount: 1, quant: 'Q4_K_M', kind: 'llm', sizeBytes: 1, minVramMiB: 1024, minRamMiB: 1536 },

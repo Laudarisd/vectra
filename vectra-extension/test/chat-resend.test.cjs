@@ -18,9 +18,8 @@ test('extension branches chat history and reuses session attachments on resend',
 });
 
 test('local model command offers manual search and automatic detection', () => {
-  const source = fs.readFileSync('src/services/LocalLlamaCppService.ts', 'utf8');
+  const source = fs.readFileSync('src/runtime/llama/LlamaCppRuntime.ts', 'utf8');
   assert.match(source, /Search or choose a GGUF model/);
   assert.match(source, /Detect installed local models/);
-  assert.match(source, /discoverGgufModels/);
-  assert.match(source, /discoverOllamaModels/);
+  assert.match(source, /discoverInstalledModels/);
 });

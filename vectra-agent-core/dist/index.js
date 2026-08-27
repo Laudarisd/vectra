@@ -305,6 +305,7 @@ function abortError() {
 function messageOf(error) {
     return error instanceof Error ? error.message : String(error);
 }
-__exportStar(require("./deepAgent"), exports);
+__exportStar(require("./deepAgentRuntime"), exports);
 __exportStar(require("./tools"), exports);
+__exportStar(require("./models"), exports);
 //# sourceMappingURL=index.js.map

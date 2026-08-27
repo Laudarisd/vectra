@@ -1,0 +1,408 @@
+import { AgentAction, AgentMode, Attachment, TodoItem } from '../types';
+import { CommandRunner } from '../workspace/CommandRunner';
+import { GitTools } from '../workspace/GitTools';
+import { EditProposalManager } from '../workspace/EditProposalManager';
+import { WorkspacePathOperations } from '../workspace/WorkspacePathOperations';
+import { PlanManager } from '../state/PlanManager';
+import { TodoManager } from '../state/TodoManager';
+import { WebTools } from '../tools/WebTools';
+import { WorkspaceTools } from '../workspace/WorkspaceTools';
+import { normalizeAgentPath } from '../utils/path';
+import { safeJson, truncateMiddle } from '../utils/text';
+import { AgentToolRouter, describeVectraTool, VECTRA_SUBAGENT_DENIED_TOOL_NAMES, VECTRA_WRITE_OR_EXECUTE_TOOL_NAMES } from '../../generated/agent-core';
+
+interface ToolExecutionContext {
+  mode: AgentMode;
+  mediaAttachments: Attachment[];
+  signal?: AbortSignal;
+  /** True while executing on behalf of a delegate_task sub-agent — hard-restricts to read-only tools. */
+  subagent?: boolean;
+}
+
+export interface ToolExecutionResult {
+  observation: string;
+  proposalIds: string[];
+  wrote: boolean;
+}
+
+/**
+ * Executes validated agent actions against extension services. This is the only
+ * place where model-requested tools are connected to filesystem, proposal, and
+ * command capabilities.
+ */
+export class ExtensionToolExecutor {
+  private readonly router: AgentToolRouter<AgentAction, ToolExecutionContext, ToolExecutionResult>;
+
+  constructor(
+    private readonly workspace: WorkspaceTools,
+    private readonly patches: EditProposalManager,
+    private readonly commands: CommandRunner,
+    private readonly git: GitTools,
+    private readonly todos: TodoManager,
+    private readonly plans: PlanManager,
+    private readonly web: WebTools,
+    private readonly pathOperations: WorkspacePathOperations
+  ) {
+    this.router = new AgentToolRouter<AgentAction, ToolExecutionContext, ToolExecutionResult>((action) => action.type)
+      .registerFallback((action, context) => this.executeTrusted(action, context));
+  }
+
+  /**
+   * Toddler-speak on purpose: this is the live step log the user watches
+   * while a run is in progress, so the exact operation (analyzing a
+   * directory vs. generating a file vs. parsing a document) stays
+   * recognizable even through the playful wording.
+   */
+  describe(action: AgentAction): string {
+    if (!action || typeof action !== 'object' || Array.isArray(action)) return "Fixing a wonky tool step…";
+    return describeVectraTool(action.type, action as unknown as Record<string, unknown>);
+  }
+
+  async execute(action: AgentAction, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    if (context.signal?.aborted) throw new Error('Request cancelled.');
+    try {
+      return await this.router.execute(action, context);
+    } catch (error) {
+      return this.result(action, `ERROR: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async executeTrusted(action: AgentAction, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    if (context.subagent && VECTRA_SUBAGENT_DENIED_TOOL_NAMES.has(action.type)) {
+      return this.denied(action, 'Subagents are read-only and cannot write, execute, plan, edit the shared todo list, or delegate further.');
+    }
+
+    if (context.mode === 'agent' && VECTRA_WRITE_OR_EXECUTE_TOOL_NAMES.has(action.type) && this.planBlocksWrites()) {
+      return this.denied(action, 'A plan is pending your review. Approve or reject it in the chat before I can write or run anything.');
+    }
+
+    if (action.type === 'delegate_task') {
+      // A non-subagent delegate_task is intercepted and actually executed by
+      // AgentController before it ever reaches here; a subagent's attempt was
+      // already denied above. Reaching this point means neither happened.
+      return this.denied(action, 'delegate_task must be handled by the agent loop, not executed directly.');
+    }
+
+    if (action.type === 'read_file') {
+      return this.result(action, await this.readFileWithPendingOverlay(action.path, action.startLine, action.endLine));
+    }
+    if (action.type === 'read_files') {
+      const paths = validateStringArray(action.paths, 'read_files paths', 20);
+      const outputs: string[] = [];
+      for (const filePath of [...new Set(paths.map(normalizeAgentPath))]) {
+        if (context.signal?.aborted) throw new Error('Request cancelled.');
+        outputs.push(await this.readFileWithPendingOverlay(filePath, action.startLine, action.endLine));
+      }
+      return this.result(action, outputs.join('\n\n'));
+    }
+    if (action.type === 'read_document') {
+      return this.result(action, await this.workspace.readDocument(action.path));
+    }
+    if (action.type === 'inspect_file') {
+      const attachment = await this.workspace.inspectFile(action.path);
+      const alreadyAttached = context.mediaAttachments.some(
+        (item) => item.path === attachment.path && item.name === attachment.name
+      );
+      if (!alreadyAttached) context.mediaAttachments.push(attachment);
+      const extracted = attachment.text?.trim();
+      const detail = extracted
+        ? `Attached ${attachment.name} (${attachment.mime}, ${attachment.size} bytes).\nExtracted text:\n${truncateMiddle(extracted, 20_000)}`
+        : `Attached ${attachment.name} (${attachment.mime}, ${attachment.size} bytes) for multimodal inspection. No reliable embedded text was found.`;
+      return this.result(action, detail);
+    }
+
+    if (action.type === 'git_status') {
+      return this.result(action, await this.git.status());
+    }
+    if (action.type === 'git_diff') {
+      return this.result(action, await this.git.diff(action.path, action.staged === true));
+    }
+
+    if (action.type === 'todo_write') {
+      const validated = validateTodos(action.todos);
+      this.todos.set(validated);
+      return this.result(action, summarizeTodos(validated));
+    }
+
+    if (action.type === 'propose_plan') {
+      if (context.mode !== 'agent') return this.denied(action, 'This mode is read-only.');
+      const steps = validateStringArray(action.steps, 'propose_plan steps', 20);
+      const plan = this.plans.propose(steps, action.reason);
+      return this.result(
+        action,
+        `Proposed a ${plan.steps.length}-step plan for user review. Do not write or run anything until it is approved.`
+      );
+    }
+
+    if (action.type === 'web_search') {
+      return this.result(action, await this.web.search(action.query, action.maxResults, context.signal));
+    }
+    if (action.type === 'web_fetch') {
+      return this.result(action, await this.web.fetch(action.url, context.signal));
+    }
+
+    if (action.type === 'propose_files') {
+      if (context.mode !== 'agent') return this.denied(action, 'This mode is read-only.');
+      if (!Array.isArray(action.files) || action.files.length === 0 || action.files.length > 30) {
+        return this.denied(action, 'propose_files requires between 1 and 30 files.');
+      }
+
+      // Validate the complete batch before creating proposals. This prevents a
+      // malformed later item from leaving earlier files in an unreported state.
+      const batch = action.files.map((file) => {
+        if (!file || typeof file.path !== 'string' || typeof file.content !== 'string') {
+          throw new Error('Every propose_files item requires string path and content fields.');
+        }
+        return { ...file, path: normalizeAgentPath(file.path) };
+      });
+      const duplicateCheck = new Set<string>();
+      for (const file of batch) {
+        if (duplicateCheck.has(file.path)) throw new Error(`Duplicate path in propose_files: ${file.path}`);
+        duplicateCheck.add(file.path);
+      }
+
+      const ids: string[] = [];
+      const paths: string[] = [];
+      const errors: string[] = [];
+      for (const file of batch) {
+        if (context.signal?.aborted) throw new Error('Request cancelled.');
+        try {
+          const proposal = await this.patches.proposeFile(
+            file.path,
+            file.content,
+            file.reason || action.reason || 'Agent-proposed project file'
+          );
+          ids.push(proposal.id);
+          paths.push(proposal.path);
+        } catch (error) {
+          errors.push(`${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      const prepared = paths.length
+        ? `Prepared ${paths.length} reviewed project files:\n${paths.map((filePath) => `- ${filePath}`).join('\n')}`
+        : 'No project files were prepared.';
+      const failures = errors.length ? `\nErrors:\n${errors.map((error) => `- ${error}`).join('\n')}` : '';
+      return this.result(
+        action,
+        `${prepared}${failures}`,
+        ids,
+        paths.length > 0 && errors.length === 0
+      );
+    }
+
+    if (action.type === 'create_file' || action.type === 'propose_file') {
+      if (context.mode !== 'agent') return this.denied(action, 'This mode is read-only.');
+      if (typeof action.content !== 'string') return this.denied(action, 'Complete string content is required.');
+      if (action.type === 'create_file') {
+        if (this.patches.getPendingForPath(action.path)) {
+          return this.denied(action, `${action.path} already has a pending proposal.`);
+        }
+        const current = await this.workspace.readWholeFile(action.path);
+        if (current.exists) return this.denied(action, `${action.path} already exists. Read it, then use propose_file.`);
+      }
+      const proposal = await this.patches.proposeFile(action.path, action.content, action.reason);
+      return this.result(action, `Prepared reviewed ${proposal.kind} proposal for ${proposal.path}.`, [proposal.id], true);
+    }
+
+    if (action.type === 'replace_lines' || action.type === 'delete_lines' || action.type === 'insert_lines') {
+      if (context.mode !== 'agent') return this.denied(action, 'This mode is read-only.');
+      const proposal = action.type === 'replace_lines'
+        ? await this.patches.proposeLineEdit(action.path, action.startLine, action.endLine, action.content, 'replace', action.reason)
+        : action.type === 'delete_lines'
+          ? await this.patches.proposeLineEdit(action.path, action.startLine, action.endLine, '', 'delete', action.reason)
+          : await this.patches.proposeLineEdit(
+              action.path,
+              action.line,
+              action.line,
+              action.content,
+              action.position === 'before' ? 'insert-before' : 'insert-after',
+              action.reason
+            );
+      return this.result(action, `Prepared reviewed line edit for ${proposal.path}.`, [proposal.id], true);
+    }
+
+    if (action.type === 'create_document' || action.type === 'edit_document') {
+      if (context.mode !== 'agent') return this.denied(action, 'This mode is read-only.');
+      const proposal = await this.patches.proposeDocument(
+        action.path,
+        action.content,
+        action.reason,
+        action.title,
+        action.type === 'edit_document'
+      );
+      return this.result(action, `Prepared reviewed document proposal for ${proposal.path}.`, [proposal.id], true);
+    }
+
+    if (action.type === 'delete_file') {
+      if (context.mode !== 'agent') return this.denied(action, 'This mode is read-only.');
+
+      // A pending "create" proposal was never written to disk, so there is
+      // nothing there to delete yet. Cancel the pending creation instead of
+      // asking the filesystem to delete a file it has never seen.
+      const pending = this.patches.getPendingForPath(action.path);
+      if (pending && pending.kind === 'create') {
+        this.patches.reject(pending.id);
+        return this.result(
+          action,
+          `Cancelled the pending creation of ${pending.path}; it was never written to disk.`,
+          [],
+          true
+        );
+      }
+
+      const proposal = await this.patches.proposeDelete(action.path, action.reason);
+      return this.result(action, `Prepared reviewed deletion for ${proposal.path}.`, [proposal.id], true);
+    }
+
+    if (
+      action.type === 'create_directory' || action.type === 'rename_path' || action.type === 'move_path' ||
+      action.type === 'copy_path' || action.type === 'delete_directory'
+    ) {
+      if (context.mode !== 'agent') return this.denied(action, 'Path operations are available only in Agent mode.');
+      if (this.patches.list().some((proposal) => proposal.status === 'pending')) {
+        return this.denied(action, 'Pending file proposals must be accepted or rejected before changing workspace paths.');
+      }
+      const output = action.type === 'create_directory'
+        ? await this.pathOperations.createDirectory(action.path, action.reason, context.signal)
+        : action.type === 'rename_path'
+          ? await this.pathOperations.rename(action.path, action.destinationPath, action.reason, context.signal)
+          : action.type === 'move_path'
+            ? await this.pathOperations.move(action.path, action.destinationPath, action.reason, context.signal)
+            : action.type === 'copy_path'
+              ? await this.pathOperations.copy(action.path, action.destinationPath, action.reason, context.signal)
+              : await this.pathOperations.deleteDirectory(action.path, action.recursive === true, action.reason, context.signal);
+      return this.result(action, output, [], true);
+    }
+
+    if (action.type === 'run_file' || action.type === 'run_project' || action.type === 'run_command' || action.type === 'run_tests') {
+      if (context.mode !== 'agent') return this.denied(action, 'Execution tools are available only in Agent mode.');
+      if (this.patches.list().some((proposal) => proposal.status === 'pending')) {
+        return this.denied(action, 'Pending proposals must be accepted or rejected before execution.');
+      }
+      if (action.type === 'run_file') {
+        return this.result(action, await this.commands.runFile(action.path, action.args ?? [], action.timeoutMs, action.reason, context.signal));
+      }
+      if (action.type === 'run_project') {
+        return this.result(action, await this.commands.runProject(action.path ?? '', action.timeoutMs, action.reason, context.signal));
+      }
+      if (action.type === 'run_tests') {
+        const output = action.command
+          ? await this.commands.run(action.command, action.cwd, action.timeoutMs, action.reason, 'tests', context.signal)
+          : await this.commands.runTestsAuto(action.cwd ?? '', action.timeoutMs, action.reason, context.signal);
+        return this.result(action, output);
+      }
+      return this.result(action, await this.commands.run(action.command, action.cwd, action.timeoutMs, action.reason, 'command', context.signal));
+    }
+
+    return this.result(action, await this.workspace.execute(action));
+  }
+
+  private async readFileWithPendingOverlay(filePath: string, startLine = 1, endLine?: number): Promise<string> {
+    const pending = this.patches.readPendingText(filePath);
+    if (pending === undefined) return this.workspace.readFile(filePath, startLine, endLine);
+
+    const lines = pending.split(/\r?\n/);
+    const start = clamp(startLine, 1, Math.max(1, lines.length));
+    const end = clamp(endLine ?? Math.min(lines.length, start + 399), start, lines.length);
+    const numbered = lines.slice(start - 1, end).map((line, index) => `${start + index}: ${line}`);
+    return `PENDING FILE ${normalizeAgentPath(filePath)} lines ${start}-${end} of ${lines.length}\n${numbered.join('\n')}`;
+  }
+
+  /** Writes/execution stay blocked until the current plan is approved — a missing, pending, or rejected plan all block. */
+  private planBlocksWrites(): boolean {
+    return this.plans.get()?.status !== 'approved';
+  }
+
+  private denied(action: AgentAction, reason: string): ToolExecutionResult {
+    const guidance = /subagents are read-only/i.test(reason)
+      ? ' Do not retry this or any other write/execute/plan/delegate action. Continue read-only investigation and finish with actions=[] and your findings.'
+      : /read-only|only in Agent mode/i.test(reason)
+        ? ' Do not retry this or any other write/execute action in the current mode. Answer the CURRENT USER TASK with actions=[].'
+        : /plan is pending/i.test(reason)
+          ? ' Do not retry this action. If you have not called propose_plan yet this run, call it now with actions=[propose_plan]; otherwise stop and wait for the user to decide.'
+          : ' Do not repeat the identical action; correct it or finish the current task.';
+    return this.result(action, `Denied: ${reason}${guidance}`);
+  }
+
+  private result(
+    action: AgentAction,
+    output: string,
+    proposalIds: string[] = [],
+    wrote = false
+  ): ToolExecutionResult {
+    return {
+      // Never echo complete generated files back into the next model prompt.
+      // The pending overlay can supply a file on demand, while this compact
+      // action summary preserves far more context for the rest of the project.
+      observation: `ACTION ${safeJson(summarizeAction(action))}\nRESULT\n${output}`,
+      proposalIds,
+      wrote
+    };
+  }
+}
+
+function summarizeAction(action: unknown): unknown {
+  if (!action || typeof action !== 'object' || Array.isArray(action)) {
+    return { type: 'invalid_action', receivedType: Array.isArray(action) ? 'array' : typeof action };
+  }
+  const record = action as Record<string, unknown>;
+  if (record.type === 'propose_files') {
+    const files = record.files;
+    return {
+      type: record.type,
+      files: Array.isArray(files)
+        ? files.map((file: unknown) => {
+            const item = file && typeof file === 'object' && !Array.isArray(file)
+              ? file as Record<string, unknown>
+              : {};
+            return {
+              path: typeof item.path === 'string' ? item.path : '(invalid path)',
+              characters: typeof item.content === 'string' ? item.content.length : 0
+            };
+          })
+        : []
+    };
+  }
+  if (typeof record.content === 'string') {
+    const { content: _content, ...summary } = record;
+    return { ...summary, contentCharacters: record.content.length };
+  }
+  return record;
+}
+
+function validateStringArray(value: unknown, label: string, maxItems: number): string[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error(`${label} must contain at least one path.`);
+  if (value.length > maxItems) throw new Error(`${label} supports at most ${maxItems} paths per call.`);
+  if (!value.every((item) => typeof item === 'string' && item.trim())) {
+    throw new Error(`${label} must contain only non-empty strings.`);
+  }
+  return value;
+}
+
+function clamp(value: number | undefined, min: number, max: number): number {
+  const number = Number.isFinite(value) ? Math.floor(value!) : min;
+  return Math.min(max, Math.max(min, number));
+}
+
+const TODO_STATUSES = new Set(['pending', 'in_progress', 'completed']);
+
+function validateTodos(value: unknown): TodoItem[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error('todo_write requires at least one todo item.');
+  if (value.length > 40) throw new Error('todo_write supports at most 40 items.');
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (!item || typeof item.id !== 'string' || !item.id.trim()) throw new Error('Every todo item requires a non-empty string id.');
+    if (typeof item.content !== 'string' || !item.content.trim()) throw new Error('Every todo item requires non-empty content.');
+    if (!TODO_STATUSES.has(item.status)) throw new Error(`Invalid todo status: ${String(item.status)}`);
+    if (seen.has(item.id)) throw new Error(`Duplicate todo id: ${item.id}`);
+    seen.add(item.id);
+    return { id: item.id, content: item.content, status: item.status } as TodoItem;
+  });
+}
+
+function summarizeTodos(todos: TodoItem[]): string {
+  const completed = todos.filter((item) => item.status === 'completed').length;
+  const inProgress = todos.filter((item) => item.status === 'in_progress').length;
+  const pending = todos.filter((item) => item.status === 'pending').length;
+  return `Todo list updated: ${completed} completed, ${inProgress} in progress, ${pending} pending.`;
+}

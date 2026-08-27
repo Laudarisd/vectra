@@ -6,20 +6,20 @@ export const VECTRA_TOOL_DEFINITIONS = [
   tool('list_directory', 'List Directory', 'Recursively list files and directories with bounded depth.', 'read'),
   tool('list_files', 'Find Files', 'Find workspace files using a glob.', 'read'),
   tool('read_file', 'Read File', 'Read a line-numbered window from one text file.', 'read'),
-  tool('read_files', 'Read Multiple Files', 'Read up to 20 related text files in one call.', 'read'),
+  tool('read_files', 'Parse or Read Multiple Files', 'Read or parse up to 20 related files in one call.', 'read', 'all', ['parse_files']),
   tool('read_document', 'Read Document', 'Extract text from PDF, DOCX, PPTX, XLSX, or RTF.', 'read'),
   tool('inspect_file', 'Inspect Visual File', 'Attach an image or visual document for model inspection.', 'read'),
   tool('search_text', 'Search Workspace Text', 'Search text across bounded workspace files.', 'read'),
   tool('get_diagnostics', 'Editor Diagnostics', 'Read editor errors and warnings.', 'read'),
   tool('git_status', 'Git Status', 'Read Git branch and working-tree status.', 'read'),
   tool('git_diff', 'Git Diff', 'Read a Git diff.', 'read'),
-  tool('create_file', 'Create File', 'Prepare one complete new text/code file for review.', 'write'),
+  tool('create_file', 'Create File', 'Generate one complete new text/code file, creating its parent folders when accepted.', 'write', 'all', ['generate_file']),
   tool('propose_file', 'Propose File Change', 'Prepare one complete new or replacement file for review.', 'write'),
-  tool('propose_files', 'Propose Multiple Files', 'Prepare a coherent batch of complete files for review.', 'write'),
+  tool('propose_files', 'Create or Generate Multiple Files', 'Generate a coherent batch of complete files and nested folder paths in one reviewed operation.', 'write', 'all', ['create_files', 'generate_files', 'generate_folder_files', 'create_project']),
   tool('replace_lines', 'Replace Lines', 'Prepare a focused line replacement for review.', 'write'),
   tool('delete_lines', 'Delete Lines', 'Prepare a focused line deletion for review.', 'write'),
   tool('insert_lines', 'Insert Lines', 'Prepare a focused line insertion for review.', 'write'),
-  tool('create_document', 'Create Document', 'Prepare a generated PDF or DOCX for review.', 'write', 'all'),
+  tool('create_document', 'Create Document', 'Prepare a generated PDF or DOCX for review.', 'write'),
   tool('edit_document', 'Edit Document', 'Prepare a replacement PDF or DOCX for review.', 'write'),
   tool('delete_file', 'Delete File', 'Prepare a file deletion for review.', 'write'),
   tool('create_directory', 'Create Directory', 'Create an empty workspace directory after confirmation.', 'write'),
@@ -31,11 +31,11 @@ export const VECTRA_TOOL_DEFINITIONS = [
   tool('run_project', 'Run Project', 'Request approval to run an auto-detected project.', 'execute'),
   tool('run_command', 'Run Command', 'Request approval to run an explicit command.', 'execute'),
   tool('run_tests', 'Run Tests', 'Request approval to run tests.', 'execute'),
-  tool('todo_write', 'Update Task Checklist', 'Create or update a live checklist.', 'coordination', 'all'),
+  tool('todo_write', 'Update Task Checklist', 'Create or update a live checklist.', 'coordination'),
   tool('propose_plan', 'Propose Plan', 'Propose a plan for user approval before writes or execution.', 'coordination'),
   tool('web_search', 'Search the Web', 'Search the public web through Vectra network policy.', 'network'),
   tool('web_fetch', 'Fetch Web Page', 'Fetch readable text from a public URL through Vectra network policy.', 'network'),
-  tool('delegate_task', 'Delegate Task', 'Delegate an isolated exploration task.', 'coordination', 'all')
+  tool('delegate_task', 'Delegate Task', 'Delegate an isolated exploration task.', 'coordination')
 ] as const;
 
 function tool<TName extends string>(
@@ -43,7 +43,8 @@ function tool<TName extends string>(
   displayName: string,
   description: string,
   risk: VectraToolDefinition['risk'],
-  surface: VectraToolDefinition['surface'] = 'extension'
+  surface: VectraToolDefinition['surface'] = 'extension',
+  aliases?: readonly string[]
 ): VectraToolDefinition<TName> {
-  return { name, displayName, description, risk, surface };
+  return { name, displayName, description, risk, surface, aliases };
 }

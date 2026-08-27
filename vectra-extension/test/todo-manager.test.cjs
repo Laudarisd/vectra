@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { TodoManager } = require('../dist/services/TodoManager.js');
+const { TodoManager } = require('../dist/state/TodoManager.js');
 
 test('TodoManager starts empty and stores a full-replace list', () => {
   const todos = new TodoManager();

@@ -19,5 +19,8 @@
   },
   "dependencies": {
     "deepagents": "1.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43"
   }
 }

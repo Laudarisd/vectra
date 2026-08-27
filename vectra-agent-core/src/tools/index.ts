@@ -4,3 +4,6 @@ export * from './contracts';
 export * from './deepAgentBuiltins';
 export * from './deepTools';
 export * from './router';
+export * from './policy';
+export * from './extension';
+export * from './web';

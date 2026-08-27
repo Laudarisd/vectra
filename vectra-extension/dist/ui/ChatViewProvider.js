@@ -39,7 +39,7 @@ const path = __importStar(require("node:path"));
 const vscode = __importStar(require("vscode"));
 const config_1 = require("../utils/config");
 const gpu_1 = require("../utils/gpu");
-const shared_core_1 = require("../../shared-core");
+const agent_core_1 = require("../../generated/agent-core");
 /** Coordinates the sidebar webview with extension-owned session state. */
 class ChatViewProvider {
     extensionUri;
@@ -80,7 +80,7 @@ class ChatViewProvider {
         // ChatMessage only carries attachment metadata, so history survives a
         // reload without workspaceState ballooning from re-stored file content.
         const saved = this.workspaceState.get(ChatViewProvider.HISTORY_KEY, []);
-        this.session = new shared_core_1.AgentSession({
+        this.session = new agent_core_1.AgentSession({
             messages: Array.isArray(saved) ? saved : [],
             todos: this.todos,
             plans: this.plans

@@ -14,6 +14,15 @@ test('generation UI keeps playful progress, live deltas, and a working Stop cont
   assert.match(webview, /els\.stop\.classList\.toggle\('hidden', !state\.busy\)/);
 });
 
+test('Deep Agents todos are mirrored and rendered while the extension is running', () => {
+  const controller = fs.readFileSync('src/agent/AgentController.ts', 'utf8');
+  const ui = fs.readFileSync('media/main.js', 'utf8');
+  assert.match(controller, /event\.tool === 'write_todos'/);
+  assert.match(controller, /syncDeepTodos\(event\.input, opts\.onTodosChanged\)/);
+  assert.match(ui, /title\.textContent = 'Update Todos'/);
+  assert.match(ui, /item\.status === 'in_progress'/);
+});
+
 test('the shared session is busy before extension state is posted', () => {
   const source = fs.readFileSync('src/ui/ChatViewProvider.ts', 'utf8');
   const start = source.indexOf('await this.session.run');

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { PlanManager } = require('../dist/services/PlanManager.js');
+const { PlanManager } = require('../dist/state/PlanManager.js');
 
 test('PlanManager.propose creates a pending plan with mapped steps', () => {
   const plans = new PlanManager();

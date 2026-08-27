@@ -7,7 +7,7 @@
 <p align="center">
   <a href="./vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="./vectra-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.0.1-blue" alt="Extension version 1.0.1"></a>
+  <a href="./vectra-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.1.0-blue" alt="Extension version 1.1.0"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
@@ -17,7 +17,7 @@ Vectra is a local-first AI coding agent for VS Code and the web. It understands 
 
 Download a GGUF model once, load it through llama.cpp, and run your coding agent locally. Your model and prompts remain on your machine, and you avoid recurring API-token costs.
 
-![Vectra running a local Qwen3 4B model](src/1.png)
+![Vectra running a local Qwen3 4B model](docs/assets/vectra-local-model.png)
 
 ## Packages
 

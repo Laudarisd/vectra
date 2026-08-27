@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { LocalLlamaManager, normalizeShardPath, detectMmproj } from '../lib/local-llama.mjs';
+import { LocalLlamaManager, normalizeShardPath, detectMmproj } from '../server/services/local-llama.mjs';
 import http from 'node:http';
 
 test('normalizeShardPath selects the first GGUF shard', () => {

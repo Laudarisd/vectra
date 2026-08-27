@@ -32,10 +32,13 @@ export const LOCAL_RUNTIME_TARGETS: readonly LocalRuntimeTarget[] = [
   { name: 'Msty', baseUrl: 'http://127.0.0.1:10000/v1' }
 ];
 
-const SKIPPED = new Set(['.git', 'node_modules', 'dist', 'build', 'out', '.next', '.venv', 'venv', '__pycache__', 'coverage']);
+const SKIPPED = new Set([
+  '.git', 'node_modules', 'dist', 'build', 'out', '.next', '.venv', 'venv', '__pycache__', 'coverage',
+  '$recycle.bin', 'system volume information', 'windows', 'recovery', 'program files', 'program files (x86)', 'appdata'
+]);
 
-export async function discoverGgufModels(extraRoots: string[] = [], maxDirectories = 20_000, maxModels = 500): Promise<DiscoveredGgufModel[]> {
-  const paths = await findGgufPaths({ roots: extraRoots, limit: maxModels, maxDirectories });
+export async function discoverGgufModels(extraRoots: string[] = [], maxDirectories = 20_000, maxModels = 500, includeDefaults = true): Promise<DiscoveredGgufModel[]> {
+  const paths = await findGgufPaths({ roots: extraRoots, limit: maxModels, maxDirectories, includeDefaults });
   const models = await Promise.all(paths.map(async (filePath): Promise<DiscoveredGgufModel | undefined> => {
     try {
       const size = (await fs.stat(filePath)).size;
@@ -45,17 +48,22 @@ export async function discoverGgufModels(extraRoots: string[] = [], maxDirectori
   return models.filter((item): item is DiscoveredGgufModel => Boolean(item)).sort((a, b) => natural(a.label, b.label));
 }
 
-export async function searchGgufModels(options: { query?: string; roots?: string[]; limit?: number; maxDirectories?: number } = {}): Promise<string[]> {
+export async function searchGgufModels(options: { query?: string; roots?: string[]; limit?: number; maxDirectories?: number; includeDefaults?: boolean } = {}): Promise<string[]> {
   return findGgufPaths(options);
 }
 
-async function findGgufPaths({ query = '', roots = [], limit = 500, maxDirectories = 20_000 }: { query?: string; roots?: string[]; limit?: number; maxDirectories?: number }): Promise<string[]> {
+async function findGgufPaths({ query = '', roots = [], limit = 500, maxDirectories = 20_000, includeDefaults = true }: { query?: string; roots?: string[]; limit?: number; maxDirectories?: number; includeDefaults?: boolean }): Promise<string[]> {
   const needle = query.trim().toLowerCase();
   const visited = new Set<string>();
   const output: string[] = [];
-  await scan([...roots, ...appModelDirectories()], visited, output, needle, limit, maxDirectories);
-  await scan(broadModelDirectories(), visited, output, needle, limit, maxDirectories);
-  return [...new Set(output.map(normalizeShardPath))].sort((a, b) => natural(path.basename(a), path.basename(b))).slice(0, limit);
+  if (roots.length) await scan(roots, visited, output, needle, limit, maxDirectories);
+  if (!includeDefaults) return finishGgufPaths(output, limit);
+  const appBudget = Math.max(1, Math.floor(maxDirectories * 0.6));
+  const personalBudget = Math.max(appBudget, Math.floor(maxDirectories * 0.8));
+  await scan(appModelDirectories(), visited, output, needle, limit, appBudget);
+  await scan(broadModelDirectories(), visited, output, needle, limit, personalBudget);
+  await scan(storageModelDirectories(), visited, output, needle, limit, maxDirectories);
+  return finishGgufPaths(output, limit);
 }
 
 async function scan(roots: string[], visited: Set<string>, output: string[], needle: string, limit: number, maxDirectories: number): Promise<void> {
@@ -75,7 +83,7 @@ async function scan(roots: string[], visited: Set<string>, output: string[], nee
       if (entry.isSymbolicLink()) {
         try { const value = await fs.stat(full); directory = value.isDirectory(); file = value.isFile(); } catch { continue; }
       }
-      if (directory && current.depth < 12 && !SKIPPED.has(entry.name)) queue.push({ directory: full, depth: current.depth + 1 });
+      if (directory && current.depth < 12 && !SKIPPED.has(entry.name.toLowerCase())) queue.push({ directory: full, depth: current.depth + 1 });
       else if (file && isSelectableGguf(entry.name) && (!needle || entry.name.toLowerCase().includes(needle))) output.push(full);
     }
   }
@@ -198,6 +206,8 @@ export function appModelDirectories(): string[] {
     path.join(home, '.cache', 'lm-studio', 'models'), path.join(home, '.lmstudio', 'models'),
     path.join(home, '.cache', 'gpt4all'), path.join(home, 'gpt4all'), path.join(home, 'text-generation-webui', 'models'),
     path.join(home, 'koboldcpp', 'models'), path.join(home, 'llama.cpp', 'models'),
+    path.join(home, '.local', 'share', 'Jan', 'models'), path.join(home, '.local', 'share', 'nomic.ai', 'GPT4All'),
+    path.join(home, '.msty', 'models'),
     path.join(home, 'Library', 'Application Support', 'LM Studio', 'models'),
     path.join(home, 'Library', 'Application Support', 'Jan', 'data', 'models'),
     path.join(home, 'Library', 'Application Support', 'nomic.ai', 'GPT4All'),
@@ -215,7 +225,13 @@ export function appModelDirectories(): string[] {
 }
 
 export function broadModelDirectories(): string[] { const home = os.homedir(); return [path.join(home, 'Downloads'), path.join(home, 'Documents'), path.join(home, 'Desktop')]; }
-export function commonModelDirectories(): string[] { return [...appModelDirectories(), ...broadModelDirectories()]; }
+/** Last-pass roots cover arbitrary folders and secondary drives without making OS directories the priority. */
+export function storageModelDirectories(): string[] {
+  const home = os.homedir();
+  if (process.platform === 'win32') return uniquePaths([home, ...'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((letter) => `${letter}:\\`)]);
+  return uniquePaths([home, ...(process.platform === 'darwin' ? ['/Volumes'] : ['/mnt', '/media'])]);
+}
+export function commonModelDirectories(): string[] { return [...appModelDirectories(), ...broadModelDirectories(), ...storageModelDirectories()]; }
 export function defaultModelRoots(): string[] { return commonModelDirectories(); }
 export function normalizeShardPath(filePath: string): string { const match = filePath.match(/^(.*)-(\d{5})-of-(\d{5})\.gguf$/i); return match ? `${match[1]}-00001-of-${match[3]}.gguf` : filePath; }
 export function formatBytes(bytes: number): string { const gib = bytes / 1024 ** 3; return gib >= 0.1 ? `${gib.toFixed(gib >= 10 ? 0 : 1)} GiB` : `${(bytes / 1024 ** 2).toFixed(0)} MiB`; }
@@ -226,6 +242,7 @@ async function timedJson<T>(url: string, headers: Record<string, string>, timeou
 }
 function isLoopback(host: string): boolean { return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host); }
 function isSelectableGguf(name: string): boolean { if (!/\.gguf$/i.test(name) || /^mmproj/i.test(name)) return false; const shard = name.match(/-(\d{5})-of-\d{5}\.gguf$/i); return !shard || shard[1] === '00001'; }
+function finishGgufPaths(values: string[], limit: number): string[] { return [...new Set(values.map(normalizeShardPath))].sort((a, b) => natural(path.basename(a), path.basename(b))).slice(0, limit); }
 function uniquePaths(values: string[]): string[] { return [...new Set(values.filter(Boolean).map((value) => path.resolve(value)))]; }
 function dedupe<T>(values: T[], key: (value: T) => string): T[] { const seen = new Set<string>(); return values.filter((item) => { const value = key(item); return seen.has(value) ? false : Boolean(seen.add(value)); }); }
 function natural(a: string, b: string): number { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }

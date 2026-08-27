@@ -9,7 +9,7 @@ class OpenAICompatibleProvider {
     structuredAgentJson;
     timeoutMs;
     id = 'openaiCompatible';
-    constructor(baseUrl, apiKey, structuredAgentJson = false, timeoutMs = 120_000) {
+    constructor(baseUrl, apiKey, structuredAgentJson = false, timeoutMs = 900_000) {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.structuredAgentJson = structuredAgentJson;

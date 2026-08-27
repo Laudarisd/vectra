@@ -203,7 +203,7 @@ export class LlamaCppRuntime implements vscode.Disposable {
     await updateLocalModelDirectory(directory);
     const models = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Vectra: scanning ${directory}…` },
-      () => discoverGgufModels([directory], 20_000, 500)
+      () => discoverGgufModels([directory], 20_000, 500, false)
     );
     if (!models.length) {
       void vscode.window.showInformationMessage('No selectable GGUF models were found in that folder.');

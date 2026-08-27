@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { discoverInstalledModels, discoverLocalRuntimes, searchGgufModels } from '../server/services/local-discovery.mjs';
+import { homedir, tmpdir } from 'node:os';
+import { discoverInstalledModels, discoverLocalRuntimes, searchGgufModels, storageModelRoots } from '../server/services/local-discovery.mjs';
+
+test('web and extension share mounted-storage model roots', () => {
+  assert.ok(storageModelRoots().includes(homedir()));
+});
 
 test('local runtime discovery reads OpenAI-compatible model listings', async () => {
   const server = http.createServer((_request, response) => {
@@ -28,7 +32,7 @@ test('GGUF search is bounded and excludes vision projectors', async () => {
     await mkdir(join(root, 'nested'));
     await writeFile(join(root, 'nested', 'Qwen-Code-Q4.gguf'), '');
     await writeFile(join(root, 'nested', 'mmproj-Qwen.gguf'), '');
-    assert.deepEqual(await searchGgufModels({ roots: [root], query: 'code' }), [join(root, 'nested', 'Qwen-Code-Q4.gguf')]);
+    assert.deepEqual(await searchGgufModels({ roots: [root], query: 'code', includeDefaults: false }), [join(root, 'nested', 'Qwen-Code-Q4.gguf')]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -49,7 +53,7 @@ test('GGUF search follows a symlinked/junctioned models directory', async () => 
       if (error.code === 'EPERM') return;
       throw error;
     }
-    const results = await searchGgufModels({ roots: [root] });
+    const results = await searchGgufModels({ roots: [root], includeDefaults: false });
     assert.ok(results.includes(join(linkPath, 'linked-model.gguf')), 'should find the model through the symlinked directory');
   } finally {
     await rm(root, { recursive: true, force: true });

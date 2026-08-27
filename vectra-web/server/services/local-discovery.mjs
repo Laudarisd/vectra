@@ -10,4 +10,5 @@ export const discoverInstalledModels = core.discoverInstalledModels;
 export const searchGgufModels = core.searchGgufModels;
 export const appModelRoots = core.appModelDirectories;
 export const broadModelRoots = core.broadModelDirectories;
+export const storageModelRoots = core.storageModelDirectories;
 export const defaultModelRoots = core.defaultModelRoots;

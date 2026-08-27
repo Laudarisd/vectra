@@ -5,7 +5,7 @@ interface ChatResponse{choices?:Array<{message?:{content?:string}}>}
 interface ModelsResponse{data?:Array<{id:string;owned_by?:string}>}
 export class OpenAICompatibleProvider implements TextProvider{
   readonly id='openaiCompatible' as const;
-  constructor(private readonly baseUrl:string,private readonly apiKey?:string,private readonly structuredAgentJson=false,private readonly timeoutMs=120_000){}
+  constructor(private readonly baseUrl:string,private readonly apiKey?:string,private readonly structuredAgentJson=false,private readonly timeoutMs=900_000){}
   async complete(request:ProviderRequest):Promise<string>{
     const userContent:Array<Record<string,unknown>>=[{type:'text',text:request.userPrompt}];
     for(const f of request.attachments??[]) append(userContent,f);

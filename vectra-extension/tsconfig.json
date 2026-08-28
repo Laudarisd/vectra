@@ -9,9 +9,9 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
     "types": ["node", "vscode"],
-    "outDir": "dist",
+    "outDir": "build",
     "rootDir": "src",
-    "sourceMap": true
+    "sourceMap": false
   },
   "include": ["src/**/*.ts"]
 }

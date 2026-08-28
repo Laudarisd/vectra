@@ -12,7 +12,7 @@ import { LlamaCppRuntime } from '../runtime/llama/LlamaCppRuntime';
 import { EditProposalManager } from '../workspace/EditProposalManager';
 import { PlanManager } from '../state/PlanManager';
 import { TodoManager } from '../state/TodoManager';
-import { AgentRuntimeEvent, AgentSession } from '../../generated/agent-core';
+import { AgentRuntimeEvent, AgentSession } from '../core';
 
 interface WebviewMessage {
   type: string;

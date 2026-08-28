@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { WebTools } = require('../dist/tools/WebTools.js');
+const { WebTools } = require('../build/tools/WebTools.js');
 
 // These only exercise the synchronous URL-validation guard, which runs and
 // throws before any network call — no real network access is required or

@@ -1,4 +1,4 @@
-import { TodoState } from '../../generated/agent-core';
+import { TodoState } from '../core';
 import { TodoItem } from '../types';
 
 /**

@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { downloadFile } = require('../dist/models/ModelDownloader.js');
+const { downloadFile } = require('../build/models/ModelDownloader.js');
 
 async function withServer(handler, run) {
   const server = http.createServer(handler);

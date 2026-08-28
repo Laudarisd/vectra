@@ -10,11 +10,11 @@ export {
   formatBytes,
   normalizeShardPath,
   storageModelDirectories
-} from '../../generated/agent-core';
+} from '../core';
 export type {
   DiscoveredGgufModel,
   DiscoveredLocalModel,
   DiscoveredOllamaModel,
   DiscoveredRuntimeModel,
   InstalledModelInventory
-} from '../../generated/agent-core';
+} from '../core';

@@ -21,7 +21,7 @@ import { searchHuggingFace, resolveDownloadableFile } from './services/huggingfa
 import { installLatestLlamaCpp } from './services/llama-cpp-installer.mjs';
 const require=createRequire(import.meta.url);
 let agentCore;
-try{agentCore=require('../../vectra-agent-core')}catch{agentCore=require('../../agent-core')}
+agentCore=require('../core')
 const{AgentSession,VectraDeepAgentRuntime,createWebTools,describeDeepAgentTool}=agentCore;
 const execFileAsync=promisify(execFile);
 const here=dirname(fileURLToPath(import.meta.url)); const webRoot=resolve(here,'..'); const publicRoot=existsSync(join(webRoot,'dist'))?join(webRoot,'dist'):join(webRoot,'public'); const host=process.env.VECTRA_HOST||'127.0.0.1'; let port=Number(process.env.VECTRA_PORT||4173); const MAX_BODY=110*1024*1024; const localLlama=new LocalLlamaManager(); const history=new ChatHistoryStore();

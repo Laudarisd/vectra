@@ -2,7 +2,7 @@ import { AgentAction } from '../types';
 import {
   EXTENSION_TOOL_DEFINITIONS,
   VectraToolDefinition
-} from '../../generated/agent-core';
+} from '../core';
 
 type ToolDefinition = VectraToolDefinition<AgentAction['type']>;
 type CoreToolName = (typeof EXTENSION_TOOL_DEFINITIONS)[number]['name'];

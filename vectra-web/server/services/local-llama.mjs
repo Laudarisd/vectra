@@ -10,8 +10,7 @@ import { detectGpus } from './gpu-detect.mjs';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
-let agentCore;
-try { agentCore = require('../../../vectra-agent-core'); } catch { agentCore = require('../../../agent-core'); }
+const agentCore = require('../../core');
 const { buildLlamaRuntimeProfile, parseLlamaServerFlags } = agentCore;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -2,9 +2,9 @@
 export {
   buildLlamaRuntimeProfile,
   parseLlamaServerFlags
-} from '../../../generated/agent-core';
+} from '../../core';
 export type {
   LlamaRuntimeMode,
   LlamaRuntimeProfile,
   LlamaRuntimeProfileInput
-} from '../../../generated/agent-core';
+} from '../../core';

@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildDocx, buildPdf } = require('../dist/documents/DocumentCodec.js');
-const { extractDocxTextFromBuffer, extractPdfTextFromBuffer } = require('../dist/documents/DocumentExtractor.js');
-const { parseAttachmentBytes } = require('../dist/documents/AttachmentParser.js');
+const { buildDocx, buildPdf } = require('../build/documents/DocumentCodec.js');
+const { extractDocxTextFromBuffer, extractPdfTextFromBuffer } = require('../build/documents/DocumentExtractor.js');
+const { parseAttachmentBytes } = require('../build/documents/AttachmentParser.js');
 
 test('Vectra creates a DOCX that can be parsed back into text', async () => {
   const bytes = buildDocx('# Summary\nHello Vectra document.\nSecond paragraph.', 'Demo');

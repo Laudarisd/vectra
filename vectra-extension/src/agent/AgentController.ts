@@ -18,7 +18,7 @@ import { ExtensionToolExecutor } from './ExtensionToolExecutor';
 import { buildChatSystemPrompt, buildSystemPrompt, parseAgentEnvelope } from './protocol';
 import { classifyTurn, formatRecentHistory, isStatusOnlyReply } from './ConversationContext';
 import { AGENT_TOOL_DEFINITIONS } from './ExtensionToolCatalog';
-import { AgentEventStream, createVectraDiscoveryTools, createVectraHostTools, describeDeepAgentTool, VectraDeepAgentRuntime } from '../../generated/agent-core';
+import { AgentEventStream, createVectraDiscoveryTools, createVectraHostTools, describeDeepAgentTool, VectraDeepAgentRuntime } from '../core';
 
 const MAX_DELEGATIONS_PER_RUN = 3;
 

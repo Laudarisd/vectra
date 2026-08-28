@@ -1,97 +1,64 @@
 # Vectra Code Structure
 
-The repository contains two applications and one shared package:
+The repository contains two independent products:
 
 ```text
 docs/assets/                 Documentation images
 tools/                       Repository maintenance scripts
-vectra-agent-core/           Shared agent runtime, models, and tool policy
 vectra-extension/            VS Code extension
-vectra-web/                  Canonical browser application
+vectra-web/                  Browser application
 ```
 
 ## VS Code extension
 
 ```text
 vectra-extension/
-├── src/
-│   ├── agent/               Conversation orchestration and extension tool dispatch
-│   ├── documents/           Attachment parsing and document codecs
-│   ├── models/              Model discovery, catalog, download, and recommendations
-│   ├── providers/           Cloud/local API providers and credentials
-│   ├── runtime/llama/       llama.cpp process lifecycle and launch policy
-│   ├── state/               Plan and todo session state
-│   ├── tools/               Non-workspace host tools
-│   ├── ui/                  VS Code webview provider
-│   ├── utils/               Small shared utilities
-│   ├── workspace/           Workspace reads, reviewed edits, Git, and commands
-│   ├── extension.ts         Extension composition root
-│   └── types.ts             Extension protocol types
-├── media/                   Extension webview assets
-├── scripts/                 Build, sync, and release checks
-├── generated/               Regenerated package payloads; never edit directly
-│   ├── agent-core/          Copy of compiled `vectra-agent-core`
-│   └── web/                 Copy of canonical `vectra-web`
-├── dist/                    Compiled extension JavaScript
-└── test/                    Extension tests
+|-- src/
+|   |-- agent/               Conversation orchestration and host dispatch
+|   |-- core/                Extension-owned agent runtime and contracts
+|   |-- documents/           Attachment parsing and document codecs
+|   |-- models/              Model discovery, catalog, and downloads
+|   |-- providers/           Cloud and local provider clients
+|   |-- runtime/llama/       llama.cpp process and launch policy
+|   |-- state/               Plan and todo session state
+|   |-- tools/               Non-workspace host tools
+|   |-- ui/                  VS Code webview provider
+|   |-- workspace/           Guarded workspace, Git, and command operations
+|   `-- extension.ts         Extension composition root
+|-- media/                   Extension webview assets
+|-- scripts/                 Build and release checks
+|-- dist/extension.js        Single bundled Marketplace runtime
+`-- test/                    Extension and core tests
 ```
 
-Important boundaries:
-
-- `AgentController` coordinates runs but does not directly mutate the workspace.
-- `ExtensionToolExecutor` routes validated actions to guarded host implementations.
-- `EditProposalManager` owns pending reviewed edits.
-- `WorkspacePathOperations` owns confirmed directory and path changes.
-- `LlamaCppRuntime` owns the local llama-server process.
-- `generated/` and `dist/` are build outputs.
-
-## Shared agent core
-
-```text
-vectra-agent-core/src/
-├── deepAgentRuntime.ts      Deep Agents and LangChain adapter
-├── index.ts                 Session state and public exports
-├── models/                  Portable model discovery/runtime policy
-└── tools/                   Tool contracts, catalog, routing, and host adapters
-```
-
-The shared package contains no direct VS Code workspace access. Platform-specific
-operations remain in the extension or web host.
+`build/` is ignored intermediate test output. VS Code requires the JavaScript entry point declared by `main`; TypeScript source is not included in the VSIX.
 
 ## Web application
 
 ```text
 vectra-web/
-├── public/
-│   ├── js/app.js            Browser client
-│   ├── index.html
-│   └── styles.css
-├── server/
-│   ├── server.mjs           HTTP/API composition root
-│   └── services/            Documents, history, models, downloads, and llama.cpp
-├── scripts/build.mjs
-└── test/
+|-- core/
+|   `-- src/                 Web-owned agent runtime and contracts
+|-- public/                  Browser client, HTML, and styles
+|-- server/                  HTTP API and product services
+|-- scripts/build.mjs        Web build
+`-- test/                    Web and core tests
 ```
 
-The canonical web source lives only in `vectra-web/`. Run `npm run sync:web` from
-`vectra-extension/` to refresh `generated/web/`.
+`core/dist/` is generated before Web start, test, and build commands. Web does not get copied into the Extension package.
 
-## Common changes
+## Important boundaries
 
-| Change | Primary location |
-|---|---|
-| Add or change an extension tool | `src/agent/ExtensionToolCatalog.ts`, `ExtensionToolExecutor.ts` |
-| Change workspace edits | `src/workspace/EditProposalManager.ts` |
-| Change local model launch | `src/runtime/llama/` |
-| Change model discovery/catalog | `src/models/` and `vectra-agent-core/src/models/` |
-| Change document handling | `src/documents/` |
-| Change browser APIs/runtime | `vectra-web/server/` |
-| Change browser UI | `vectra-web/public/` |
-| Change shared tool policy | `vectra-agent-core/src/tools/` |
+- `AgentController` coordinates Extension runs but does not directly mutate the workspace.
+- `ExtensionToolExecutor` routes validated actions to guarded host implementations.
+- `EditProposalManager` owns pending reviewed edits.
+- `WorkspacePathOperations` owns confirmed directory and path changes.
+- `LlamaCppRuntime` owns the local llama-server process.
+- Each product owns its core. A core change must be applied and tested in both products when the behavior should remain aligned.
 
 ## Build commands
 
-- `npm run compile` — rebuild shared core and extension output.
-- `npm run build:web` — sync and build `generated/web`.
-- `npm test` — compile and run extension and web tests.
-- `npm run package` — test, build, validate release metadata, and create the VSIX.
+- From `vectra-extension/`, `npm run compile` builds test output and the single runtime bundle.
+- `npm test` runs Extension tests followed by canonical Web tests.
+- `npm run build:web` builds the canonical Web product directly.
+- `npm run package` tests both products, validates release metadata, and creates the VSIX.

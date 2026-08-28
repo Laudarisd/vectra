@@ -1,4 +1,4 @@
-import { PlanState } from '../../generated/agent-core';
+import { PlanState } from '../core';
 import { Plan } from '../types';
 
 /**

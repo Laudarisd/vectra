@@ -5,7 +5,7 @@ const {
   formatRecentHistory,
   isStatusOnlyReply,
   sanitizeHistoricalContent
-} = require('../dist/agent/ConversationContext.js');
+} = require('../build/agent/ConversationContext.js');
 
 const message = (role, content) => ({ id: Math.random().toString(), role, content, createdAt: Date.now() });
 

@@ -1,9 +1,7 @@
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-let core;
-try { core = require('../../../vectra-agent-core'); }
-catch { core = require('../../../agent-core'); }
+const core = require('../../core');
 
 export const discoverLocalRuntimes = core.discoverLocalRuntimes;
 export const discoverInstalledModels = core.discoverInstalledModels;

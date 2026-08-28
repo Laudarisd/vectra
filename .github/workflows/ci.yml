@@ -12,9 +12,8 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
-            vectra-agent-core/package-lock.json
             vectra-extension/package-lock.json
-      - run: npm ci --prefix vectra-agent-core
+            vectra-web/package-lock.json
       - run: npm ci --prefix vectra-extension
-      - run: npm test --prefix vectra-agent-core
+      - run: npm ci --prefix vectra-web
       - run: npm run package --prefix vectra-extension

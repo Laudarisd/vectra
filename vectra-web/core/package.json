@@ -1,0 +1,6 @@
+{
+  "name": "@vectra/web-core",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js"
+}

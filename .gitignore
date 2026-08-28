@@ -17,3 +17,5 @@
 
 # Generated extension bundles
 vectra-extension/generated/
+vectra-extension/build/
+vectra-web/core/dist/

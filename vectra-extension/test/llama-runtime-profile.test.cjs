@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildLlamaRuntimeProfile, parseLlamaServerFlags } = require('../dist/runtime/llama/LlamaRuntimeProfile.js');
+const { buildLlamaRuntimeProfile, parseLlamaServerFlags } = require('../build/runtime/llama/LlamaRuntimeProfile.js');
 
 const FLAGS = parseLlamaServerFlags('--fit --flash-attn --parallel --cache-prompt --cache-reuse --jinja --spec-type --metrics --cache-type-k --cache-type-v --cpu-moe');
 

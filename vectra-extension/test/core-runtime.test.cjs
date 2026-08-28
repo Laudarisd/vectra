@@ -20,7 +20,7 @@ const {
   createWebTools,
   createVectraHostTools,
   createVectraDiscoveryTools
-} = require('../dist');
+} = require('../build/core');
 const { tool } = require('langchain');
 const { z } = require('zod');
 
@@ -122,7 +122,7 @@ test('model-driven tool discovery exposes and gates canonical host capabilities'
 });
 
 test('tool discovery understands common capability aliases without duplicating tools', () => {
-  const { searchToolCatalog } = require('../dist');
+  const { searchToolCatalog } = require('../build/core');
   assert.equal(searchToolCatalog(VECTRA_TOOL_DEFINITIONS, 'generate_folder_files')[0].name, 'propose_files');
   assert.equal(searchToolCatalog(VECTRA_TOOL_DEFINITIONS, 'parse_files')[0].name, 'read_files');
   assert.equal(new Set(VECTRA_TOOL_DEFINITIONS.map((item) => item.name)).size, VECTRA_TOOL_DEFINITIONS.length);

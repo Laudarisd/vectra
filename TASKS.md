@@ -88,3 +88,9 @@ Make Vectra more capable than Deep Agents while remaining local-first, cross-pla
 - [ ] Specialized agents can work safely in parallel and return grounded results.
 - [ ] Vectra automatically chooses and optimizes the best available runtime.
 - [ ] All writes, commands, network operations, memories, and learned skills remain reviewable and controllable by the user.
+
+
+
+## Allow user to type and send queue promt in extension 
+## Add line suggestions like copilot
+

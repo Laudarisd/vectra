@@ -6,7 +6,7 @@ import { normalizeAgentPath, resolveWorkspacePath } from '../utils/path';
 import { sha256, sha256Bytes, stripEnclosingCodeFence } from '../utils/text';
 import { createDocumentBytes, documentFormatForPath, extractDocumentText, isWritableDocumentFormat } from '../documents/DocumentCodec';
 import { WorkspaceTools } from './WorkspaceTools';
-import { ApprovalState } from '../../generated/agent-core';
+import { ApprovalState } from '../core';
 
 /**
  * Owns Vectra's review-before-write boundary.

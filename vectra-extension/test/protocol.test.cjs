@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseAgentEnvelope, buildSystemPrompt } = require('../dist/agent/protocol.js');
+const { parseAgentEnvelope, buildSystemPrompt } = require('../build/agent/protocol.js');
 
 test('parses a valid action envelope', () => {
   const parsed = parseAgentEnvelope('{"message":"reading","actions":[{"type":"read_file","path":"src/a.ts"}],"done":false}');
@@ -29,7 +29,7 @@ test('parses professional create/run actions', () => {
 });
 
 test('agent prompt explicitly permits creating a new language file in workspace', () => {
-  const { buildSystemPrompt } = require('../dist/agent/protocol.js');
+  const { buildSystemPrompt } = require('../build/agent/protocol.js');
   const prompt = buildSystemPrompt('agent');
   assert.match(prompt, /may create new files/i);
   assert.match(prompt, /repository does not need to already use that language/i);

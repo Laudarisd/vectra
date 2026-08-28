@@ -9,7 +9,7 @@ import { WebTools } from '../tools/WebTools';
 import { WorkspaceTools } from '../workspace/WorkspaceTools';
 import { normalizeAgentPath } from '../utils/path';
 import { safeJson, truncateMiddle } from '../utils/text';
-import { AgentToolRouter, describeVectraTool, VECTRA_SUBAGENT_DENIED_TOOL_NAMES, VECTRA_WRITE_OR_EXECUTE_TOOL_NAMES } from '../../generated/agent-core';
+import { AgentToolRouter, describeVectraTool, VECTRA_SUBAGENT_DENIED_TOOL_NAMES, VECTRA_WRITE_OR_EXECUTE_TOOL_NAMES } from '../core';
 
 interface ToolExecutionContext {
   mode: AgentMode;

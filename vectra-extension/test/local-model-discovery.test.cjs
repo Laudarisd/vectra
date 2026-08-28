@@ -10,7 +10,7 @@ const {
   appModelDirectories,
   broadModelDirectories,
   storageModelDirectories
-} = require('../dist/models/LocalModelDiscovery.js');
+} = require('../build/models/LocalModelDiscovery.js');
 
 test('local discovery finds GGUF models while excluding projectors and later shards', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'vectra-discovery-'));

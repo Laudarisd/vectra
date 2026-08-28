@@ -1,8 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { VECTRA_TOOL_DEFINITIONS, describeVectraTool } = require('../generated/agent-core');
-const { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS } = require('../dist/agent/ExtensionToolCatalog.js');
+const { VECTRA_TOOL_DEFINITIONS, describeVectraTool } = require('../build/core');
+const { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS } = require('../build/agent/ExtensionToolCatalog.js');
 
 test('extension exposes every canonical core host tool', () => {
   assert.deepEqual(

@@ -7,6 +7,9 @@
 # macOS metadata
 .DS_Store
 
+# Crash noise written by the VS Code host, not by Vectra
+debug.log
+
 # ingnore .vscode settings folder
 .vscode/
 

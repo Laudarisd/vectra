@@ -20,13 +20,21 @@ import {
 } from '../../utils/config';
 import { HfSearchResult, resolveDownloadableFile, searchHuggingFace } from '../../models/HuggingFaceSearch';
 import {
+  appModelDirectories,
+  broadModelDirectories,
   DiscoveredLocalModel,
   discoverGgufModels,
-  discoverInstalledModels,
+  discoverOllamaModels,
+  discoverOpenAICompatibleModels,
+  FIRST_RUN_TIME_BUDGET_MS,
   formatBytes,
-  normalizeShardPath
+  FULL_SCAN_MAX_DIRECTORIES,
+  FULL_SCAN_TIME_BUDGET_MS,
+  normalizeShardPath,
+  SCOPED_TIME_BUDGET_MS,
+  storageModelDirectories
 } from '../../models/LocalModelDiscovery';
-import { findLatestAsset, installDirFor, installLatestLlamaCpp, LlamaCppAsset } from './LlamaCppInstaller';
+import { findLatestAsset, findServerExecutable, installDirFor, installLatestLlamaCpp, LlamaCppAsset } from './LlamaCppInstaller';
 import { CatalogEntry, CURATED_MODELS } from '../../models/ModelCatalog';
 import { downloadFile } from '../../models/ModelDownloader';
 import { recommendCatalogTiers } from '../../models/ModelRecommender';
@@ -36,7 +44,7 @@ const execFileAsync = promisify(execFile);
 
 interface DetectedModelItem extends vscode.QuickPickItem {
   model?: DiscoveredLocalModel;
-  action?: 'scanFolder';
+  action?: 'browseFile' | 'chooseFolder' | 'scanEverywhere';
 }
 
 type CatalogQuickPickItem = vscode.QuickPickItem & { entry?: CatalogEntry; action?: 'search' };
@@ -52,6 +60,7 @@ export class LlamaCppRuntime implements vscode.Disposable {
   private ready = false;
   private startupPromise?: Promise<void>;
   private readonly capabilityCache = new Map<string, ReadonlySet<string>>();
+  private activePick?: { pick: vscode.QuickPick<DetectedModelItem>; promise: Promise<string | undefined> };
 
   get isRunning(): boolean { return Boolean(this.process && !this.process.killed); }
   get isReady(): boolean { return this.isRunning && this.ready; }
@@ -61,27 +70,204 @@ export class LlamaCppRuntime implements vscode.Disposable {
   get visionEnabled(): boolean { return Boolean(this.mmprojPath); }
 
   /**
-   * Present the two user-facing local workflows: manually search/select a GGUF
-   * file, or detect installed GGUF and Ollama models automatically.
+   * One live picker for every local workflow. It is shown before any filesystem
+   * work starts, so it appears instantly and stays useful while models stream in
+   * underneath. `ignoreFocusOut` matters more than it looks: this is launched from
+   * a webview button, so without it the picker silently vanishes the moment the
+   * user clicks back into the sidebar and the whole flow looks dead.
    */
-  async chooseLocalModel(): Promise<string | undefined> {
-    const choice = await vscode.window.showQuickPick([
-      {
-        id: 'browse' as const,
-        label: '$(search) Search or choose a GGUF model',
-        description: 'Browse your computer for a llama.cpp-compatible model file'
-      },
-      {
-        id: 'detect' as const,
-        label: '$(sparkle) Detect installed local models',
-        description: 'Find GGUF files, Ollama manifests, and running local model servers'
-      }
-    ], {
-      title: 'Vectra: Local Model',
-      placeHolder: 'Choose how Vectra should find your local model'
+  async chooseLocalModel(options: { scanEverywhere?: boolean } = {}): Promise<string | undefined> {
+    // A second click means "I cannot see it", so re-reveal the picker that is
+    // already scanning rather than discarding its partial results.
+    if (this.activePick) {
+      this.activePick.pick.show();
+      return this.activePick.promise;
+    }
+
+    const savedFolder = getConfig().localModelDirectory;
+    const scoped = Boolean(savedFolder) && !options.scanEverywhere;
+    const pick = vscode.window.createQuickPick<DetectedModelItem>();
+    pick.title = 'Vectra: Local Model';
+    pick.placeholder = 'Searching for local models…';
+    pick.matchOnDescription = true;
+    pick.matchOnDetail = true;
+    pick.ignoreFocusOut = true;
+    pick.busy = true;
+    pick.items = actionItems(savedFolder);
+    pick.show();
+
+    const promise = new Promise<string | undefined>((resolve) => {
+      let settled = false;
+      let accepted = false;
+      const controller = new AbortController();
+      const disposables: vscode.Disposable[] = [];
+
+      // Only ever clears our own registration: a sub-flow may already have opened
+      // a replacement picker by the time this one settles.
+      const release = () => { if (this.activePick?.pick === pick) this.activePick = undefined; };
+
+      const settle = (value?: string) => {
+        if (settled) return;
+        settled = true;
+        controller.abort();
+        release();
+        disposables.forEach((item) => item.dispose());
+        pick.dispose();
+        resolve(value);
+      };
+
+      disposables.push(pick.onDidHide(() => { if (!accepted) settle(undefined); }));
+      disposables.push(pick.onDidAccept(() => {
+        const item = pick.selectedItems[0];
+        if (!item) return;
+        accepted = true;
+        controller.abort();
+        pick.hide();
+        // Ownership is released *before* the sub-flow runs, otherwise
+        // "Change model folder…" re-enters chooseLocalModel(), hits the
+        // re-entrancy guard, and deadlocks awaiting its own promise.
+        release();
+        void this.runSelection(item, savedFolder).then(settle, (error) => {
+          void vscode.window.showErrorMessage(`Vectra local model failed: ${messageOf(error)}`);
+          settle(undefined);
+        });
+      }));
+
+      void this.streamLocalModels(pick, {
+        savedFolder,
+        scoped,
+        signal: controller.signal,
+        isStale: () => settled
+      }).catch(() => undefined);
     });
-    if (!choice) return undefined;
-    return choice.id === 'browse' ? this.selectAndStartModel() : this.detectAndSelectModel();
+
+    this.activePick = { pick, promise };
+    return promise;
+  }
+
+  /**
+   * Feed the picker as results arrive. Detected models are appended below the
+   * actions so no already-rendered row ever shifts under the user's cursor, and
+   * the network probes are not gated behind the filesystem walk.
+   */
+  private async streamLocalModels(
+    pick: vscode.QuickPick<DetectedModelItem>,
+    context: { savedFolder: string; scoped: boolean; signal: AbortSignal; isStale: () => boolean }
+  ): Promise<void> {
+    const config = getConfig();
+    const found = new Map<string, DiscoveredLocalModel>();
+    const visited = new Set<string>();
+    let pending = 2;
+
+    const publish = () => {
+      if (context.isStale()) return;
+      const models = [...found.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
+      const next = [...actionItems(context.savedFolder), ...detectedItems(models)];
+      // Assigning items resets activeItems to the first row; restore the highlight
+      // so streaming never yanks the cursor back to the top.
+      const keep = pick.activeItems[0];
+      const index = keep ? next.findIndex((item) => sameRow(item, keep)) : -1;
+      pick.items = next;
+      if (index >= 0) pick.activeItems = [next[index]];
+      pick.title = models.length
+        ? `Vectra: Local Model — ${models.length} found${pick.busy ? '…' : ''}`
+        : 'Vectra: Local Model';
+    };
+
+    const add = (models: DiscoveredLocalModel[]) => {
+      for (const model of models) found.set(`${model.kind}:${model.id}`, model);
+      publish();
+    };
+
+    const finish = () => {
+      if (--pending > 0 || context.isStale()) return;
+      pick.busy = false;
+      pick.placeholder = found.size
+        ? 'Select a local model, or choose a folder to scan'
+        : 'No local models found — choose a folder or a GGUF file';
+      publish();
+    };
+
+    // Network probes run alongside the disk walk instead of behind it.
+    void Promise.all([
+      discoverOllamaModels(config.ollamaBaseUrl).catch(() => []),
+      discoverOpenAICompatibleModels().catch(() => [])
+    ]).then(([ollama, runtimes]) => add([...ollama, ...runtimes])).finally(finish);
+
+    void (async () => {
+      const roots = [config.localModelDirectory, config.localModelPath ? path.dirname(config.localModelPath) : '']
+        .filter(Boolean);
+      if (context.scoped) {
+        add(await discoverGgufModels({
+          roots,
+          includeDefaults: false,
+          visited,
+          timeBudgetMs: SCOPED_TIME_BUDGET_MS,
+          signal: context.signal
+        }));
+        return;
+      }
+      // Walk the tiers separately so each one's results appear as it completes.
+      const everywhere = !context.savedFolder ? FIRST_RUN_TIME_BUDGET_MS : FULL_SCAN_TIME_BUDGET_MS;
+      const budget = Math.floor(everywhere / 4);
+      const tiers: Array<{ roots: string[]; depth: number }> = [
+        { roots, depth: 8 },
+        { roots: appModelDirectories(), depth: 6 },
+        { roots: broadModelDirectories(), depth: 4 },
+        { roots: storageModelDirectories(), depth: 4 }
+      ];
+      for (const entry of tiers) {
+        if (context.signal.aborted || context.isStale() || !entry.roots.length) continue;
+        add(await discoverGgufModels({
+          roots: entry.roots,
+          includeDefaults: false,
+          maxDepth: entry.depth,
+          maxDirectories: FULL_SCAN_MAX_DIRECTORIES,
+          visited,
+          timeBudgetMs: budget,
+          signal: context.signal
+        }));
+      }
+    })().finally(finish);
+  }
+
+  /** Shared activation path for every row the picker can offer. */
+  private async runSelection(item: DetectedModelItem, savedFolder: string): Promise<string | undefined> {
+    if (item.action === 'browseFile') return this.selectAndStartModel();
+    if (item.action === 'scanEverywhere') return this.chooseLocalModel({ scanEverywhere: true });
+    if (item.action === 'chooseFolder') {
+      const directory = await this.pickModelFolder(savedFolder);
+      if (!directory) return undefined;
+      await updateLocalModelDirectory(directory);
+      return this.chooseLocalModel();
+    }
+    if (!item.model) return undefined;
+    if (item.model.kind === 'ollama') {
+      await this.stop();
+      await updateProvider('ollama');
+      await updateModel(item.model.id);
+      return item.model.id;
+    }
+    if (item.model.kind === 'runtime') {
+      await this.stop();
+      await updateOpenAICompatibleBaseUrl(item.model.baseUrl);
+      await updateProvider('openaiCompatible');
+      await updateModel(item.model.id);
+      return item.model.id;
+    }
+    return this.loadModelWithProgress(item.model.id);
+  }
+
+  private async pickModelFolder(savedFolder: string): Promise<string | undefined> {
+    const picked = await vscode.window.showOpenDialog({
+      title: 'Vectra: Choose the folder that holds your local models',
+      defaultUri: vscode.Uri.file(savedFolder || os.homedir()),
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: 'Scan this folder'
+    });
+    return picked?.[0]?.fsPath;
   }
 
   /** Use VS Code's native searchable file dialog to select a GGUF model. */
@@ -109,120 +295,6 @@ export class LlamaCppRuntime implements vscode.Disposable {
     });
     if (!picked?.[0]) return undefined;
     return this.loadModelWithProgress(picked[0].fsPath);
-  }
-
-  /** Scan bounded common folders and query a local Ollama server. */
-  private async detectAndSelectModel(): Promise<string | undefined> {
-    const config = getConfig();
-    const extraRoots = [
-      config.localModelDirectory,
-      config.localModelPath ? path.dirname(config.localModelPath) : ''
-    ].filter(Boolean);
-
-    const installed = await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: 'Vectra: detecting installed local models…'
-      },
-      () => discoverInstalledModels({ extraRoots, ollamaBaseUrl: config.ollamaBaseUrl })
-    );
-    const { gguf: ggufModels, ollama: ollamaModels, runtimeModels } = installed;
-
-    const detected: DetectedModelItem[] = [
-      ...ggufModels.map((model) => ({
-        label: `$(file-binary) ${model.label}`,
-        description: 'GGUF · llama.cpp',
-        detail: model.detail,
-        model
-      })),
-      ...ollamaModels.map((model) => ({
-        label: `$(server-process) ${model.label}`,
-        description: 'Ollama',
-        detail: model.detail,
-        model
-      })),
-      ...runtimeModels.map((model) => ({
-        label: `$(server-process) ${model.label}`,
-        description: model.detail.split(' · ')[0],
-        detail: model.detail,
-        model
-      }))
-    ];
-
-    if (!detected.length) {
-      const fallback = await vscode.window.showWarningMessage(
-        'Vectra did not find a GGUF file, installed Ollama model, or supported running local model server.',
-        'Choose folder to scan',
-        'Choose GGUF file'
-      );
-      if (fallback === 'Choose folder to scan') return this.scanSelectedFolder();
-      return fallback === 'Choose GGUF file' ? this.selectAndStartModel() : undefined;
-    }
-
-    detected.push({
-      label: '$(folder-opened) Add another model folder…',
-      description: 'Scan any folder on this computer recursively',
-      action: 'scanFolder'
-    });
-
-    const picked = await vscode.window.showQuickPick(detected, {
-      title: `Vectra: ${detected.length} local model${detected.length === 1 ? '' : 's'} detected`,
-      placeHolder: 'Type to search detected local models',
-      matchOnDescription: true,
-      matchOnDetail: true
-    });
-    if (!picked) return undefined;
-    if (picked.action === 'scanFolder') return this.scanSelectedFolder();
-    if (!picked.model) return undefined;
-
-    if (picked.model.kind === 'ollama') {
-      await this.stop();
-      await updateProvider('ollama');
-      await updateModel(picked.model.id);
-      return picked.model.id;
-    }
-    if (picked.model.kind === 'runtime') {
-      await this.stop();
-      await updateOpenAICompatibleBaseUrl(picked.model.baseUrl);
-      await updateProvider('openaiCompatible');
-      await updateModel(picked.model.id);
-      return picked.model.id;
-    }
-    return this.loadModelWithProgress(picked.model.id);
-  }
-
-  private async scanSelectedFolder(): Promise<string | undefined> {
-    const preferred = getConfig().localModelDirectory || os.homedir();
-    const pickedFolder = await vscode.window.showOpenDialog({
-      title: 'Vectra: Choose a folder containing local models',
-      defaultUri: vscode.Uri.file(preferred),
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: 'Scan this folder'
-    });
-    if (!pickedFolder?.[0]) return undefined;
-    const directory = pickedFolder[0].fsPath;
-    await updateLocalModelDirectory(directory);
-    const models = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Vectra: scanning ${directory}…` },
-      () => discoverGgufModels([directory], 20_000, 500, false)
-    );
-    if (!models.length) {
-      void vscode.window.showInformationMessage('No selectable GGUF models were found in that folder.');
-      return undefined;
-    }
-    const picked = await vscode.window.showQuickPick(models.map((model) => ({
-      label: `$(file-binary) ${model.label}`,
-      description: 'GGUF · llama.cpp',
-      detail: model.detail,
-      model
-    })), {
-      title: `Vectra: ${models.length} model${models.length === 1 ? '' : 's'} found`,
-      placeHolder: 'Select a local model',
-      matchOnDetail: true
-    });
-    return picked ? this.loadModelWithProgress(picked.model.id) : undefined;
   }
 
   private async loadModelWithProgress(modelPath: string): Promise<string> {
@@ -482,7 +554,7 @@ export class LlamaCppRuntime implements vscode.Disposable {
   }
 
   async start(modelPath: string): Promise<void> {
-    const executable = await this.resolveServerExecutable();
+    const executable = await this.resolveServerExecutable(modelPath);
     const config = getConfig();
     const normalized = normalizeShardPath(modelPath);
     const mmproj = await this.resolveMmproj(normalized);
@@ -643,7 +715,7 @@ export class LlamaCppRuntime implements vscode.Disposable {
     }
   }
 
-  private async resolveServerExecutable(): Promise<string> {
+  private async resolveServerExecutable(modelPath: string): Promise<string> {
     const configured = getConfig().llamaCppServerPath;
     if (configured) {
       if (path.isAbsolute(configured)) {
@@ -661,14 +733,18 @@ export class LlamaCppRuntime implements vscode.Disposable {
     const command = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
     if (await commandExists(command)) return command;
 
+    const modelDirectory = path.dirname(modelPath);
     const common = process.platform === 'darwin'
-      ? ['/opt/homebrew/bin/llama-server', '/usr/local/bin/llama-server']
+      ? [path.join(modelDirectory, command), '/opt/homebrew/bin/llama-server', '/usr/local/bin/llama-server']
       : process.platform === 'win32'
         ? [
+            path.join(modelDirectory, command),
+            path.join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'WinGet', 'Links', command),
             path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'llama.cpp', 'llama-server.exe'),
             path.join(os.homedir(), 'llama.cpp', 'build', 'bin', 'Release', 'llama-server.exe')
           ]
         : [
+            path.join(modelDirectory, command),
             '/usr/local/bin/llama-server',
             '/usr/bin/llama-server',
             path.join(os.homedir(), '.local', 'bin', 'llama-server')
@@ -682,6 +758,19 @@ export class LlamaCppRuntime implements vscode.Disposable {
       } catch {
         // Try the next platform-specific location.
       }
+    }
+
+    const installRoots = [
+      path.join(os.homedir(), '.vectra', 'llama.cpp'),
+      ...(process.platform === 'win32' && process.env.LOCALAPPDATA
+        ? [path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages')]
+        : [])
+    ];
+    for (const root of installRoots) {
+      const candidate = await findServerExecutable(root, 5);
+      if (!candidate) continue;
+      await updateLlamaServerPath(candidate);
+      return candidate;
     }
 
     const choice = await vscode.window.showWarningMessage(
@@ -820,8 +909,8 @@ function scoreMmproj(name: string): number {
 
 async function commandExists(command: string): Promise<boolean> {
   try {
-    if (process.platform === 'win32') await execFileAsync('where', [command]);
-    else await execFileAsync('which', [command]);
+    if (process.platform === 'win32') await execFileAsync('where', [command], { timeout: 3_000, windowsHide: true });
+    else await execFileAsync('which', [command], { timeout: 3_000 });
     return true;
   } catch {
     return false;
@@ -834,6 +923,45 @@ function delay(milliseconds: number): Promise<void> {
 
 function shellQuote(value: string): string {
   return /\s/.test(value) ? JSON.stringify(value) : value;
+}
+
+/** Actions sit above the results so appended models never shift a rendered row. */
+function actionItems(savedFolder: string): DetectedModelItem[] {
+  return [
+    {
+      label: '$(search) Choose a GGUF file…',
+      description: 'Browse this computer for a .gguf model',
+      action: 'browseFile'
+    },
+    {
+      label: '$(folder-opened) Change model folder…',
+      description: savedFolder || 'No folder saved yet',
+      detail: savedFolder ? `Vectra scans ${savedFolder}` : 'Pick a folder and Vectra will scan only that from now on',
+      action: 'chooseFolder'
+    },
+    {
+      label: '$(globe) Scan whole computer…',
+      description: 'Slower — ignores the saved folder',
+      action: 'scanEverywhere'
+    }
+  ];
+}
+
+function detectedItems(models: DiscoveredLocalModel[]): DetectedModelItem[] {
+  if (!models.length) return [];
+  return [
+    { label: 'Detected models', kind: vscode.QuickPickItemKind.Separator },
+    ...models.map((model) => ({
+      label: `${model.kind === 'gguf' ? '$(file-binary)' : '$(server-process)'} ${model.label}`,
+      description: model.kind === 'gguf' ? 'GGUF · llama.cpp' : model.kind === 'ollama' ? 'Ollama' : model.detail.split(' · ')[0],
+      detail: model.detail,
+      model
+    }))
+  ];
+}
+
+function sameRow(a: DetectedModelItem, b: DetectedModelItem): boolean {
+  return a.model && b.model ? a.model.kind === b.model.kind && a.model.id === b.model.id : a.action === b.action && a.label === b.label;
 }
 
 function toCatalogPickItem(entry: CatalogEntry): CatalogQuickPickItem {

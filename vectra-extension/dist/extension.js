@@ -6348,7 +6348,7 @@ async function onAttemptFailure({ error: error51, attemptNumber, retriesConsumed
   const delayTime = calculateDelay(retriesConsumed, options);
   const finalDelay = Math.min(delayTime, remainingTime);
   if (finalDelay > 0) {
-    await new Promise((resolve2, reject) => {
+    await new Promise((resolve3, reject) => {
       const onAbort = () => {
         clearTimeout(timeoutToken);
         options.signal?.removeEventListener("abort", onAbort);
@@ -6356,7 +6356,7 @@ async function onAttemptFailure({ error: error51, attemptNumber, retriesConsumed
       };
       const timeoutToken = setTimeout(() => {
         options.signal?.removeEventListener("abort", onAbort);
-        resolve2();
+        resolve3();
       }, finalDelay);
       if (options.unref) {
         timeoutToken.unref?.();
@@ -6618,11 +6618,11 @@ var require_p_finally = __commonJS({
       onFinally = onFinally || (() => {
       });
       return promise2.then(
-        (val) => new Promise((resolve2) => {
-          resolve2(onFinally());
+        (val) => new Promise((resolve3) => {
+          resolve3(onFinally());
         }).then(() => val),
-        (err) => new Promise((resolve2) => {
-          resolve2(onFinally());
+        (err) => new Promise((resolve3) => {
+          resolve3(onFinally());
         }).then(() => {
           throw err;
         })
@@ -6642,18 +6642,18 @@ var require_p_timeout = __commonJS({
         this.name = "TimeoutError";
       }
     };
-    var pTimeout2 = (promise2, milliseconds, fallback) => new Promise((resolve2, reject) => {
+    var pTimeout2 = (promise2, milliseconds, fallback) => new Promise((resolve3, reject) => {
       if (typeof milliseconds !== "number" || milliseconds < 0) {
         throw new TypeError("Expected `milliseconds` to be a positive number");
       }
       if (milliseconds === Infinity) {
-        resolve2(promise2);
+        resolve3(promise2);
         return;
       }
       const timer = setTimeout(() => {
         if (typeof fallback === "function") {
           try {
-            resolve2(fallback());
+            resolve3(fallback());
           } catch (error51) {
             reject(error51);
           }
@@ -6668,7 +6668,7 @@ var require_p_timeout = __commonJS({
       }, milliseconds);
       pFinally(
         // eslint-disable-next-line promise/prefer-await-to-then
-        promise2.then(resolve2, reject),
+        promise2.then(resolve3, reject),
         () => {
           clearTimeout(timer);
         }
@@ -6886,7 +6886,7 @@ var require_dist = __commonJS({
       Adds a sync or async task to the queue. Always returns a promise.
       */
       async add(fn, options = {}) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           const run = async () => {
             this._pendingCount++;
             this._intervalCount++;
@@ -6897,7 +6897,7 @@ var require_dist = __commonJS({
                 }
                 return void 0;
               });
-              resolve2(await operation);
+              resolve3(await operation);
             } catch (error51) {
               reject(error51);
             }
@@ -6948,11 +6948,11 @@ var require_dist = __commonJS({
         if (this._queue.size === 0) {
           return;
         }
-        return new Promise((resolve2) => {
+        return new Promise((resolve3) => {
           const existingResolve = this._resolveEmpty;
           this._resolveEmpty = () => {
             existingResolve();
-            resolve2();
+            resolve3();
           };
         });
       }
@@ -6965,11 +6965,11 @@ var require_dist = __commonJS({
         if (this._pendingCount === 0 && this._queue.size === 0) {
           return;
         }
-        return new Promise((resolve2) => {
+        return new Promise((resolve3) => {
           const existingResolve = this._resolveIdle;
           this._resolveIdle = () => {
             existingResolve();
-            resolve2();
+            resolve3();
           };
         });
       }
@@ -7243,7 +7243,7 @@ var init_values = __esm({
 var sleep;
 var init_sleep = __esm({
   "node_modules/langsmith/dist/_openapi_client/internal/utils/sleep.js"() {
-    sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
+    sleep = (ms) => new Promise((resolve3) => setTimeout(resolve3, ms));
   }
 });
 
@@ -7981,8 +7981,8 @@ var init_api_promise = __esm({
     };
     APIPromise = class _APIPromise extends Promise {
       constructor(client2, responsePromise, parseResponse = defaultParseResponse) {
-        super((resolve2) => {
-          resolve2(null);
+        super((resolve3) => {
+          resolve3(null);
         });
         Object.defineProperty(this, "responsePromise", {
           enumerable: true,
@@ -10469,7 +10469,7 @@ var init_prompts = __esm({
 
 // node_modules/langsmith/dist/utils/profile-lock.js
 function sleep2(ms) {
-  return new Promise((resolve2) => setTimeout(resolve2, ms));
+  return new Promise((resolve3) => setTimeout(resolve3, ms));
 }
 function isEEXIST(err) {
   return typeof err === "object" && err !== null && err.code === "EEXIST";
@@ -11490,8 +11490,8 @@ parentPort.on("message", (msg) => {
         if (!ok)
           return null;
         const id = this.nextId++;
-        return new Promise((resolve2, reject) => {
-          this.pending.set(id, { resolve: resolve2, reject });
+        return new Promise((resolve3, reject) => {
+          this.pending.set(id, { resolve: resolve3, reject });
           try {
             this.worker.postMessage({ id, op: "serialize", payload });
           } catch (e) {
@@ -11681,7 +11681,7 @@ var init_client2 = __esm({
       if (response?.status === 429) {
         const retryAfter = parseInt(response.headers.get("retry-after") ?? "10", 10) * 1e3;
         if (retryAfter > 0) {
-          await new Promise((resolve2) => setTimeout(resolve2, retryAfter));
+          await new Promise((resolve3) => setTimeout(resolve3, retryAfter));
           return true;
         }
       }
@@ -11718,8 +11718,8 @@ var init_client2 = __esm({
       }
       push(item) {
         let itemPromiseResolve;
-        const itemPromise = new Promise((resolve2) => {
-          itemPromiseResolve = resolve2;
+        const itemPromise = new Promise((resolve3) => {
+          itemPromiseResolve = resolve3;
         });
         const size = estimateSerializedSize(item.item).size;
         if (this.sizeBytes + size > this.maxSizeBytes && this.items.length > 0) {
@@ -16745,7 +16745,7 @@ Message: ${Array.isArray(result.detail) ? result.detail.join("\n") : "Unspecifie
           console.warn("[WARNING]: When tracing in manual flush mode, you must call `await client.flush()` manually to submit trace batches.");
           return Promise.resolve();
         }
-        await new Promise((resolve2) => setTimeout(resolve2, 1));
+        await new Promise((resolve3) => setTimeout(resolve3, 1));
         while (this._pendingDrains.size > 0) {
           await Promise.all([...this._pendingDrains]);
         }
@@ -19704,11 +19704,11 @@ var init_stream = __esm({
         this.generator = params.generator;
         this.config = params.config;
         this.signal = params.signal ?? this.config?.signal;
-        this.setup = new Promise((resolve2, reject) => {
+        this.setup = new Promise((resolve3, reject) => {
           AsyncLocalStorageProviderSingleton2.runWithConfig(pickRunnableConfigKeys(params.config), async () => {
             this.firstResult = this.signal ? raceWithSignal(params.generator.next(), this.signal) : params.generator.next();
-            if (params.startSetup) this.firstResult.then(params.startSetup).then(resolve2, reject);
-            else this.firstResult.then((_result) => resolve2(void 0), reject);
+            if (params.startSetup) this.firstResult.then(params.startSetup).then(resolve3, reject);
+            else this.firstResult.then((_result) => resolve3(void 0), reject);
           }, true);
         });
       }
@@ -20562,8 +20562,8 @@ var init_event_stream = __esm({
         let tappedPromise = this.tappedPromises.get(runId);
         if (tappedPromise === void 0) {
           let tappedPromiseResolver;
-          tappedPromise = new Promise((resolve2) => {
-            tappedPromiseResolver = resolve2;
+          tappedPromise = new Promise((resolve3) => {
+            tappedPromiseResolver = resolve3;
           });
           this.tappedPromises.set(runId, tappedPromise);
           try {
@@ -20938,7 +20938,7 @@ async function onAttemptFailure2({ error: error51, attemptNumber, retriesConsume
   const retryAfterMs = typeof normalizedError.retryAfterMs === "number" && normalizedError.retryAfterMs >= 0 ? normalizedError.retryAfterMs : void 0;
   if (retryAfterMs !== void 0) delayTime = Math.max(delayTime, retryAfterMs);
   const finalDelay = Math.min(delayTime, remainingTime);
-  if (finalDelay > 0) await new Promise((resolve2, reject) => {
+  if (finalDelay > 0) await new Promise((resolve3, reject) => {
     const onAbort = () => {
       clearTimeout(timeoutToken);
       options.signal?.removeEventListener("abort", onAbort);
@@ -20946,7 +20946,7 @@ async function onAttemptFailure2({ error: error51, attemptNumber, retriesConsume
     };
     const timeoutToken = setTimeout(() => {
       options.signal?.removeEventListener("abort", onAbort);
-      resolve2();
+      resolve3();
     }, finalDelay);
     if (options.unref) timeoutToken.unref?.();
     options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -42461,7 +42461,7 @@ var init_base4 = __esm({
         return new RunnableLambda2({ func });
       }
       async _invoke(input, config2, runManager) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           const childConfig = patchConfig(config2, {
             callbacks: runManager?.getChild(),
             recursionLimit: (config2?.recursionLimit ?? 25) - 1
@@ -42500,7 +42500,7 @@ var init_base4 = __esm({
                 }
                 output = finalOutput;
               }
-              resolve2(output);
+              resolve3(output);
             } catch (e) {
               reject(e);
             }
@@ -42522,10 +42522,10 @@ var init_base4 = __esm({
           callbacks: runManager?.getChild(),
           recursionLimit: (config2?.recursionLimit ?? 25) - 1
         });
-        const output = await new Promise((resolve2, reject) => {
+        const output = await new Promise((resolve3, reject) => {
           AsyncLocalStorageProviderSingleton2.runWithConfig(pickRunnableConfigKeys(childConfig), async () => {
             try {
-              resolve2(await this.func(finalChunk, {
+              resolve3(await this.func(finalChunk, {
                 ...childConfig,
                 config: childConfig
               }));
@@ -47290,12 +47290,12 @@ var init_stream2 = __esm({
             if (this.error) throw this.error;
             return;
           }
-          await new Promise((resolve2) => {
+          await new Promise((resolve3) => {
             if (cursor < this.events.length || this.finished) {
-              resolve2();
+              resolve3();
               return;
             }
-            this.waiters.push(resolve2);
+            this.waiters.push(resolve3);
           });
         }
       }
@@ -51000,11 +51000,11 @@ function tool(func, fields) {
     ...fields,
     description: fields.description ?? fields.schema?.description ?? `${fields.name} tool`,
     func: async (input, runManager, config2) => {
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         const childConfig = patchConfig(config2, { callbacks: runManager?.getChild() });
         AsyncLocalStorageProviderSingleton2.runWithConfig(pickRunnableConfigKeys(childConfig), async () => {
           try {
-            resolve2(func(input, childConfig));
+            resolve3(func(input, childConfig));
           } catch (e) {
             reject(e);
           }
@@ -51019,7 +51019,7 @@ function tool(func, fields) {
     description,
     schema,
     func: async (input, runManager, config2) => {
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         let listener;
         const cleanup = () => {
           if (config2?.signal && listener) config2.signal.removeEventListener("abort", listener);
@@ -51036,7 +51036,7 @@ function tool(func, fields) {
           try {
             const result = await func(input, childConfig);
             if (isAsyncGenerator(result)) {
-              resolve2(result);
+              resolve3(result);
               return;
             }
             if (config2?.signal?.aborted) {
@@ -51044,7 +51044,7 @@ function tool(func, fields) {
               return;
             }
             cleanup();
-            resolve2(result);
+            resolve3(result);
           } catch (e) {
             cleanup();
             reject(e);
@@ -57891,8 +57891,8 @@ var init_chat_models2 = __esm({
         if (this.sleep !== void 0) await this._sleep();
       }
       async _sleep() {
-        return new Promise((resolve2) => {
-          setTimeout(() => resolve2(), this.sleep);
+        return new Promise((resolve3) => {
+          setTimeout(() => resolve3(), this.sleep);
         });
       }
       _createResponseChunk(text, generationInfo) {
@@ -58092,7 +58092,7 @@ var init_llms2 = __esm({
         const response = this.responses?.[0];
         this.responses = this.responses?.slice(1);
         for (const c of response ?? input) {
-          await new Promise((resolve2) => setTimeout(resolve2, this.sleep));
+          await new Promise((resolve3) => setTimeout(resolve3, this.sleep));
           yield {
             text: c,
             generationInfo: {}
@@ -59520,20 +59520,20 @@ var init_batch = __esm({
         if (this.processingTask) await this.processingTask;
       }
       enqueueOperation(operation) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           const key = this.nextKey;
           this.nextKey += 1;
           this.queue.set(key, {
             operation,
-            resolve: resolve2,
+            resolve: resolve3,
             reject
           });
         });
       }
       async processBatchQueue() {
         while (this.running) {
-          await new Promise((resolve2) => {
-            setTimeout(resolve2, 0);
+          await new Promise((resolve3) => {
+            setTimeout(resolve3, 0);
           });
           if (this.queue.size === 0) continue;
           const batch = new Map(this.queue);
@@ -59541,8 +59541,8 @@ var init_batch = __esm({
           try {
             const operations = Array.from(batch.values()).map(({ operation }) => operation);
             const results = await this.store.batch(operations);
-            batch.forEach(({ resolve: resolve2 }, key) => {
-              resolve2(results[Array.from(batch.keys()).indexOf(key)]);
+            batch.forEach(({ resolve: resolve3 }, key) => {
+              resolve3(results[Array.from(batch.keys()).indexOf(key)]);
             });
           } catch (e) {
             batch.forEach(({ reject }) => {
@@ -60785,7 +60785,7 @@ var init_stream_channel = __esm({
                 done: true
               };
             }
-            await new Promise((resolve2) => this.#waiters.push(resolve2));
+            await new Promise((resolve3) => this.#waiters.push(resolve3));
           }
         } };
       }
@@ -61817,8 +61817,8 @@ var init_run_stream = __esm({
         this.#eventStart = eventStart;
         this.extensions = extensions ?? {};
         this.#abortController = abortController ?? new AbortController();
-        this.#valuesDone = new Promise((resolve2, reject) => {
-          this.#resolveValuesFn = resolve2;
+        this.#valuesDone = new Promise((resolve3, reject) => {
+          this.#resolveValuesFn = resolve3;
           this.#rejectValuesFn = reject;
         });
         this.#valuesDone.catch(() => {
@@ -62462,11 +62462,11 @@ var init_utils9 = __esm({
         this.recurse = fields.recurse ?? this.recurse;
       }
       async _tracedInvoke(input, config2, runManager) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           const childConfig = patchConfig(config2, { callbacks: runManager?.getChild() });
           AsyncLocalStorageProviderSingleton2.runWithConfig(childConfig, async () => {
             try {
-              resolve2(await this.func(input, childConfig));
+              resolve3(await this.func(input, childConfig));
             } catch (e) {
               reject(e);
             }
@@ -64137,8 +64137,8 @@ var init_stream6 = __esm({
       }
       constructor(params) {
         let streamControllerPromiseResolver;
-        const streamControllerPromise = new Promise((resolve2) => {
-          streamControllerPromiseResolver = resolve2;
+        const streamControllerPromise = new Promise((resolve3) => {
+          streamControllerPromiseResolver = resolve3;
         });
         super({ start: (controller) => {
           streamControllerPromiseResolver(controller);
@@ -65631,8 +65631,8 @@ async function runAttemptWithTimeout(task2, config2, policy, invoke) {
     if (runTimer !== void 0) clearTimeout(runTimer);
     if (idleTimer !== void 0) clearTimeout(idleTimer);
   };
-  const watchdog = new Promise((resolve2) => {
-    if (policy.runTimeout !== void 0) runTimer = setTimeout(() => resolve2({
+  const watchdog = new Promise((resolve3) => {
+    if (policy.runTimeout !== void 0) runTimer = setTimeout(() => resolve3({
       type: "timeout",
       kind: "run"
     }), policy.runTimeout);
@@ -65640,7 +65640,7 @@ async function runAttemptWithTimeout(task2, config2, policy, invoke) {
       const idleMs = policy.idleTimeout;
       const checkIdle = () => {
         const remaining = scope.lastProgress + idleMs - Date.now();
-        if (remaining <= 0) resolve2({
+        if (remaining <= 0) resolve3({
           type: "timeout",
           kind: "idle"
         });
@@ -65799,7 +65799,7 @@ async function _runWithRetry(pregelTask, retryPolicy, configurable, signal) {
       const initialInterval = resolvedRetryPolicy.initialInterval ?? 500;
       const interval = Math.min(resolvedRetryPolicy.maxInterval ?? 128e3, initialInterval * (resolvedRetryPolicy.backoffFactor ?? 2) ** (attempts - 1));
       const sleepMs = resolvedRetryPolicy.jitter ?? true ? interval + Math.random() * 1e3 : interval;
-      await new Promise((resolve2) => setTimeout(resolve2, sleepMs));
+      await new Promise((resolve3) => setTimeout(resolve3, sleepMs));
       const errorName = error51.name ?? error51.constructor.unminifiable_name ?? error51.constructor.name;
       if (resolvedRetryPolicy?.logWarning ?? true) console.log(`Retrying task "${String(pregelTask.name)}" after ${sleepMs.toFixed(2)}ms (attempt ${attempts}) after ${errorName}: ${error51}`);
       config2 = patchConfigurable2(config2, { [CONFIG_KEY_RESUMING]: true });
@@ -65854,10 +65854,10 @@ function createPromiseBarrier() {
     next: () => void 0,
     wait: Promise.resolve(PROMISE_ADDED_SYMBOL)
   };
-  function waitHandler(resolve2) {
+  function waitHandler(resolve3) {
     barrier.next = () => {
       barrier.wait = new Promise(waitHandler);
-      resolve2(PROMISE_ADDED_SYMBOL);
+      resolve3(PROMISE_ADDED_SYMBOL);
     };
   }
   barrier.wait = new Promise(waitHandler);
@@ -67336,8 +67336,8 @@ var init_pregel = __esm({
               loopError = loopError ?? e;
             }
             if (loopError) {
-              await new Promise((resolve2) => {
-                queueMicrotask(resolve2);
+              await new Promise((resolve3) => {
+                queueMicrotask(resolve3);
               });
               stream.error(loopError);
             } else stream.close();
@@ -80286,8 +80286,8 @@ var init_multi_cursor_buffer = __esm({
                 done: true,
                 value: void 0
               };
-              await new Promise((resolve2) => {
-                this.#wakeups.add(resolve2);
+              await new Promise((resolve3) => {
+                this.#wakeups.add(resolve3);
               });
             }
           },
@@ -80528,8 +80528,8 @@ var init_messages6 = __esm({
                   done: true,
                   value: void 0
                 };
-                await new Promise((resolve2) => {
-                  waiters.push(resolve2);
+                await new Promise((resolve3) => {
+                  waiters.push(resolve3);
                 });
               }
             } };
@@ -80547,8 +80547,8 @@ var init_messages6 = __esm({
                   done: true,
                   value: void 0
                 };
-                await new Promise((resolve2) => {
-                  waiters.push(resolve2);
+                await new Promise((resolve3) => {
+                  waiters.push(resolve3);
                 });
               }
             } }) }) {
@@ -80575,8 +80575,8 @@ var init_messages6 = __esm({
                   done: true,
                   value: void 0
                 };
-                await new Promise((resolve2) => {
-                  waiters.push(resolve2);
+                await new Promise((resolve3) => {
+                  waiters.push(resolve3);
                 });
               }
             } };
@@ -80594,8 +80594,8 @@ var init_messages6 = __esm({
                   done: true,
                   value: void 0
                 };
-                await new Promise((resolve2) => {
-                  waiters.push(resolve2);
+                await new Promise((resolve3) => {
+                  waiters.push(resolve3);
                 });
               }
             } }) }) {
@@ -81040,13 +81040,13 @@ var init_media = __esm({
         this.mimeType = options.mimeType;
         this.url = options.url;
         this.#fetchImpl = options.fetch;
-        this.#blobPromise = new Promise((resolve2, reject) => {
-          this.#blobResolve = resolve2;
+        this.#blobPromise = new Promise((resolve3, reject) => {
+          this.#blobResolve = resolve3;
           this.#blobReject = reject;
         });
         this.#blobPromise.catch(() => void 0);
-        this.#transcriptPromise = new Promise((resolve2, reject) => {
-          this.#transcriptResolve = resolve2;
+        this.#transcriptPromise = new Promise((resolve3, reject) => {
+          this.#transcriptResolve = resolve3;
           this.#transcriptReject = reject;
         });
         this.#transcriptPromise.catch(() => void 0);
@@ -81596,8 +81596,8 @@ var init_tools4 = __esm({
       handleStarted(event, data) {
         let resolveOutput;
         let rejectOutput;
-        const outputPromise = new Promise((resolve2, reject) => {
-          resolveOutput = resolve2;
+        const outputPromise = new Promise((resolve3, reject) => {
+          resolveOutput = resolve3;
           rejectOutput = reject;
         });
         outputPromise.catch(() => void 0);
@@ -81882,8 +81882,8 @@ var init_subagents = __esm({
               done: true,
               value: void 0
             };
-            return await new Promise((resolve2) => {
-              this.#waiters.push(resolve2);
+            return await new Promise((resolve3) => {
+              this.#waiters.push(resolve3);
             });
           },
           return: async () => {
@@ -81967,8 +81967,8 @@ var init_subgraphs2 = __esm({
         const buffer = new MultiCursorBuffer();
         let lastValue;
         let resolveOutput;
-        const outputPromise = new Promise((resolve2) => {
-          resolveOutput = resolve2;
+        const outputPromise = new Promise((resolve3) => {
+          resolveOutput = resolve3;
         });
         this.#outputPromise = outputPromise;
         const projection = Object.assign(buffer, { then: (onfulfilled, onrejected) => outputPromise.then(onfulfilled, onrejected) });
@@ -82213,8 +82213,8 @@ var init_subgraphs2 = __esm({
               done: true,
               value: void 0
             };
-            return await new Promise((resolve2) => {
-              this.#waiters.push(resolve2);
+            return await new Promise((resolve3) => {
+              this.#waiters.push(resolve3);
             });
           },
           return: async () => {
@@ -82672,21 +82672,21 @@ var require_pattern = __commonJS({
     exports2.removeDuplicateSlashes = removeDuplicateSlashes;
     function partitionAbsoluteAndRelative(patterns) {
       const absolute = [];
-      const relative3 = [];
+      const relative4 = [];
       for (const pattern of patterns) {
-        if (isAbsolute2(pattern)) {
+        if (isAbsolute3(pattern)) {
           absolute.push(pattern);
         } else {
-          relative3.push(pattern);
+          relative4.push(pattern);
         }
       }
-      return [absolute, relative3];
+      return [absolute, relative4];
     }
     exports2.partitionAbsoluteAndRelative = partitionAbsoluteAndRelative;
-    function isAbsolute2(pattern) {
+    function isAbsolute3(pattern) {
       return path18.isAbsolute(pattern);
     }
-    exports2.isAbsolute = isAbsolute2;
+    exports2.isAbsolute = isAbsolute3;
   }
 });
 
@@ -83770,41 +83770,41 @@ var require_queue = __commonJS({
       queue2.drained = drained;
       return queue2;
       function push2(value) {
-        var p = new Promise(function(resolve2, reject) {
+        var p = new Promise(function(resolve3, reject) {
           pushCb(value, function(err, result) {
             if (err) {
               reject(err);
               return;
             }
-            resolve2(result);
+            resolve3(result);
           });
         });
         p.catch(noop2);
         return p;
       }
       function unshift(value) {
-        var p = new Promise(function(resolve2, reject) {
+        var p = new Promise(function(resolve3, reject) {
           unshiftCb(value, function(err, result) {
             if (err) {
               reject(err);
               return;
             }
-            resolve2(result);
+            resolve3(result);
           });
         });
         p.catch(noop2);
         return p;
       }
       function drained() {
-        var p = new Promise(function(resolve2) {
+        var p = new Promise(function(resolve3) {
           process.nextTick(function() {
             if (queue2.idle()) {
-              resolve2();
+              resolve3();
             } else {
               var previousDrain = queue2.drain;
               queue2.drain = function() {
                 if (typeof previousDrain === "function") previousDrain();
-                resolve2();
+                resolve3();
                 queue2.drain = previousDrain;
               };
             }
@@ -84290,9 +84290,9 @@ var require_stream3 = __commonJS({
         });
       }
       _getStat(filepath) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           this._stat(filepath, this._fsStatSettings, (error51, stats) => {
-            return error51 === null ? resolve2(stats) : reject(error51);
+            return error51 === null ? resolve3(stats) : reject(error51);
           });
         });
       }
@@ -84316,10 +84316,10 @@ var require_async5 = __commonJS({
         this._readerStream = new stream_1.default(this._settings);
       }
       dynamic(root, options) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           this._walkAsync(root, options, (error51, entries) => {
             if (error51 === null) {
-              resolve2(entries);
+              resolve3(entries);
             } else {
               reject(error51);
             }
@@ -84329,10 +84329,10 @@ var require_async5 = __commonJS({
       async static(patterns, options) {
         const entries = [];
         const stream = this._readerStream.static(patterns, options);
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           stream.once("error", reject);
           stream.on("data", (entry) => entries.push(entry));
-          stream.once("end", () => resolve2(entries));
+          stream.once("end", () => resolve3(entries));
         });
       }
     };
@@ -85059,7 +85059,14 @@ async function updateModel(value) {
 async function updateLocalModel(value) {
   const config2 = vscode.workspace.getConfiguration(SECTION);
   await config2.update("localModelPath", value, vscode.ConfigurationTarget.Global);
-  await config2.update("localModelDirectory", path.dirname(value), vscode.ConfigurationTarget.Global);
+  const saved = config2.get("localModelDirectory", "").trim();
+  if (!saved || !containsPath(saved, value)) {
+    await config2.update("localModelDirectory", path.dirname(value), vscode.ConfigurationTarget.Global);
+  }
+}
+function containsPath(directory, filePath) {
+  const relative4 = path.relative(path.resolve(directory), path.resolve(path.dirname(filePath)));
+  return relative4 === "" || !relative4.startsWith("..") && !path.isAbsolute(relative4);
 }
 async function updateLocalModelDirectory(value) {
   await vscode.workspace.getConfiguration(SECTION).update("localModelDirectory", value, vscode.ConfigurationTarget.Global);
@@ -85193,8 +85200,8 @@ function relativeToWorkspace(uri2) {
   if (!folder) {
     return void 0;
   }
-  const relative3 = path2.relative(folder.uri.fsPath, uri2.fsPath).replace(/\\/g, "/");
-  return (vscode2.workspace.workspaceFolders?.length ?? 0) > 1 ? `${folder.name}/${relative3}` : relative3;
+  const relative4 = path2.relative(folder.uri.fsPath, uri2.fsPath).replace(/\\/g, "/");
+  return (vscode2.workspace.workspaceFolders?.length ?? 0) > 1 ? `${folder.name}/${relative4}` : relative4;
 }
 function searchRoots(pathInput) {
   const folders = vscode2.workspace.workspaceFolders;
@@ -85228,10 +85235,10 @@ function splitWorkspacePrefix(normalized, folders) {
 function createResolved(folder, relativePath, includeFolderPrefix) {
   const segments = relativePath.split("/").filter(Boolean);
   const uri2 = vscode2.Uri.joinPath(folder.uri, ...segments);
-  const relative3 = segments.join("/");
+  const relative4 = segments.join("/");
   return {
     uri: uri2,
-    relativePath: includeFolderPrefix ? `${folder.name}/${relative3}` : relative3,
+    relativePath: includeFolderPrefix ? `${folder.name}/${relative4}` : relative4,
     folder
   };
 }
@@ -85966,7 +85973,7 @@ var ApprovalState = class {
     if (existing.status === "approved" || existing.status === "rejected") return Promise.resolve(existing.status);
     if (existing.status === "cancelled") return Promise.reject(new Error("Approval request was cancelled."));
     if (signal?.aborted) return Promise.reject(abortError());
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       let wrapped;
       const onAbort = () => {
         removeWaiter(this.waiters, id, wrapped);
@@ -85976,7 +85983,7 @@ var ApprovalState = class {
       wrapped = (decision) => {
         signal?.removeEventListener("abort", onAbort);
         if (decision instanceof Error) reject(decision);
-        else resolve2(decision);
+        else resolve3(decision);
       };
       const waiters = this.waiters.get(id) ?? /* @__PURE__ */ new Set();
       waiters.add(wrapped);
@@ -87029,8 +87036,8 @@ function createSubagentTransformer(scope = []) {
       const nestedProjection = nested.init();
       let resolveOutput;
       let rejectOutput;
-      const output = new Promise((resolve2, reject) => {
-        resolveOutput = resolve2;
+      const output = new Promise((resolve3, reject) => {
+        resolveOutput = resolve3;
         rejectOutput = reject;
       });
       handles.set(key, {
@@ -90217,7 +90224,7 @@ async function onAttemptFailure3({ error: error51, attemptNumber, retriesConsume
   const delayTime = calculateDelay3(retriesConsumed, options);
   const finalDelay = Math.min(delayTime, remainingTime);
   options.signal?.throwIfAborted();
-  if (finalDelay > 0) await new Promise((resolve2, reject) => {
+  if (finalDelay > 0) await new Promise((resolve3, reject) => {
     const onAbort = () => {
       clearTimeout(timeoutToken);
       options.signal?.removeEventListener("abort", onAbort);
@@ -90225,7 +90232,7 @@ async function onAttemptFailure3({ error: error51, attemptNumber, retriesConsume
     };
     const timeoutToken = setTimeout(() => {
       options.signal?.removeEventListener("abort", onAbort);
-      resolve2();
+      resolve3();
     }, finalDelay);
     if (options.unref) timeoutToken.unref?.();
     options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -90469,7 +90476,7 @@ function pTimeout(promise2, options) {
   }, signal } = options;
   let timer;
   let abortHandler;
-  const cancelablePromise = new Promise((resolve2, reject) => {
+  const cancelablePromise = new Promise((resolve3, reject) => {
     if (typeof milliseconds !== "number" || Math.sign(milliseconds) !== 1) throw new TypeError(`Expected \`milliseconds\` to be a positive number, got \`${milliseconds}\``);
     if (signal?.aborted) {
       reject(getAbortedReason(signal));
@@ -90481,20 +90488,20 @@ function pTimeout(promise2, options) {
       };
       signal.addEventListener("abort", abortHandler, { once: true });
     }
-    promise2.then(resolve2, reject);
+    promise2.then(resolve3, reject);
     if (milliseconds === Number.POSITIVE_INFINITY) return;
     const timeoutError = new TimeoutError();
     timer = customTimers.setTimeout.call(void 0, () => {
       if (fallback) {
         try {
-          resolve2(fallback());
+          resolve3(fallback());
         } catch (error51) {
           reject(error51);
         }
         return;
       }
       if (typeof promise2.cancel === "function") promise2.cancel();
-      if (message === false) resolve2();
+      if (message === false) resolve3();
       else if (message instanceof Error) reject(message);
       else {
         timeoutError.message = message ?? `Promise timed out after ${milliseconds} milliseconds`;
@@ -90829,7 +90836,7 @@ var PQueue2 = class extends import_eventemitter3.default {
       ...options,
       id: options.id ?? (this.#idAssigner++).toString()
     };
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const taskSymbol = Symbol(`task-${options.id}`);
       this.#queue.enqueue(async () => {
         this.#pending++;
@@ -90864,7 +90871,7 @@ var PQueue2 = class extends import_eventemitter3.default {
             })]);
           }
           const result = await operation;
-          resolve2(result);
+          resolve3(result);
           this.emit("completed", result);
         } catch (error51) {
           reject(error51);
@@ -91004,11 +91011,11 @@ var PQueue2 = class extends import_eventemitter3.default {
     });
   }
   async #onEvent(event, filter) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const listener = () => {
         if (filter && !filter()) return;
         this.off(event, listener);
-        resolve2();
+        resolve3();
       };
       this.on(event, listener);
     });
@@ -91544,8 +91551,8 @@ async function* streamWithRetry(makeRequest, options = {}) {
         cause: lastError
       });
       const delay2 = reconnectDelayMs(attempt);
-      await new Promise((resolve2) => {
-        setTimeout(resolve2, delay2);
+      await new Promise((resolve3) => {
+        setTimeout(resolve3, delay2);
       });
       continue;
     }
@@ -92220,8 +92227,8 @@ var SubscriptionHandle = class {
   */
   waitForResume() {
     if (!this.paused) return Promise.resolve();
-    return new Promise((resolve2) => {
-      this.resumeResolve = resolve2;
+    return new Promise((resolve3) => {
+      this.resumeResolve = resolve3;
     });
   }
   get isPaused() {
@@ -92253,8 +92260,8 @@ var SubscriptionHandle = class {
           done: true,
           value: void 0
         };
-        return await new Promise((resolve2) => {
-          this.waiters.push(resolve2);
+        return await new Promise((resolve3) => {
+          this.waiters.push(resolve3);
         });
       },
       return: async () => {
@@ -92446,8 +92453,8 @@ var ThreadStream = class {
   async #withRunStartGate(operation) {
     let resolveGate;
     let rejectGate;
-    const gate = new Promise((resolve2, reject) => {
-      resolveGate = resolve2;
+    const gate = new Promise((resolve3, reject) => {
+      resolveGate = resolve3;
       rejectGate = reject;
     });
     this.#runStartReady = gate;
@@ -92513,8 +92520,8 @@ var ThreadStream = class {
     const buffer = new MultiCursorBuffer();
     let lastValue;
     let resolveOutput;
-    const outputPromise = new Promise((resolve2) => {
-      resolveOutput = resolve2;
+    const outputPromise = new Promise((resolve3) => {
+      resolveOutput = resolve3;
     });
     this.#outputPromise = outputPromise;
     const projection = Object.assign(buffer, { then: (onfulfilled, onrejected) => outputPromise.then(onfulfilled, onrejected) });
@@ -92741,8 +92748,8 @@ var ThreadStream = class {
     const buffer = new MultiCursorBuffer();
     let lastValue;
     let resolveFinal;
-    const finalPromise = new Promise((resolve2) => {
-      resolveFinal = resolve2;
+    const finalPromise = new Promise((resolve3) => {
+      resolveFinal = resolve3;
     });
     const handleEvent = (event) => {
       const data = event.params.data;
@@ -93100,10 +93107,10 @@ var ThreadStream = class {
       seenEventIds: /* @__PURE__ */ new Set()
     });
     this.#subscriptions.set(subscriptionId, subscription);
-    const covered = new Promise((resolve2, reject) => {
+    const covered = new Promise((resolve3, reject) => {
       this.#pendingSubResolves.push({
         filter: params,
-        resolve: resolve2,
+        resolve: resolve3,
         reject
       });
     });
@@ -93469,9 +93476,9 @@ var ThreadStream = class {
       method,
       params
     };
-    const responsePromise = new Promise((resolve2, reject) => {
+    const responsePromise = new Promise((resolve3, reject) => {
       this.#pending.set(id, {
-        resolve: resolve2,
+        resolve: resolve3,
         reject
       });
     });
@@ -93531,8 +93538,8 @@ var AsyncQueue = class {
       done: true,
       value: void 0
     };
-    return await new Promise((resolve2, reject) => {
-      this.waiters.push(resolve2);
+    return await new Promise((resolve3, reject) => {
+      this.waiters.push(resolve3);
       this.rejecters.push(reject);
     });
   }
@@ -93700,8 +93707,8 @@ var ProtocolSseTransportAdapter = class {
     const streamUrl = this.streamUrl;
     let resolveReady;
     let rejectReady;
-    const ready = new Promise((resolve2, reject) => {
-      resolveReady = resolve2;
+    const ready = new Promise((resolve3, reject) => {
+      resolveReady = resolve3;
       rejectReady = reject;
     });
     const initialSince = typeof params.since === "number" ? params.since : void 0;
@@ -93762,8 +93769,8 @@ var ProtocolSseTransportAdapter = class {
           cause: error51
         });
         const delay2 = this.reconnectDelayMs(attempt);
-        if (delay2 > 0) await new Promise((resolve2) => {
-          setTimeout(resolve2, delay2);
+        if (delay2 > 0) await new Promise((resolve3) => {
+          setTimeout(resolve3, delay2);
         });
       }
     };
@@ -93897,10 +93904,10 @@ var ProtocolWebSocketTransportAdapter = class {
     this.socket = socket;
     this.intentionalClose = false;
     this.#attachSocket(socket);
-    await new Promise((resolve2, reject) => {
+    await new Promise((resolve3, reject) => {
       const onOpen = () => {
         cleanup();
-        resolve2();
+        resolve3();
       };
       const onError = () => {
         cleanup();
@@ -93941,18 +93948,18 @@ var ProtocolWebSocketTransportAdapter = class {
     this.socket = null;
     if (!socket) return;
     this.#detachSocket(socket);
-    await new Promise((resolve2) => {
+    await new Promise((resolve3) => {
       if (socket.readyState === WEB_SOCKET_CLOSED) {
-        resolve2();
+        resolve3();
         return;
       }
       const onClose = () => {
         socket.removeEventListener("close", onClose);
-        resolve2();
+        resolve3();
       };
       socket.addEventListener("close", onClose, { once: true });
       if (socket.readyState === WEB_SOCKET_OPEN || socket.readyState === WEB_SOCKET_CONNECTING) socket.close();
-      else resolve2();
+      else resolve3();
     });
   }
   assertBrowserSafeTransportConfig() {
@@ -93965,9 +93972,9 @@ var ProtocolWebSocketTransportAdapter = class {
       socket = this.socket;
     }
     if (socket == null || socket.readyState !== WEB_SOCKET_OPEN) throw new Error("Protocol WebSocket is not open.");
-    return await new Promise((resolve2, reject) => {
+    return await new Promise((resolve3, reject) => {
       this.pending.set(command.id, {
-        resolve: resolve2,
+        resolve: resolve3,
         reject
       });
       try {
@@ -94045,8 +94052,8 @@ var ProtocolWebSocketTransportAdapter = class {
         cause: lastError
       });
       const delay2 = this.reconnectDelayMs(attempt);
-      if (delay2 > 0) await new Promise((resolve2) => {
-        setTimeout(resolve2, delay2);
+      if (delay2 > 0) await new Promise((resolve3) => {
+        setTimeout(resolve3, delay2);
       });
       if (this.closed || this.intentionalClose) return;
       try {
@@ -96032,7 +96039,7 @@ function raiseForWsError(msg, commandId = "") {
 }
 async function connectWs(url2, headers, openTimeout = WS_OPEN_TIMEOUT) {
   const { WebSocket: WS } = await ensureWs();
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const ws = new WS(url2, {
       headers,
       handshakeTimeout: openTimeout === void 0 ? void 0 : openTimeout * 1e3
@@ -96042,7 +96049,7 @@ async function connectWs(url2, headers, openTimeout = WS_OPEN_TIMEOUT) {
       if (settled)
         return;
       settled = true;
-      resolve2(ws);
+      resolve3(ws);
     });
     ws.on("unexpected-response", (req, res) => {
       res.resume?.();
@@ -96063,16 +96070,16 @@ async function connectWs(url2, headers, openTimeout = WS_OPEN_TIMEOUT) {
 }
 async function* readWsMessages(ws) {
   const messageQueue = [];
-  let resolve2 = null;
+  let resolve3 = null;
   let error51 = null;
   let done = false;
   const onMessage = (data) => {
     const raw = typeof data === "string" ? data : data.toString();
     const msg = JSON.parse(raw);
     messageQueue.push(msg);
-    if (resolve2) {
-      const r = resolve2;
-      resolve2 = null;
+    if (resolve3) {
+      const r = resolve3;
+      resolve3 = null;
       r();
     }
   };
@@ -96083,9 +96090,9 @@ async function* readWsMessages(ws) {
     } else if (code !== 1e3) {
       error51 = new LangSmithSandboxConnectionError(`WebSocket connection closed unexpectedly (code: ${code}, reason: ${reason.toString()})`);
     }
-    if (resolve2) {
-      const r = resolve2;
-      resolve2 = null;
+    if (resolve3) {
+      const r = resolve3;
+      resolve3 = null;
       r();
     }
   };
@@ -96094,9 +96101,9 @@ async function* readWsMessages(ws) {
     if (!error51) {
       error51 = new LangSmithSandboxConnectionError(`WebSocket connection error: ${err.message}`);
     }
-    if (resolve2) {
-      const r = resolve2;
-      resolve2 = null;
+    if (resolve3) {
+      const r = resolve3;
+      resolve3 = null;
       r();
     }
   };
@@ -96115,7 +96122,7 @@ async function* readWsMessages(ws) {
         return;
       }
       await new Promise((r) => {
-        resolve2 = r;
+        resolve3 = r;
       });
     }
   } finally {
@@ -96650,14 +96657,14 @@ function validateMountConfigProxyConfig(mountConfig2, proxyConfig2) {
 init_src();
 function sleepWithSignal(ms, signal) {
   if (!signal) {
-    return new Promise((resolve2) => setTimeout(resolve2, ms));
+    return new Promise((resolve3) => setTimeout(resolve3, ms));
   }
   const abortSignal = signal;
   abortSignal.throwIfAborted();
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const timer = setTimeout(() => {
       abortSignal.removeEventListener("abort", onAbort);
-      resolve2();
+      resolve3();
     }, ms);
     function onAbort() {
       clearTimeout(timer);
@@ -97774,13 +97781,13 @@ function globSearchFiles(files, pattern, path18 = "/") {
   const effectivePattern = pattern;
   const matches = [];
   for (const [filePath, fileData] of Object.entries(filtered)) {
-    let relative3 = filePath.substring(normalizedPath.length);
-    if (relative3.startsWith("/")) relative3 = relative3.substring(1);
-    if (!relative3) {
+    let relative4 = filePath.substring(normalizedPath.length);
+    if (relative4.startsWith("/")) relative4 = relative4.substring(1);
+    if (!relative4) {
       const parts = filePath.split("/");
-      relative3 = parts[parts.length - 1] || "";
+      relative4 = parts[parts.length - 1] || "";
     }
-    if (import_micromatch.default.isMatch(relative3, effectivePattern, {
+    if (import_micromatch.default.isMatch(relative4, effectivePattern, {
       dot: true,
       nobrace: false
     })) matches.push([filePath, fileData.modified_at]);
@@ -98036,9 +98043,9 @@ var StateBackend = class {
     const normalizedPath = path18.endsWith("/") ? path18 : path18 + "/";
     for (const [k, fd] of Object.entries(files)) {
       if (!k.startsWith(normalizedPath)) continue;
-      const relative3 = k.substring(normalizedPath.length);
-      if (relative3.includes("/")) {
-        const subdirName = relative3.split("/")[0];
+      const relative4 = k.substring(normalizedPath.length);
+      if (relative4.includes("/")) {
+        const subdirName = relative4.split("/")[0];
         subdirs.add(normalizedPath + subdirName + "/");
         continue;
       }
@@ -102316,10 +102323,42 @@ var SKIPPED = /* @__PURE__ */ new Set([
   "recovery",
   "program files",
   "program files (x86)",
-  "appdata"
+  "appdata",
+  // Windows OS noise. The last three are legacy junctions that point back up the
+  // profile; following them is what turns a deep walk into a combinatorial one.
+  "programdata",
+  "perflogs",
+  "msocache",
+  "$windows.~bt",
+  "$windows.~ws",
+  "documents and settings",
+  "application data",
+  "local settings",
+  // Package and toolchain caches: reliably enormous, never hold a GGUF.
+  "site-packages",
+  "anaconda3",
+  "miniconda3",
+  ".conda",
+  ".cargo",
+  ".rustup",
+  ".gradle",
+  ".m2",
+  ".nuget",
+  ".npm",
+  ".pnpm-store",
+  ".yarn",
+  ".tox",
+  ".vs",
+  ".idea"
 ]);
-async function discoverGgufModels(extraRoots = [], maxDirectories = 2e4, maxModels = 500, includeDefaults = true) {
-  const paths = await findGgufPaths({ roots: extraRoots, limit: maxModels, maxDirectories, includeDefaults });
+var DEFAULT_MAX_DIRECTORIES = 4e3;
+var SCOPED_TIME_BUDGET_MS = 5e3;
+var FIRST_RUN_TIME_BUDGET_MS = 12e3;
+var FULL_SCAN_TIME_BUDGET_MS = 6e4;
+var FULL_SCAN_MAX_DIRECTORIES = 2e4;
+var PER_DIR_TIMEOUT_MS = 2e3;
+async function discoverGgufModels(options = {}) {
+  const paths = await findGgufPaths(options);
   const models = await Promise.all(paths.map(async (filePath) => {
     try {
       const size = (await import_node_fs3.promises.stat(filePath)).size;
@@ -102330,50 +102369,105 @@ async function discoverGgufModels(extraRoots = [], maxDirectories = 2e4, maxMode
   }));
   return models.filter((item) => Boolean(item)).sort((a, b) => natural(a.label, b.label));
 }
-async function findGgufPaths({ query = "", roots = [], limit: limit2 = 500, maxDirectories = 2e4, includeDefaults = true }) {
+async function findGgufPaths({
+  query = "",
+  roots = [],
+  limit: limit2 = 500,
+  maxDirectories = DEFAULT_MAX_DIRECTORIES,
+  includeDefaults = true,
+  timeBudgetMs = FIRST_RUN_TIME_BUDGET_MS,
+  maxDepth = 8,
+  visited = /* @__PURE__ */ new Set(),
+  signal
+}) {
   const needle = query.trim().toLowerCase();
-  const visited = /* @__PURE__ */ new Set();
   const output = [];
-  if (roots.length) await scan2(roots, visited, output, needle, limit2, maxDirectories);
+  const start = Date.now();
+  const at = (fraction) => start + Math.max(1, Math.floor(timeBudgetMs * fraction));
+  const tier = (tierRoots, budget, deadline, depth) => scan2({ roots: tierRoots, visited, output, needle, limit: limit2, maxDirectories: budget, maxDepth: depth, deadline, signal });
+  if (roots.length) await tier(roots, maxDirectories, at(includeDefaults ? 0.5 : 1), maxDepth);
   if (!includeDefaults) return finishGgufPaths(output, limit2);
-  const appBudget = Math.max(1, Math.floor(maxDirectories * 0.6));
-  const personalBudget = Math.max(appBudget, Math.floor(maxDirectories * 0.8));
-  await scan2(appModelDirectories(), visited, output, needle, limit2, appBudget);
-  await scan2(broadModelDirectories(), visited, output, needle, limit2, personalBudget);
-  await scan2(storageModelDirectories(), visited, output, needle, limit2, maxDirectories);
+  await tier(appModelDirectories(), Math.max(1, Math.floor(maxDirectories * 0.6)), at(0.7), 6);
+  await tier(broadModelDirectories(), Math.max(1, Math.floor(maxDirectories * 0.8)), at(0.85), 4);
+  await tier(storageModelDirectories(), maxDirectories, at(1), 4);
   return finishGgufPaths(output, limit2);
 }
-async function scan2(roots, visited, output, needle, limit2, maxDirectories) {
+async function scan2({ roots, visited, output, needle, limit: limit2, maxDirectories, maxDepth, deadline, signal }) {
   const queue2 = uniquePaths(roots).map((directory) => ({ directory, depth: 0 }));
-  for (let cursor = 0; cursor < queue2.length && visited.size < maxDirectories && output.length < limit2; cursor++) {
-    const current = queue2[cursor];
-    const key = path7.resolve(current.directory).toLowerCase();
-    if (visited.has(key)) continue;
-    visited.add(key);
-    let entries;
-    try {
-      entries = await import_node_fs3.promises.readdir(current.directory, { withFileTypes: true });
-    } catch {
-      continue;
+  const exhausted = () => output.length >= limit2 || signal?.aborted === true || Date.now() >= deadline;
+  for (let cursor = 0; cursor < queue2.length && visited.size < maxDirectories && !exhausted(); ) {
+    const batch = [];
+    while (cursor < queue2.length && batch.length < 24 && visited.size < maxDirectories) {
+      const current = queue2[cursor++];
+      const key = await visitKey(current.directory);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      batch.push(current);
     }
-    for (const entry of entries) {
-      if (output.length >= limit2) break;
-      const full = path7.join(current.directory, entry.name);
-      let directory = entry.isDirectory();
-      let file2 = entry.isFile();
-      if (entry.isSymbolicLink()) {
-        try {
-          const value = await import_node_fs3.promises.stat(full);
-          directory = value.isDirectory();
-          file2 = value.isFile();
-        } catch {
-          continue;
+    const reads = batch.map(async (current) => ({
+      current,
+      entries: await withTimeout(readEntries(current.directory), PER_DIR_TIMEOUT_MS, [])
+    }));
+    const results = await Promise.race([
+      Promise.all(reads),
+      sleepUntil(deadline).then(() => [])
+    ]);
+    reads.forEach((read) => void read.catch(() => void 0));
+    for (const { current, entries } of results) {
+      for (const entry of entries) {
+        if (exhausted()) break;
+        const full = path7.join(current.directory, entry.name);
+        let directory = entry.isDirectory();
+        let file2 = entry.isFile();
+        if (entry.isSymbolicLink()) {
+          try {
+            const value = await import_node_fs3.promises.stat(full);
+            directory = value.isDirectory();
+            file2 = value.isFile();
+          } catch {
+            continue;
+          }
         }
+        if (directory && current.depth < maxDepth && !SKIPPED.has(entry.name.toLowerCase())) queue2.push({ directory: full, depth: current.depth + 1 });
+        else if (file2 && isSelectableGguf(entry.name) && (!needle || entry.name.toLowerCase().includes(needle))) output.push(full);
       }
-      if (directory && current.depth < 12 && !SKIPPED.has(entry.name.toLowerCase())) queue2.push({ directory: full, depth: current.depth + 1 });
-      else if (file2 && isSelectableGguf(entry.name) && (!needle || entry.name.toLowerCase().includes(needle))) output.push(full);
     }
   }
+}
+async function readEntries(directory) {
+  try {
+    return await import_node_fs3.promises.readdir(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+async function visitKey(directory) {
+  try {
+    return (await import_node_fs3.promises.realpath(directory)).toLowerCase();
+  } catch {
+    return path7.resolve(directory).toLowerCase();
+  }
+}
+function withTimeout(promise2, ms, fallback) {
+  return new Promise((resolve3) => {
+    const timer = setTimeout(() => resolve3(fallback), ms);
+    promise2.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve3(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve3(fallback);
+      }
+    );
+  });
+}
+function sleepUntil(deadline) {
+  return new Promise((resolve3) => {
+    const timer = setTimeout(resolve3, Math.max(0, deadline - Date.now()));
+    if (typeof timer.unref === "function") timer.unref();
+  });
 }
 async function discoverOllamaModels(baseUrl = "http://127.0.0.1:11434") {
   const [api, cli, manifests] = await Promise.all([ollamaApi(baseUrl), ollamaCli(), ollamaManifests()]);
@@ -102414,10 +102508,10 @@ async function ollamaManifests() {
   const files = [];
   for (const root of roots) await collectFiles(root, root, files, 0, 8);
   return Promise.all(files.map(async (file2) => {
-    const relative3 = path7.relative(path7.dirname(path7.dirname(path7.dirname(file2))), file2).split(path7.sep);
-    if (relative3.length < 3) return void 0;
-    const model = relative3.at(-2);
-    const tag = relative3.at(-1);
+    const relative4 = path7.relative(path7.dirname(path7.dirname(path7.dirname(file2))), file2).split(path7.sep);
+    if (relative4.length < 3) return void 0;
+    const model = relative4.at(-2);
+    const tag = relative4.at(-1);
     let size;
     try {
       const manifest = JSON.parse(await import_node_fs3.promises.readFile(file2, "utf8"));
@@ -102451,20 +102545,15 @@ async function discoverLocalRuntimes(extra = []) {
   }));
   return found.filter((item) => Boolean(item));
 }
-async function discoverInstalledModels(options = {}) {
-  const [gguf, ollama, runtimes] = await Promise.all([
-    discoverGgufModels(options.extraRoots, options.maxDirectories, options.maxModels),
-    discoverOllamaModels(options.ollamaBaseUrl),
-    discoverLocalRuntimes(options.runtimeTargets)
-  ]);
-  const runtimeModels = runtimes.filter((runtime) => runtime.name !== "Ollama").flatMap((runtime) => runtime.models.map((id) => ({
+async function discoverOpenAICompatibleModels(extra = []) {
+  const runtimes = await discoverLocalRuntimes(extra);
+  return runtimes.filter((runtime) => runtime.name !== "Ollama").flatMap((runtime) => runtime.models.map((id) => ({
     kind: "runtime",
     id,
     label: id,
     detail: `${runtime.name} \xB7 ${runtime.baseUrl}`,
     baseUrl: runtime.baseUrl
   }))).sort((a, b) => natural(a.label, b.label));
-  return { gguf, ollama, runtimes, runtimeModels };
 }
 function appModelDirectories() {
   const home = os2.homedir();
@@ -105047,12 +105136,12 @@ async function downloadFile(url2, destPath, options = {}) {
   }
 }
 function sha256OfFile(filePath) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const hash2 = (0, import_node_crypto4.createHash)("sha256");
     const stream = (0, import_node_fs5.createReadStream)(filePath);
     stream.on("data", (chunk) => hash2.update(chunk));
     stream.on("error", reject);
-    stream.on("end", () => resolve2(hash2.digest("hex")));
+    stream.on("end", () => resolve3(hash2.digest("hex")));
   });
 }
 
@@ -105116,10 +105205,10 @@ async function installAsset(asset, onProgress, signal) {
   if (process.platform !== "win32") await import_node_fs6.promises.chmod(execPath, 493);
   return execPath;
 }
-async function findServerExecutable(rootDir) {
+async function findServerExecutable(rootDir, maxDepth = 6) {
   const target = process.platform === "win32" ? "llama-server.exe" : "llama-server";
   let queue2 = [rootDir];
-  for (let depth = 0; depth < 6 && queue2.length; depth++) {
+  for (let depth = 0; depth < maxDepth && queue2.length; depth++) {
     const next = [];
     for (const dir of queue2) {
       let entries;
@@ -105366,6 +105455,7 @@ var LlamaCppRuntime = class {
   ready = false;
   startupPromise;
   capabilityCache = /* @__PURE__ */ new Map();
+  activePick;
   get isRunning() {
     return Boolean(this.process && !this.process.killed);
   }
@@ -105385,27 +105475,174 @@ var LlamaCppRuntime = class {
     return Boolean(this.mmprojPath);
   }
   /**
-   * Present the two user-facing local workflows: manually search/select a GGUF
-   * file, or detect installed GGUF and Ollama models automatically.
+   * One live picker for every local workflow. It is shown before any filesystem
+   * work starts, so it appears instantly and stays useful while models stream in
+   * underneath. `ignoreFocusOut` matters more than it looks: this is launched from
+   * a webview button, so without it the picker silently vanishes the moment the
+   * user clicks back into the sidebar and the whole flow looks dead.
    */
-  async chooseLocalModel() {
-    const choice = await vscode9.window.showQuickPick([
-      {
-        id: "browse",
-        label: "$(search) Search or choose a GGUF model",
-        description: "Browse your computer for a llama.cpp-compatible model file"
-      },
-      {
-        id: "detect",
-        label: "$(sparkle) Detect installed local models",
-        description: "Find GGUF files, Ollama manifests, and running local model servers"
-      }
-    ], {
-      title: "Vectra: Local Model",
-      placeHolder: "Choose how Vectra should find your local model"
+  async chooseLocalModel(options = {}) {
+    if (this.activePick) {
+      this.activePick.pick.show();
+      return this.activePick.promise;
+    }
+    const savedFolder = getConfig().localModelDirectory;
+    const scoped = Boolean(savedFolder) && !options.scanEverywhere;
+    const pick2 = vscode9.window.createQuickPick();
+    pick2.title = "Vectra: Local Model";
+    pick2.placeholder = "Searching for local models\u2026";
+    pick2.matchOnDescription = true;
+    pick2.matchOnDetail = true;
+    pick2.ignoreFocusOut = true;
+    pick2.busy = true;
+    pick2.items = actionItems(savedFolder);
+    pick2.show();
+    const promise2 = new Promise((resolve3) => {
+      let settled = false;
+      let accepted = false;
+      const controller = new AbortController();
+      const disposables = [];
+      const release = () => {
+        if (this.activePick?.pick === pick2) this.activePick = void 0;
+      };
+      const settle = (value) => {
+        if (settled) return;
+        settled = true;
+        controller.abort();
+        release();
+        disposables.forEach((item) => item.dispose());
+        pick2.dispose();
+        resolve3(value);
+      };
+      disposables.push(pick2.onDidHide(() => {
+        if (!accepted) settle(void 0);
+      }));
+      disposables.push(pick2.onDidAccept(() => {
+        const item = pick2.selectedItems[0];
+        if (!item) return;
+        accepted = true;
+        controller.abort();
+        pick2.hide();
+        release();
+        void this.runSelection(item, savedFolder).then(settle, (error51) => {
+          void vscode9.window.showErrorMessage(`Vectra local model failed: ${messageOf4(error51)}`);
+          settle(void 0);
+        });
+      }));
+      void this.streamLocalModels(pick2, {
+        savedFolder,
+        scoped,
+        signal: controller.signal,
+        isStale: () => settled
+      }).catch(() => void 0);
     });
-    if (!choice) return void 0;
-    return choice.id === "browse" ? this.selectAndStartModel() : this.detectAndSelectModel();
+    this.activePick = { pick: pick2, promise: promise2 };
+    return promise2;
+  }
+  /**
+   * Feed the picker as results arrive. Detected models are appended below the
+   * actions so no already-rendered row ever shifts under the user's cursor, and
+   * the network probes are not gated behind the filesystem walk.
+   */
+  async streamLocalModels(pick2, context2) {
+    const config2 = getConfig();
+    const found = /* @__PURE__ */ new Map();
+    const visited = /* @__PURE__ */ new Set();
+    let pending = 2;
+    const publish = () => {
+      if (context2.isStale()) return;
+      const models = [...found.values()].sort((a, b) => a.label.localeCompare(b.label, void 0, { numeric: true, sensitivity: "base" }));
+      const next = [...actionItems(context2.savedFolder), ...detectedItems(models)];
+      const keep = pick2.activeItems[0];
+      const index2 = keep ? next.findIndex((item) => sameRow(item, keep)) : -1;
+      pick2.items = next;
+      if (index2 >= 0) pick2.activeItems = [next[index2]];
+      pick2.title = models.length ? `Vectra: Local Model \u2014 ${models.length} found${pick2.busy ? "\u2026" : ""}` : "Vectra: Local Model";
+    };
+    const add2 = (models) => {
+      for (const model of models) found.set(`${model.kind}:${model.id}`, model);
+      publish();
+    };
+    const finish = () => {
+      if (--pending > 0 || context2.isStale()) return;
+      pick2.busy = false;
+      pick2.placeholder = found.size ? "Select a local model, or choose a folder to scan" : "No local models found \u2014 choose a folder or a GGUF file";
+      publish();
+    };
+    void Promise.all([
+      discoverOllamaModels(config2.ollamaBaseUrl).catch(() => []),
+      discoverOpenAICompatibleModels().catch(() => [])
+    ]).then(([ollama, runtimes]) => add2([...ollama, ...runtimes])).finally(finish);
+    void (async () => {
+      const roots = [config2.localModelDirectory, config2.localModelPath ? path12.dirname(config2.localModelPath) : ""].filter(Boolean);
+      if (context2.scoped) {
+        add2(await discoverGgufModels({
+          roots,
+          includeDefaults: false,
+          visited,
+          timeBudgetMs: SCOPED_TIME_BUDGET_MS,
+          signal: context2.signal
+        }));
+        return;
+      }
+      const everywhere = !context2.savedFolder ? FIRST_RUN_TIME_BUDGET_MS : FULL_SCAN_TIME_BUDGET_MS;
+      const budget = Math.floor(everywhere / 4);
+      const tiers = [
+        { roots, depth: 8 },
+        { roots: appModelDirectories(), depth: 6 },
+        { roots: broadModelDirectories(), depth: 4 },
+        { roots: storageModelDirectories(), depth: 4 }
+      ];
+      for (const entry of tiers) {
+        if (context2.signal.aborted || context2.isStale() || !entry.roots.length) continue;
+        add2(await discoverGgufModels({
+          roots: entry.roots,
+          includeDefaults: false,
+          maxDepth: entry.depth,
+          maxDirectories: FULL_SCAN_MAX_DIRECTORIES,
+          visited,
+          timeBudgetMs: budget,
+          signal: context2.signal
+        }));
+      }
+    })().finally(finish);
+  }
+  /** Shared activation path for every row the picker can offer. */
+  async runSelection(item, savedFolder) {
+    if (item.action === "browseFile") return this.selectAndStartModel();
+    if (item.action === "scanEverywhere") return this.chooseLocalModel({ scanEverywhere: true });
+    if (item.action === "chooseFolder") {
+      const directory = await this.pickModelFolder(savedFolder);
+      if (!directory) return void 0;
+      await updateLocalModelDirectory(directory);
+      return this.chooseLocalModel();
+    }
+    if (!item.model) return void 0;
+    if (item.model.kind === "ollama") {
+      await this.stop();
+      await updateProvider("ollama");
+      await updateModel(item.model.id);
+      return item.model.id;
+    }
+    if (item.model.kind === "runtime") {
+      await this.stop();
+      await updateOpenAICompatibleBaseUrl(item.model.baseUrl);
+      await updateProvider("openaiCompatible");
+      await updateModel(item.model.id);
+      return item.model.id;
+    }
+    return this.loadModelWithProgress(item.model.id);
+  }
+  async pickModelFolder(savedFolder) {
+    const picked = await vscode9.window.showOpenDialog({
+      title: "Vectra: Choose the folder that holds your local models",
+      defaultUri: vscode9.Uri.file(savedFolder || os6.homedir()),
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Scan this folder"
+    });
+    return picked?.[0]?.fsPath;
   }
   /** Use VS Code's native searchable file dialog to select a GGUF model. */
   async selectAndStartModel() {
@@ -105430,112 +105667,6 @@ var LlamaCppRuntime = class {
     });
     if (!picked?.[0]) return void 0;
     return this.loadModelWithProgress(picked[0].fsPath);
-  }
-  /** Scan bounded common folders and query a local Ollama server. */
-  async detectAndSelectModel() {
-    const config2 = getConfig();
-    const extraRoots = [
-      config2.localModelDirectory,
-      config2.localModelPath ? path12.dirname(config2.localModelPath) : ""
-    ].filter(Boolean);
-    const installed = await vscode9.window.withProgress(
-      {
-        location: vscode9.ProgressLocation.Notification,
-        title: "Vectra: detecting installed local models\u2026"
-      },
-      () => discoverInstalledModels({ extraRoots, ollamaBaseUrl: config2.ollamaBaseUrl })
-    );
-    const { gguf: ggufModels, ollama: ollamaModels, runtimeModels } = installed;
-    const detected = [
-      ...ggufModels.map((model) => ({
-        label: `$(file-binary) ${model.label}`,
-        description: "GGUF \xB7 llama.cpp",
-        detail: model.detail,
-        model
-      })),
-      ...ollamaModels.map((model) => ({
-        label: `$(server-process) ${model.label}`,
-        description: "Ollama",
-        detail: model.detail,
-        model
-      })),
-      ...runtimeModels.map((model) => ({
-        label: `$(server-process) ${model.label}`,
-        description: model.detail.split(" \xB7 ")[0],
-        detail: model.detail,
-        model
-      }))
-    ];
-    if (!detected.length) {
-      const fallback = await vscode9.window.showWarningMessage(
-        "Vectra did not find a GGUF file, installed Ollama model, or supported running local model server.",
-        "Choose folder to scan",
-        "Choose GGUF file"
-      );
-      if (fallback === "Choose folder to scan") return this.scanSelectedFolder();
-      return fallback === "Choose GGUF file" ? this.selectAndStartModel() : void 0;
-    }
-    detected.push({
-      label: "$(folder-opened) Add another model folder\u2026",
-      description: "Scan any folder on this computer recursively",
-      action: "scanFolder"
-    });
-    const picked = await vscode9.window.showQuickPick(detected, {
-      title: `Vectra: ${detected.length} local model${detected.length === 1 ? "" : "s"} detected`,
-      placeHolder: "Type to search detected local models",
-      matchOnDescription: true,
-      matchOnDetail: true
-    });
-    if (!picked) return void 0;
-    if (picked.action === "scanFolder") return this.scanSelectedFolder();
-    if (!picked.model) return void 0;
-    if (picked.model.kind === "ollama") {
-      await this.stop();
-      await updateProvider("ollama");
-      await updateModel(picked.model.id);
-      return picked.model.id;
-    }
-    if (picked.model.kind === "runtime") {
-      await this.stop();
-      await updateOpenAICompatibleBaseUrl(picked.model.baseUrl);
-      await updateProvider("openaiCompatible");
-      await updateModel(picked.model.id);
-      return picked.model.id;
-    }
-    return this.loadModelWithProgress(picked.model.id);
-  }
-  async scanSelectedFolder() {
-    const preferred = getConfig().localModelDirectory || os6.homedir();
-    const pickedFolder = await vscode9.window.showOpenDialog({
-      title: "Vectra: Choose a folder containing local models",
-      defaultUri: vscode9.Uri.file(preferred),
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: "Scan this folder"
-    });
-    if (!pickedFolder?.[0]) return void 0;
-    const directory = pickedFolder[0].fsPath;
-    await updateLocalModelDirectory(directory);
-    const models = await vscode9.window.withProgress(
-      { location: vscode9.ProgressLocation.Notification, title: `Vectra: scanning ${directory}\u2026` },
-      () => discoverGgufModels([directory], 2e4, 500, false)
-    );
-    if (!models.length) {
-      void vscode9.window.showInformationMessage("No selectable GGUF models were found in that folder.");
-      return void 0;
-    }
-    const picked = await vscode9.window.showQuickPick(models.map((model) => ({
-      label: `$(file-binary) ${model.label}`,
-      description: "GGUF \xB7 llama.cpp",
-      detail: model.detail,
-      model
-    })), {
-      title: `Vectra: ${models.length} model${models.length === 1 ? "" : "s"} found`,
-      placeHolder: "Select a local model",
-      matchOnDetail: true
-    });
-    return picked ? this.loadModelWithProgress(picked.model.id) : void 0;
   }
   async loadModelWithProgress(modelPath) {
     return vscode9.window.withProgress(
@@ -105771,7 +105902,7 @@ Saves to: ${modelPath}` },
     return true;
   }
   async start(modelPath) {
-    const executable = await this.resolveServerExecutable();
+    const executable = await this.resolveServerExecutable(modelPath);
     const config2 = getConfig();
     const normalized = normalizeShardPath(modelPath);
     const mmproj = await this.resolveMmproj(normalized);
@@ -105869,17 +106000,17 @@ ${value.stderr ?? ""}`;
     this.ready = false;
     if (!child || child.killed) return;
     child.kill();
-    await new Promise((resolve2) => {
+    await new Promise((resolve3) => {
       const timer = setTimeout(() => {
         try {
           child.kill("SIGKILL");
         } catch {
         }
-        resolve2();
+        resolve3();
       }, 3e3);
       child.once("exit", () => {
         clearTimeout(timer);
-        resolve2();
+        resolve3();
       });
     });
   }
@@ -105926,7 +106057,7 @@ ${value.stderr ?? ""}`;
       return void 0;
     }
   }
-  async resolveServerExecutable() {
+  async resolveServerExecutable(modelPath) {
     const configured = getConfig().llamaCppServerPath;
     if (configured) {
       if (path12.isAbsolute(configured)) {
@@ -105941,10 +106072,14 @@ ${value.stderr ?? ""}`;
     }
     const command = process.platform === "win32" ? "llama-server.exe" : "llama-server";
     if (await commandExists(command)) return command;
-    const common = process.platform === "darwin" ? ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"] : process.platform === "win32" ? [
+    const modelDirectory = path12.dirname(modelPath);
+    const common = process.platform === "darwin" ? [path12.join(modelDirectory, command), "/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"] : process.platform === "win32" ? [
+      path12.join(modelDirectory, command),
+      path12.join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet", "Links", command),
       path12.join(process.env.LOCALAPPDATA ?? "", "Programs", "llama.cpp", "llama-server.exe"),
       path12.join(os6.homedir(), "llama.cpp", "build", "bin", "Release", "llama-server.exe")
     ] : [
+      path12.join(modelDirectory, command),
       "/usr/local/bin/llama-server",
       "/usr/bin/llama-server",
       path12.join(os6.homedir(), ".local", "bin", "llama-server")
@@ -105957,6 +106092,16 @@ ${value.stderr ?? ""}`;
         return candidate;
       } catch {
       }
+    }
+    const installRoots = [
+      path12.join(os6.homedir(), ".vectra", "llama.cpp"),
+      ...process.platform === "win32" && process.env.LOCALAPPDATA ? [path12.join(process.env.LOCALAPPDATA, "Microsoft", "WinGet", "Packages")] : []
+    ];
+    for (const root of installRoots) {
+      const candidate = await findServerExecutable(root, 5);
+      if (!candidate) continue;
+      await updateLlamaServerPath(candidate);
+      return candidate;
     }
     const choice = await vscode9.window.showWarningMessage(
       "Vectra found your GGUF model, but llama-server could not be found.",
@@ -106086,18 +106231,53 @@ function scoreMmproj(name) {
 }
 async function commandExists(command) {
   try {
-    if (process.platform === "win32") await execFileAsync6("where", [command]);
-    else await execFileAsync6("which", [command]);
+    if (process.platform === "win32") await execFileAsync6("where", [command], { timeout: 3e3, windowsHide: true });
+    else await execFileAsync6("which", [command], { timeout: 3e3 });
     return true;
   } catch {
     return false;
   }
 }
 function delay(milliseconds) {
-  return new Promise((resolve2) => setTimeout(resolve2, milliseconds));
+  return new Promise((resolve3) => setTimeout(resolve3, milliseconds));
 }
 function shellQuote2(value) {
   return /\s/.test(value) ? JSON.stringify(value) : value;
+}
+function actionItems(savedFolder) {
+  return [
+    {
+      label: "$(search) Choose a GGUF file\u2026",
+      description: "Browse this computer for a .gguf model",
+      action: "browseFile"
+    },
+    {
+      label: "$(folder-opened) Change model folder\u2026",
+      description: savedFolder || "No folder saved yet",
+      detail: savedFolder ? `Vectra scans ${savedFolder}` : "Pick a folder and Vectra will scan only that from now on",
+      action: "chooseFolder"
+    },
+    {
+      label: "$(globe) Scan whole computer\u2026",
+      description: "Slower \u2014 ignores the saved folder",
+      action: "scanEverywhere"
+    }
+  ];
+}
+function detectedItems(models) {
+  if (!models.length) return [];
+  return [
+    { label: "Detected models", kind: vscode9.QuickPickItemKind.Separator },
+    ...models.map((model) => ({
+      label: `${model.kind === "gguf" ? "$(file-binary)" : "$(server-process)"} ${model.label}`,
+      description: model.kind === "gguf" ? "GGUF \xB7 llama.cpp" : model.kind === "ollama" ? "Ollama" : model.detail.split(" \xB7 ")[0],
+      detail: model.detail,
+      model
+    }))
+  ];
+}
+function sameRow(a, b) {
+  return a.model && b.model ? a.model.kind === b.model.kind && a.model.id === b.model.id : a.action === b.action && a.label === b.label;
 }
 function toCatalogPickItem(entry) {
   return {
@@ -106461,8 +106641,8 @@ ${text}`;
       const include = new vscode11.RelativePattern(baseUri, glob || "**/*");
       const uris = await vscode11.workspace.findFiles(include, config2.excludeGlob, safeMax);
       for (const uri2 of uris) {
-        const relative3 = relativeToWorkspace(uri2);
-        if (relative3 && (config2.allowSensitiveFiles || !isSensitiveAgentPath(relative3))) results.push(relative3);
+        const relative4 = relativeToWorkspace(uri2);
+        if (relative4 && (config2.allowSensitiveFiles || !isSensitiveAgentPath(relative4))) results.push(relative4);
         if (results.length >= safeMax) break;
       }
       if (results.length >= safeMax) break;
@@ -106800,7 +106980,7 @@ function shellQuote3(value) {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 function spawnShell(command, cwd, timeoutMs, onData, signal) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     if (signal?.aborted) {
       reject(new Error("Request cancelled."));
       return;
@@ -106846,7 +107026,7 @@ function spawnShell(command, cwd, timeoutMs, onData, signal) {
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      resolve2({ stdout, stderr, exitCode: code ?? (timedOut ? 124 : 1), timedOut, cancelled: cancelled2 });
+      resolve3({ stdout, stderr, exitCode: code ?? (timedOut ? 124 : 1), timedOut, cancelled: cancelled2 });
     });
   });
 }
@@ -107471,7 +107651,7 @@ function deactivate() {
 }
 function requireTrustedWorkspace(action) {
   if (vscode14.workspace.isTrusted) return true;
-  void vscode14.window.showWarningMessage(`Trust this workspace before Vectra can ${action}.`, "Manage Workspace Trust").then((choice) => {
+  void vscode14.window.showWarningMessage(`Trust this workspace before Vectra can ${action}.`, { modal: true }, "Manage Workspace Trust").then((choice) => {
     if (choice === "Manage Workspace Trust") void vscode14.commands.executeCommand("workbench.trust.manage");
   });
   return false;

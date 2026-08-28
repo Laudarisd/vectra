@@ -217,7 +217,9 @@ export function deactivate(): void {
 
 function requireTrustedWorkspace(action: string): boolean {
   if (vscode.workspace.isTrusted) return true;
-  void vscode.window.showWarningMessage(`Trust this workspace before Vectra can ${action}.`, 'Manage Workspace Trust').then((choice) => {
+  // Modal on purpose: a toast here is invisible when notifications are silenced,
+  // which makes the Local Model button look like it does nothing at all.
+  void vscode.window.showWarningMessage(`Trust this workspace before Vectra can ${action}.`, { modal: true }, 'Manage Workspace Trust').then((choice) => {
     if (choice === 'Manage Workspace Trust') void vscode.commands.executeCommand('workbench.trust.manage');
   });
   return false;

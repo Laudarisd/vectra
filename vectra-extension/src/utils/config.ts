@@ -95,10 +95,25 @@ export async function updateTheme(value: ThemeMode): Promise<void> {
 export async function updateModel(value: string): Promise<void> {
   await vscode.workspace.getConfiguration(SECTION).update('model', value, vscode.ConfigurationTarget.Global);
 }
+/**
+ * Selecting a model must not silently narrow the folder Vectra scans. Picking
+ * D:\models\org\repo\x.gguf while D:\models is the saved scan root would otherwise
+ * leave detection looking at one leaf directory forever, so an existing root that
+ * still contains the model is kept as-is.
+ */
 export async function updateLocalModel(value: string): Promise<void> {
   const config = vscode.workspace.getConfiguration(SECTION);
   await config.update('localModelPath', value, vscode.ConfigurationTarget.Global);
-  await config.update('localModelDirectory', path.dirname(value), vscode.ConfigurationTarget.Global);
+  const saved = config.get<string>('localModelDirectory', '').trim();
+  if (!saved || !containsPath(saved, value)) {
+    await config.update('localModelDirectory', path.dirname(value), vscode.ConfigurationTarget.Global);
+  }
+}
+
+/** True when `directory` is `filePath`'s own folder or one of its ancestors. */
+function containsPath(directory: string, filePath: string): boolean {
+  const relative = path.relative(path.resolve(directory), path.resolve(path.dirname(filePath)));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 export async function updateLocalModelDirectory(value: string): Promise<void> {
   await vscode.workspace.getConfiguration(SECTION).update('localModelDirectory', value, vscode.ConfigurationTarget.Global);

@@ -17,11 +17,16 @@ test('extension branches chat history and reuses session attachments on resend',
   assert.match(source, /this\.patches\.rejectAllPending\(\)/);
 });
 
-test('local model command offers manual search and automatic detection', () => {
+test('local model picker offers a file, a folder, and a full scan without blocking on detection', () => {
   const source = fs.readFileSync('src/runtime/llama/LlamaCppRuntime.ts', 'utf8');
-  assert.match(source, /Search or choose a GGUF model/);
-  assert.match(source, /Detect installed local models/);
-  assert.match(source, /discoverInstalledModels/);
+  assert.match(source, /Choose a GGUF file…/);
+  assert.match(source, /Change model folder…/);
+  assert.match(source, /Scan whole computer…/);
+  // Shown before any filesystem work so the picker is never a dead button.
+  assert.match(source, /createQuickPick<DetectedModelItem>/);
+  assert.match(source, /pick\.ignoreFocusOut = true/);
+  // Detection must not run behind a notification-only progress indicator.
+  assert.doesNotMatch(source, /detecting installed local models/i);
 });
 
 test('extension waits for local model readiness instead of sending during startup', () => {

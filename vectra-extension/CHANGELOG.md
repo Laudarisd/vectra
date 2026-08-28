@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.2
+
+- Bounded local model detection with a wall-clock deadline, per-tier depth limits, and a per-directory read timeout, so a first scan finishes in seconds instead of crawling every drive letter to depth 12.
+- Rebuilt the Local Model flow as one live picker that appears before any scanning, streams results in, and no longer dismisses itself when focus returns to the chat view.
+- A chosen model folder is now remembered and scanned on its own, with "Change model folder" and "Scan whole computer" always available; selecting a model no longer narrows that folder to the file's own directory.
+- Resolved symlinked and junctioned directories by real path so self-referential Windows profile junctions can no longer stall a scan.
+
+## 1.1.1
+
+- Accelerated broad GGUF discovery with bounded concurrent directory reads and user cancellation.
+- Restored automatic `llama-server` detection for Vectra-managed installs, model-adjacent binaries, and Windows WinGet installs.
+
 ## 1.1.0
 
 - Unified tool metadata, aliases, risk policy, progress wording, web-safe file generation, and installed-model discovery in the shared TypeScript core used by both the extension and Node.js web host.

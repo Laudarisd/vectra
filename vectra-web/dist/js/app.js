@@ -764,8 +764,8 @@
     // generating, producing — just dressed up as something fun to watch
     // instead of one line silently overwriting itself.
     const stages = payloadAttachments.length
-      ? ["Lookin' at the file-friends…", "Nom nom nommin' the documents…", "Makin' stuff, yay!…", "Still workin' — local models can take a while…"]
-      : ["Snoopy-snoopin' at errythin'…", "Makin' stuff, yay!…", "Still workin' — local models can take a while…"];
+      ? ["Lookin' at the file-friends…", "Nom nom nommin' the documents…", "Makin' stuff, yay!…", "Still finkin' reeeal hard — da lokal robot brain is a slowpoke…"]
+      : ["Snoopy-snoopin' at errythin'…", "Makin' stuff, yay!…", "Still finkin' reeeal hard — da lokal robot brain is a slowpoke…"];
     const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [stages[0]], artifacts: [], createdAt: Date.now() };
     state.messages.push(placeholder); render();
     await persistChat().catch((error) => console.warn('Could not save chat history:', error));

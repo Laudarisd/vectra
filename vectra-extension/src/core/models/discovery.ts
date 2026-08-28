@@ -32,13 +32,51 @@ export const LOCAL_RUNTIME_TARGETS: readonly LocalRuntimeTarget[] = [
   { name: 'Msty', baseUrl: 'http://127.0.0.1:10000/v1' }
 ];
 
+/** Directory names never worth descending into. Matched against child entries only:
+ * roots are seeded straight into the queue, so skipping 'appdata' or 'programdata'
+ * here is safe while appModelDirectories() still reaches the model folders inside
+ * them. '.cache' must stay off this list — the Hugging Face hub lives there. */
 const SKIPPED = new Set([
   '.git', 'node_modules', 'dist', 'build', 'out', '.next', '.venv', 'venv', '__pycache__', 'coverage',
-  '$recycle.bin', 'system volume information', 'windows', 'recovery', 'program files', 'program files (x86)', 'appdata'
+  '$recycle.bin', 'system volume information', 'windows', 'recovery', 'program files', 'program files (x86)', 'appdata',
+  // Windows OS noise. The last three are legacy junctions that point back up the
+  // profile; following them is what turns a deep walk into a combinatorial one.
+  'programdata', 'perflogs', 'msocache', '$windows.~bt', '$windows.~ws',
+  'documents and settings', 'application data', 'local settings',
+  // Package and toolchain caches: reliably enormous, never hold a GGUF.
+  'site-packages', 'anaconda3', 'miniconda3', '.conda', '.cargo', '.rustup',
+  '.gradle', '.m2', '.nuget', '.npm', '.pnpm-store', '.yarn', '.tox', '.vs', '.idea'
 ]);
 
-export async function discoverGgufModels(extraRoots: string[] = [], maxDirectories = 20_000, maxModels = 500, includeDefaults = true): Promise<DiscoveredGgufModel[]> {
-  const paths = await findGgufPaths({ roots: extraRoots, limit: maxModels, maxDirectories, includeDefaults });
+/** Wall-clock and breadth budgets. A GGUF walk is bounded by time first and
+ * directory count second: on Windows with on-access virus scanning a single
+ * readdir costs ~6ms, so an unbounded 20k-directory crawl of every drive letter
+ * runs for over two minutes. */
+export const DEFAULT_MAX_DIRECTORIES = 4_000;
+export const SCOPED_TIME_BUDGET_MS = 5_000;
+export const FIRST_RUN_TIME_BUDGET_MS = 12_000;
+export const FULL_SCAN_TIME_BUDGET_MS = 60_000;
+export const FULL_SCAN_MAX_DIRECTORIES = 20_000;
+/** A readdir on a disconnected mapped drive can hang for a minute and cannot be
+ * aborted, so each one races a timer rather than blocking its whole batch. */
+export const PER_DIR_TIMEOUT_MS = 2_000;
+
+export interface GgufScanOptions {
+  query?: string;
+  roots?: string[];
+  limit?: number;
+  maxDirectories?: number;
+  includeDefaults?: boolean;
+  timeBudgetMs?: number;
+  /** Depth applied to `roots`. The default tiers use their own shallower caps. */
+  maxDepth?: number;
+  /** Share one set across calls to keep cross-tier de-duplication while streaming. */
+  visited?: Set<string>;
+  signal?: AbortSignal;
+}
+
+export async function discoverGgufModels(options: GgufScanOptions = {}): Promise<DiscoveredGgufModel[]> {
+  const paths = await findGgufPaths(options);
   const models = await Promise.all(paths.map(async (filePath): Promise<DiscoveredGgufModel | undefined> => {
     try {
       const size = (await fs.stat(filePath)).size;
@@ -48,45 +86,117 @@ export async function discoverGgufModels(extraRoots: string[] = [], maxDirectori
   return models.filter((item): item is DiscoveredGgufModel => Boolean(item)).sort((a, b) => natural(a.label, b.label));
 }
 
-export async function searchGgufModels(options: { query?: string; roots?: string[]; limit?: number; maxDirectories?: number; includeDefaults?: boolean } = {}): Promise<string[]> {
+export async function searchGgufModels(options: GgufScanOptions = {}): Promise<string[]> {
   return findGgufPaths(options);
 }
 
-async function findGgufPaths({ query = '', roots = [], limit = 500, maxDirectories = 20_000, includeDefaults = true }: { query?: string; roots?: string[]; limit?: number; maxDirectories?: number; includeDefaults?: boolean }): Promise<string[]> {
+async function findGgufPaths({
+  query = '',
+  roots = [],
+  limit = 500,
+  maxDirectories = DEFAULT_MAX_DIRECTORIES,
+  includeDefaults = true,
+  timeBudgetMs = FIRST_RUN_TIME_BUDGET_MS,
+  maxDepth = 8,
+  visited = new Set<string>(),
+  signal
+}: GgufScanOptions): Promise<string[]> {
   const needle = query.trim().toLowerCase();
-  const visited = new Set<string>();
   const output: string[] = [];
-  if (roots.length) await scan(roots, visited, output, needle, limit, maxDirectories);
+  const start = Date.now();
+  // Deadlines are absolute and cumulative: a tier that finishes early donates its
+  // unused time to the next, and the last one still lands on start + timeBudgetMs.
+  const at = (fraction: number) => start + Math.max(1, Math.floor(timeBudgetMs * fraction));
+  const tier = (tierRoots: string[], budget: number, deadline: number, depth: number) =>
+    scan({ roots: tierRoots, visited, output, needle, limit, maxDirectories: budget, maxDepth: depth, deadline, signal });
+
+  // A folder the user picked is authoritative, so it is searched first and deepest.
+  if (roots.length) await tier(roots, maxDirectories, at(includeDefaults ? 0.5 : 1), maxDepth);
   if (!includeDefaults) return finishGgufPaths(output, limit);
-  const appBudget = Math.max(1, Math.floor(maxDirectories * 0.6));
-  const personalBudget = Math.max(appBudget, Math.floor(maxDirectories * 0.8));
-  await scan(appModelDirectories(), visited, output, needle, limit, appBudget);
-  await scan(broadModelDirectories(), visited, output, needle, limit, personalBudget);
-  await scan(storageModelDirectories(), visited, output, needle, limit, maxDirectories);
+  await tier(appModelDirectories(), Math.max(1, Math.floor(maxDirectories * 0.6)), at(0.7), 6);
+  await tier(broadModelDirectories(), Math.max(1, Math.floor(maxDirectories * 0.8)), at(0.85), 4);
+  await tier(storageModelDirectories(), maxDirectories, at(1), 4);
   return finishGgufPaths(output, limit);
 }
 
-async function scan(roots: string[], visited: Set<string>, output: string[], needle: string, limit: number, maxDirectories: number): Promise<void> {
+async function scan({ roots, visited, output, needle, limit, maxDirectories, maxDepth, deadline, signal }: {
+  roots: string[];
+  visited: Set<string>;
+  output: string[];
+  needle: string;
+  limit: number;
+  maxDirectories: number;
+  maxDepth: number;
+  deadline: number;
+  signal?: AbortSignal;
+}): Promise<void> {
   const queue = uniquePaths(roots).map((directory) => ({ directory, depth: 0 }));
-  for (let cursor = 0; cursor < queue.length && visited.size < maxDirectories && output.length < limit; cursor++) {
-    const current = queue[cursor];
-    const key = path.resolve(current.directory).toLowerCase();
-    if (visited.has(key)) continue;
-    visited.add(key);
-    let entries: import('node:fs').Dirent[];
-    try { entries = await fs.readdir(current.directory, { withFileTypes: true }); } catch { continue; }
-    for (const entry of entries) {
-      if (output.length >= limit) break;
-      const full = path.join(current.directory, entry.name);
-      let directory = entry.isDirectory();
-      let file = entry.isFile();
-      if (entry.isSymbolicLink()) {
-        try { const value = await fs.stat(full); directory = value.isDirectory(); file = value.isFile(); } catch { continue; }
+  const exhausted = () => output.length >= limit || signal?.aborted === true || Date.now() >= deadline;
+  for (let cursor = 0; cursor < queue.length && visited.size < maxDirectories && !exhausted();) {
+    const batch: Array<{ directory: string; depth: number }> = [];
+    while (cursor < queue.length && batch.length < 24 && visited.size < maxDirectories) {
+      const current = queue[cursor++];
+      const key = await visitKey(current.directory);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      batch.push(current);
+    }
+    const reads = batch.map(async (current) => ({
+      current,
+      entries: await withTimeout(readEntries(current.directory), PER_DIR_TIMEOUT_MS, [] as Dirent[])
+    }));
+    // Race the whole batch against the deadline as well: the per-directory timeout
+    // is the common guard, this is the backstop that keeps the bound honest.
+    const results = await Promise.race([
+      Promise.all(reads),
+      sleepUntil(deadline).then(() => [] as Array<{ current: { directory: string; depth: number }; entries: Dirent[] }>)
+    ]);
+    reads.forEach((read) => void read.catch(() => undefined));
+    for (const { current, entries } of results) {
+      for (const entry of entries) {
+        if (exhausted()) break;
+        const full = path.join(current.directory, entry.name);
+        let directory = entry.isDirectory();
+        let file = entry.isFile();
+        if (entry.isSymbolicLink()) {
+          try { const value = await fs.stat(full); directory = value.isDirectory(); file = value.isFile(); } catch { continue; }
+        }
+        if (directory && current.depth < maxDepth && !SKIPPED.has(entry.name.toLowerCase())) queue.push({ directory: full, depth: current.depth + 1 });
+        else if (file && isSelectableGguf(entry.name) && (!needle || entry.name.toLowerCase().includes(needle))) output.push(full);
       }
-      if (directory && current.depth < 12 && !SKIPPED.has(entry.name.toLowerCase())) queue.push({ directory: full, depth: current.depth + 1 });
-      else if (file && isSelectableGguf(entry.name) && (!needle || entry.name.toLowerCase().includes(needle))) output.push(full);
     }
   }
+}
+
+type Dirent = import('node:fs').Dirent;
+
+async function readEntries(directory: string): Promise<Dirent[]> {
+  try { return await fs.readdir(directory, { withFileTypes: true }); } catch { return []; }
+}
+
+/** Junctions and symlinks are followed deliberately, so identity has to come from
+ * the real path — otherwise a self-referential profile junction reappears under a
+ * new spelling at every depth and the walk never converges. */
+async function visitKey(directory: string): Promise<string> {
+  try { return (await fs.realpath(directory)).toLowerCase(); }
+  catch { return path.resolve(directory).toLowerCase(); }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(fallback); }
+    );
+  });
+}
+
+function sleepUntil(deadline: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+    if (typeof timer.unref === 'function') timer.unref();
+  });
 }
 
 /** Finds Ollama models even when its server is stopped: API, CLI, and manifest index are merged. */
@@ -178,9 +288,19 @@ export async function discoverInstalledModels(options: {
   runtimeTargets?: LocalRuntimeTarget[];
   maxDirectories?: number;
   maxModels?: number;
+  includeDefaults?: boolean;
+  timeBudgetMs?: number;
+  signal?: AbortSignal;
 } = {}): Promise<InstalledModelInventory> {
   const [gguf, ollama, runtimes] = await Promise.all([
-    discoverGgufModels(options.extraRoots, options.maxDirectories, options.maxModels),
+    discoverGgufModels({
+      roots: options.extraRoots,
+      maxDirectories: options.maxDirectories,
+      limit: options.maxModels,
+      includeDefaults: options.includeDefaults ?? true,
+      timeBudgetMs: options.timeBudgetMs,
+      signal: options.signal
+    }),
     discoverOllamaModels(options.ollamaBaseUrl),
     discoverLocalRuntimes(options.runtimeTargets)
   ]);

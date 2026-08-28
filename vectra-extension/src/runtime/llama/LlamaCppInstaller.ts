@@ -106,10 +106,10 @@ export async function installAsset(
   return execPath;
 }
 
-async function findServerExecutable(rootDir: string): Promise<string | undefined> {
+export async function findServerExecutable(rootDir: string, maxDepth = 6): Promise<string | undefined> {
   const target = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
   let queue = [rootDir];
-  for (let depth = 0; depth < 6 && queue.length; depth++) {
+  for (let depth = 0; depth < maxDepth && queue.length; depth++) {
     const next: string[] = [];
     for (const dir of queue) {
       let entries;

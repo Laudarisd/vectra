@@ -145,7 +145,7 @@ export class LocalLlamaManager {
 
     await ensureFile(modelPath);
     const port = await findAvailablePort(requestedPort, 60);
-    const timeoutSeconds = clampInt(options.timeoutSeconds, 30, 3600, 600);
+    const timeoutSeconds = clampInt(options.timeoutSeconds, 30, 7200, 3600);
     const serverPath = await resolveServerExecutable(serverPathInput);
     const [modelInfo, gpus, supportedFlags] = await Promise.all([
       stat(modelPath),

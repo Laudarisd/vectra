@@ -154,7 +154,7 @@ function activateVectra(context, output) {
         await selectProviderModel(providers, chat);
     }), vscode.commands.registerCommand('vectra.testConnection', async () => {
         try {
-            if ((0, config_1.getConfig)().provider === 'llamaCpp' && !localLlama.isRunning) {
+            if ((0, config_1.getConfig)().provider === 'llamaCpp' && !localLlama.isReady) {
                 if (!requireTrustedWorkspace('launch a local model'))
                     return;
                 const started = await localLlama.startConfiguredModel();

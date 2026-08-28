@@ -6,7 +6,7 @@ export class LlamaCppProvider implements TextProvider {
   readonly id = 'llamaCpp' as const;
   private readonly delegate: OpenAICompatibleProvider;
   private nativeToolsUnavailable = false;
-  constructor(private readonly baseUrl: string, private readonly timeoutMs = 900_000) { this.delegate = new OpenAICompatibleProvider(baseUrl, undefined, true, timeoutMs); }
+  constructor(private readonly baseUrl: string, private readonly timeoutMs = 3_600_000) { this.delegate = new OpenAICompatibleProvider(baseUrl, undefined, true, timeoutMs); }
   complete(request: ProviderRequest): Promise<string> { return this.delegate.complete(request); }
   async completeWithTools(request: NativeToolRequest): Promise<NativeToolResult> {
     if (this.nativeToolsUnavailable) throw new Error('NATIVE_TOOL_CALLING_UNSUPPORTED: disabled after an incompatible response.');

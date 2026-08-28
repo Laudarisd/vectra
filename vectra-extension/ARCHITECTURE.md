@@ -24,7 +24,7 @@ The shared agent core never receives direct VS Code workspace or shell access. I
 
 ## Local model lifecycle
 
-`LlamaCppRuntime` launches `llama-server`, while `LlamaRuntimeProfile` selects hardware-aware context, GPU, KV-cache, and prompt-cache options. Model loading has its own timeout. Inference uses `vectra.localRequestTimeoutSeconds` (900 seconds by default), so a slow local response is not cut off by the former generic 120-second request limit.
+`LlamaCppRuntime` launches `llama-server`, while `LlamaRuntimeProfile` selects hardware-aware context, GPU, KV-cache, and prompt-cache options. Model loading has its own timeout. Inference uses `vectra.localRequestTimeoutSeconds` (3600 seconds by default), so slow loading, prompt ingestion, or CPU inference is not cut off by the former generic 120-second request limit.
 
 Conversational responses stream when supported. Structured agent/tool responses remain non-streaming because incomplete JSON or tool calls cannot be safely executed.
 

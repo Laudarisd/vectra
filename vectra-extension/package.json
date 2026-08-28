@@ -220,10 +220,10 @@
         },
         "vectra.localRequestTimeoutSeconds": {
           "type": "number",
-          "default": 900,
+          "default": 3600,
           "minimum": 60,
           "maximum": 7200,
-          "description": "How long Vectra waits on a local model (llama.cpp, Ollama, OpenAI-compatible) response before giving up. Local CPU inference can be slow, so this is much higher than the cloud-provider timeout."
+          "description": "Maximum idle wait for a local model response. Local loading and CPU inference can be slow, so Vectra waits up to one hour by default; streamed tokens reset the idle timer."
         },
         "vectra.openaiCompatibleBaseUrl": {
           "type": "string",
@@ -308,10 +308,10 @@
         },
         "vectra.llamaCppLoadTimeoutSeconds": {
           "type": "number",
-          "default": 600,
+          "default": 3600,
           "minimum": 30,
-          "maximum": 3600,
-          "description": "How long Vectra waits for large local models to load."
+          "maximum": 7200,
+          "description": "How long Vectra waits for a large local model to load before treating startup as stalled."
         },
         "vectra.llamaCppGpuLayers": {
           "type": "string",

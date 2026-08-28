@@ -22,7 +22,7 @@ export class OllamaProvider implements TextProvider {
     private readonly baseUrl: string,
     private readonly deviceMode: 'auto' | 'gpu' | 'cpu' = 'auto',
     private readonly contextSize = 8192,
-    private readonly timeoutMs = 900_000
+    private readonly timeoutMs = 3_600_000
   ) {}
 
   async complete(request: ProviderRequest): Promise<string> {
@@ -72,7 +72,7 @@ export class OllamaProvider implements TextProvider {
   }
 
   async listModels(signal?: AbortSignal): Promise<ModelInfo[]> {
-    const data = await fetchJson<OllamaTagsResponse>(`${this.baseUrl}/api/tags`, { signal });
+    const data = await fetchJson<OllamaTagsResponse>(`${this.baseUrl}/api/tags`, { signal }, this.timeoutMs);
     return (data.models ?? []).map((model) => {
       const detailParts = [
         model.details?.family,

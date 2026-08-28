@@ -269,7 +269,7 @@ class ChatViewProvider {
             return;
         }
         const config = (0, config_1.getConfig)();
-        if (config.provider === 'llamaCpp' && !this.localLlama.isRunning) {
+        if (config.provider === 'llamaCpp' && !this.localLlama.isReady) {
             const started = await this.localLlama.startConfiguredModel();
             if (!started)
                 throw new Error('No local GGUF model selected. Click Local Model first, or API Key for cloud.');
@@ -397,7 +397,7 @@ class ChatViewProvider {
             provider: config.provider,
             model: config.model,
             localModelName,
-            localModelRunning: config.provider === 'llamaCpp' && this.localLlama.isRunning,
+            localModelRunning: config.provider === 'llamaCpp' && this.localLlama.isReady,
             visionEnabled: config.provider === 'llamaCpp' && this.localLlama.visionEnabled,
             hasKey,
             isLocal,

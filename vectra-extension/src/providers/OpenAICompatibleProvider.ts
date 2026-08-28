@@ -5,7 +5,7 @@ interface ChatResponse{choices?:Array<{message?:{content?:string}}>}
 interface ModelsResponse{data?:Array<{id:string;owned_by?:string}>}
 export class OpenAICompatibleProvider implements TextProvider{
   readonly id='openaiCompatible' as const;
-  constructor(private readonly baseUrl:string,private readonly apiKey?:string,private readonly structuredAgentJson=false,private readonly timeoutMs=900_000){}
+  constructor(private readonly baseUrl:string,private readonly apiKey?:string,private readonly structuredAgentJson=false,private readonly timeoutMs=3_600_000){}
   async complete(request:ProviderRequest):Promise<string>{
     const userContent:Array<Record<string,unknown>>=[{type:'text',text:request.userPrompt}];
     for(const f of request.attachments??[]) append(userContent,f);
@@ -41,7 +41,7 @@ export class OpenAICompatibleProvider implements TextProvider{
       throw error;
     }
   }
-  async listModels(signal?:AbortSignal):Promise<ModelInfo[]>{const d=await fetchJson<ModelsResponse>(`${this.baseUrl}/models`,{headers:this.headers(false),signal});return(d.data??[]).map(m=>({id:m.id,detail:m.owned_by}))}
+  async listModels(signal?:AbortSignal):Promise<ModelInfo[]>{const d=await fetchJson<ModelsResponse>(`${this.baseUrl}/models`,{headers:this.headers(false),signal},this.timeoutMs);return(d.data??[]).map(m=>({id:m.id,detail:m.owned_by}))}
   async testConnection(signal?:AbortSignal):Promise<string>{const m=await this.listModels(signal);return`Connected to OpenAI-compatible endpoint. ${m.length} model(s) available.`}
   private headers(ct:boolean):Record<string,string>{return{...(ct?{'Content-Type':'application/json'}:{}),...(this.apiKey?{Authorization:`Bearer ${this.apiKey}`}:{})}}
 }

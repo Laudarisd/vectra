@@ -140,7 +140,7 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
     }),
     vscode.commands.registerCommand('vectra.testConnection', async () => {
       try {
-        if (getConfig().provider === 'llamaCpp' && !localLlama!.isRunning) {
+        if (getConfig().provider === 'llamaCpp' && !localLlama!.isReady) {
           if (!requireTrustedWorkspace('launch a local model')) return;
           const started = await localLlama!.startConfiguredModel();
           if (!started) throw new Error('No local GGUF model is selected. Click Local Model first.');

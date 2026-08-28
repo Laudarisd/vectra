@@ -59,8 +59,11 @@ class LlamaCppRuntime {
     currentModelPath = '';
     currentMmprojPath = '';
     lastArgsKey = '';
+    ready = false;
+    startupPromise;
     capabilityCache = new Map();
     get isRunning() { return Boolean(this.process && !this.process.killed); }
+    get isReady() { return this.isRunning && this.ready; }
     get baseUrl() { return `http://127.0.0.1:${(0, config_1.getConfig)().llamaCppPort}/v1`; }
     get modelPath() { return this.currentModelPath || (0, config_1.getConfig)().localModelPath; }
     get mmprojPath() { return this.currentMmprojPath || (0, config_1.getConfig)().llamaCppMmprojPath; }
@@ -492,6 +495,8 @@ class LlamaCppRuntime {
         const argsKey = JSON.stringify({ executable, args });
         if (this.isRunning && argsKey === this.lastArgsKey) {
             this.output.appendLine('[Vectra] Reusing the already-running local model (unchanged settings).');
+            if (this.startupPromise)
+                await this.startupPromise;
             return;
         }
         await this.stop();
@@ -509,15 +514,27 @@ class LlamaCppRuntime {
         this.currentModelPath = normalized;
         this.currentMmprojPath = mmproj || '';
         this.lastArgsKey = argsKey;
+        this.ready = false;
         child.stdout?.on('data', (data) => this.output.append(data.toString()));
         child.stderr?.on('data', (data) => this.output.append(data.toString()));
         child.on('exit', (code, signal) => {
             this.output.appendLine(`\n[Vectra] llama-server exited (${code ?? 'no code'}${signal ? `, ${signal}` : ''}).`);
-            if (this.process === child)
+            if (this.process === child) {
                 this.process = undefined;
+                this.ready = false;
+            }
         });
-        await this.waitUntilHealthy(child, config.llamaCppLoadTimeoutSeconds * 1000);
-        this.output.appendLine(`[Vectra] Local model is ready${mmproj ? ' with multimodal vision' : ''}.`);
+        const startup = this.waitUntilHealthy(child, config.llamaCppLoadTimeoutSeconds * 1000);
+        this.startupPromise = startup;
+        try {
+            await startup;
+            this.ready = true;
+            this.output.appendLine(`[Vectra] Local model is ready${mmproj ? ' with multimodal vision' : ''}.`);
+        }
+        finally {
+            if (this.startupPromise === startup)
+                this.startupPromise = undefined;
+        }
     }
     async probeCapabilities(executable) {
         const cached = this.capabilityCache.get(executable);
@@ -542,6 +559,7 @@ class LlamaCppRuntime {
         this.currentModelPath = '';
         this.currentMmprojPath = '';
         this.lastArgsKey = '';
+        this.ready = false;
         if (!child || child.killed)
             return;
         child.kill();

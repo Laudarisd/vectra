@@ -9,7 +9,7 @@ class OpenAICompatibleProvider {
     structuredAgentJson;
     timeoutMs;
     id = 'openaiCompatible';
-    constructor(baseUrl, apiKey, structuredAgentJson = false, timeoutMs = 900_000) {
+    constructor(baseUrl, apiKey, structuredAgentJson = false, timeoutMs = 3_600_000) {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.structuredAgentJson = structuredAgentJson;
@@ -59,7 +59,7 @@ class OpenAICompatibleProvider {
             throw error;
         }
     }
-    async listModels(signal) { const d = await (0, http_1.fetchJson)(`${this.baseUrl}/models`, { headers: this.headers(false), signal }); return (d.data ?? []).map(m => ({ id: m.id, detail: m.owned_by })); }
+    async listModels(signal) { const d = await (0, http_1.fetchJson)(`${this.baseUrl}/models`, { headers: this.headers(false), signal }, this.timeoutMs); return (d.data ?? []).map(m => ({ id: m.id, detail: m.owned_by })); }
     async testConnection(signal) { const m = await this.listModels(signal); return `Connected to OpenAI-compatible endpoint. ${m.length} model(s) available.`; }
     headers(ct) { return { ...(ct ? { 'Content-Type': 'application/json' } : {}), ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}) }; }
 }

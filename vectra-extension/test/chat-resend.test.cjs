@@ -23,3 +23,11 @@ test('local model command offers manual search and automatic detection', () => {
   assert.match(source, /Detect installed local models/);
   assert.match(source, /discoverInstalledModels/);
 });
+
+test('extension waits for local model readiness instead of sending during startup', () => {
+  const runtime = fs.readFileSync('src/runtime/llama/LlamaCppRuntime.ts', 'utf8');
+  const chat = fs.readFileSync('src/ui/ChatViewProvider.ts', 'utf8');
+  assert.match(runtime, /startupPromise/);
+  assert.match(runtime, /get isReady/);
+  assert.match(chat, /!this\.localLlama\.isReady/);
+});

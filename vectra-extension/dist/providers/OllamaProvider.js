@@ -9,7 +9,7 @@ class OllamaProvider {
     contextSize;
     timeoutMs;
     id = 'ollama';
-    constructor(baseUrl, deviceMode = 'auto', contextSize = 8192, timeoutMs = 900_000) {
+    constructor(baseUrl, deviceMode = 'auto', contextSize = 8192, timeoutMs = 3_600_000) {
         this.baseUrl = baseUrl;
         this.deviceMode = deviceMode;
         this.contextSize = contextSize;
@@ -60,7 +60,7 @@ class OllamaProvider {
         return text;
     }
     async listModels(signal) {
-        const data = await (0, http_1.fetchJson)(`${this.baseUrl}/api/tags`, { signal });
+        const data = await (0, http_1.fetchJson)(`${this.baseUrl}/api/tags`, { signal }, this.timeoutMs);
         return (data.models ?? []).map((model) => {
             const detailParts = [
                 model.details?.family,

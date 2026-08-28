@@ -49,9 +49,12 @@ export class LlamaCppRuntime implements vscode.Disposable {
   private currentModelPath = '';
   private currentMmprojPath = '';
   private lastArgsKey = '';
+  private ready = false;
+  private startupPromise?: Promise<void>;
   private readonly capabilityCache = new Map<string, ReadonlySet<string>>();
 
   get isRunning(): boolean { return Boolean(this.process && !this.process.killed); }
+  get isReady(): boolean { return this.isRunning && this.ready; }
   get baseUrl(): string { return `http://127.0.0.1:${getConfig().llamaCppPort}/v1`; }
   get modelPath(): string { return this.currentModelPath || getConfig().localModelPath; }
   get mmprojPath(): string { return this.currentMmprojPath || getConfig().llamaCppMmprojPath; }
@@ -513,6 +516,7 @@ export class LlamaCppRuntime implements vscode.Disposable {
     const argsKey = JSON.stringify({ executable, args });
     if (this.isRunning && argsKey === this.lastArgsKey) {
       this.output.appendLine('[Vectra] Reusing the already-running local model (unchanged settings).');
+      if (this.startupPromise) await this.startupPromise;
       return;
     }
     await this.stop();
@@ -531,15 +535,23 @@ export class LlamaCppRuntime implements vscode.Disposable {
     this.currentModelPath = normalized;
     this.currentMmprojPath = mmproj || '';
     this.lastArgsKey = argsKey;
+    this.ready = false;
     child.stdout?.on('data', (data: Buffer) => this.output.append(data.toString()));
     child.stderr?.on('data', (data: Buffer) => this.output.append(data.toString()));
     child.on('exit', (code, signal) => {
       this.output.appendLine(`\n[Vectra] llama-server exited (${code ?? 'no code'}${signal ? `, ${signal}` : ''}).`);
-      if (this.process === child) this.process = undefined;
+      if (this.process === child) { this.process = undefined; this.ready = false; }
     });
 
-    await this.waitUntilHealthy(child, config.llamaCppLoadTimeoutSeconds * 1000);
-    this.output.appendLine(`[Vectra] Local model is ready${mmproj ? ' with multimodal vision' : ''}.`);
+    const startup = this.waitUntilHealthy(child, config.llamaCppLoadTimeoutSeconds * 1000);
+    this.startupPromise = startup;
+    try {
+      await startup;
+      this.ready = true;
+      this.output.appendLine(`[Vectra] Local model is ready${mmproj ? ' with multimodal vision' : ''}.`);
+    } finally {
+      if (this.startupPromise === startup) this.startupPromise = undefined;
+    }
   }
 
   private async probeCapabilities(executable: string): Promise<ReadonlySet<string>> {
@@ -564,6 +576,7 @@ export class LlamaCppRuntime implements vscode.Disposable {
     this.currentModelPath = '';
     this.currentMmprojPath = '';
     this.lastArgsKey = '';
+    this.ready = false;
     if (!child || child.killed) return;
     child.kill();
     await new Promise<void>((resolve) => {

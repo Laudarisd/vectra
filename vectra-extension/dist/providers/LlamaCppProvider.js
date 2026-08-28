@@ -9,7 +9,7 @@ class LlamaCppProvider {
     id = 'llamaCpp';
     delegate;
     nativeToolsUnavailable = false;
-    constructor(baseUrl, timeoutMs = 900_000) {
+    constructor(baseUrl, timeoutMs = 3_600_000) {
         this.baseUrl = baseUrl;
         this.timeoutMs = timeoutMs;
         this.delegate = new OpenAICompatibleProvider_1.OpenAICompatibleProvider(baseUrl, undefined, true, timeoutMs);

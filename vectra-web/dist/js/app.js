@@ -686,7 +686,7 @@
       gpuLayers: els.localGpuLayers.value.trim() || 'auto',
       splitMode: els.localSplitMode.value,
       device: els.localDevice.value,
-      timeoutSeconds: Number(els.localTimeout.value || 600),
+      timeoutSeconds: Number(els.localTimeout.value || 3600),
       extraArgs: els.localExtraArgs.value.trim(),
       cpuMoe: els.localCpuMoe.checked,
       noMmap: els.localNoMmap.checked
@@ -704,7 +704,7 @@
     set(els.localGpuLayers, state.local.gpuLayers || 'auto');
     set(els.localSplitMode, state.local.splitMode || 'layer');
     set(els.localDevice, state.local.device || 'auto');
-    set(els.localTimeout, state.local.timeoutSeconds || 600);
+    set(els.localTimeout, state.local.timeoutSeconds || 3600);
     set(els.localExtraArgs, state.local.extraArgs || '');
     els.localCpuMoe.checked = Boolean(state.local.cpuMoe);
     els.localNoMmap.checked = Boolean(state.local.noMmap);
@@ -764,8 +764,8 @@
     // generating, producing — just dressed up as something fun to watch
     // instead of one line silently overwriting itself.
     const stages = payloadAttachments.length
-      ? ["Lookin' at the file-friends…", "Nom nom nommin' the documents…", "Makin' stuff, yay!…", "All done-done, wrappy-wrap!…"]
-      : ["Snoopy-snoopin' at errythin'…", "Makin' stuff, yay!…", "All done-done, wrappy-wrap!…"];
+      ? ["Lookin' at the file-friends…", "Nom nom nommin' the documents…", "Makin' stuff, yay!…", "Still workin' — local models can take a while…"]
+      : ["Snoopy-snoopin' at errythin'…", "Makin' stuff, yay!…", "Still workin' — local models can take a while…"];
     const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [stages[0]], artifacts: [], createdAt: Date.now() };
     state.messages.push(placeholder); render();
     await persistChat().catch((error) => console.warn('Could not save chat history:', error));
@@ -1057,7 +1057,7 @@
   function fileName(path) { return String(path || '').split(/[\\/]/).pop() || ''; }
 
   function loadLocalConfig() {
-    const defaults = { modelPath: '', mmprojPath: '', serverPath: '', port: 8080, contextSize: 16384, gpuLayers: 'auto', splitMode: 'layer', device: 'auto', timeoutSeconds: 600, extraArgs: '', cpuMoe: false, noMmap: false };
+    const defaults = { modelPath: '', mmprojPath: '', serverPath: '', port: 8080, contextSize: 16384, gpuLayers: 'auto', splitMode: 'layer', device: 'auto', timeoutSeconds: 3600, extraArgs: '', cpuMoe: false, noMmap: false };
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(LOCAL_CONFIG_KEY) || '{}') }; }
     catch { return defaults; }
   }

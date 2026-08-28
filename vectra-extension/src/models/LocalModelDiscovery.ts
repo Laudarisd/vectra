@@ -8,7 +8,8 @@ export {
   discoverOllamaModels,
   discoverOpenAICompatibleModels,
   formatBytes,
-  normalizeShardPath
+  normalizeShardPath,
+  storageModelDirectories
 } from '../../generated/agent-core';
 export type {
   DiscoveredGgufModel,

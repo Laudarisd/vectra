@@ -200,7 +200,7 @@ class LlamaCppRuntime {
             return undefined;
         const directory = pickedFolder[0].fsPath;
         await (0, config_1.updateLocalModelDirectory)(directory);
-        const models = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Vectra: scanning ${directory}…` }, () => (0, LocalModelDiscovery_1.discoverGgufModels)([directory], 20_000, 500));
+        const models = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Vectra: scanning ${directory}…` }, () => (0, LocalModelDiscovery_1.discoverGgufModels)([directory], 20_000, 500, false));
         if (!models.length) {
             void vscode.window.showInformationMessage('No selectable GGUF models were found in that folder.');
             return undefined;

@@ -39,12 +39,13 @@ export interface InstalledModelInventory {
     runtimeModels: DiscoveredRuntimeModel[];
 }
 export declare const LOCAL_RUNTIME_TARGETS: readonly LocalRuntimeTarget[];
-export declare function discoverGgufModels(extraRoots?: string[], maxDirectories?: number, maxModels?: number): Promise<DiscoveredGgufModel[]>;
+export declare function discoverGgufModels(extraRoots?: string[], maxDirectories?: number, maxModels?: number, includeDefaults?: boolean): Promise<DiscoveredGgufModel[]>;
 export declare function searchGgufModels(options?: {
     query?: string;
     roots?: string[];
     limit?: number;
     maxDirectories?: number;
+    includeDefaults?: boolean;
 }): Promise<string[]>;
 /** Finds Ollama models even when its server is stopped: API, CLI, and manifest index are merged. */
 export declare function discoverOllamaModels(baseUrl?: string): Promise<DiscoveredOllamaModel[]>;
@@ -61,6 +62,8 @@ export declare function discoverInstalledModels(options?: {
 }): Promise<InstalledModelInventory>;
 export declare function appModelDirectories(): string[];
 export declare function broadModelDirectories(): string[];
+/** Last-pass roots cover arbitrary folders and secondary drives without making OS directories the priority. */
+export declare function storageModelDirectories(): string[];
 export declare function commonModelDirectories(): string[];
 export declare function defaultModelRoots(): string[];
 export declare function normalizeShardPath(filePath: string): string;

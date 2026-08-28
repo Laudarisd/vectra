@@ -8,7 +8,8 @@ const {
   discoverOllamaModels,
   normalizeShardPath,
   appModelDirectories,
-  broadModelDirectories
+  broadModelDirectories,
+  storageModelDirectories
 } = require('../dist/models/LocalModelDiscovery.js');
 
 test('local discovery finds GGUF models while excluding projectors and later shards', async () => {
@@ -20,7 +21,7 @@ test('local discovery finds GGUF models while excluding projectors and later sha
       writeFile(join(directory, 'sharded-00002-of-00002.gguf'), Buffer.alloc(32)),
       writeFile(join(directory, 'mmproj-model-f16.gguf'), Buffer.alloc(16))
     ]);
-    const models = await discoverGgufModels([directory], 1, 20);
+    const models = await discoverGgufModels([directory], 1, 20, false);
     assert.deepEqual(models.map((model) => model.label).sort(), [
       'model.gguf',
       'sharded-00001-of-00002.gguf'
@@ -28,6 +29,13 @@ test('local discovery finds GGUF models while excluding projectors and later sha
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('automatic discovery includes arbitrary home folders and mounted storage roots', () => {
+  const roots = storageModelDirectories();
+  assert.ok(roots.length > 0);
+  assert.ok(roots.some((entry) => entry === require('node:os').homedir()));
+  if (process.platform === 'win32') assert.ok(roots.some((entry) => /^[A-Z]:\\$/i.test(entry)));
 });
 
 test('local discovery follows a symlinked/junctioned models directory', async () => {
@@ -49,7 +57,7 @@ test('local discovery follows a symlinked/junctioned models directory', async ()
     // app-specific cache directories (huggingface, lm-studio, jan, ...), most
     // of which won't exist on the test machine but each still costs one
     // visit before the queue reaches this root's own children.
-    const models = await discoverGgufModels([root], 500, 20);
+    const models = await discoverGgufModels([root], 500, 20, false);
     assert.ok(models.some((model) => model.label === 'linked-model.gguf'));
   } finally {
     await rm(root, { recursive: true, force: true });

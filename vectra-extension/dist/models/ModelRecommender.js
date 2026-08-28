@@ -18,7 +18,7 @@ function effectiveBudgetMiB(hw) {
 /**
  * Filters the catalog to entries that plausibly fit, then sorts the biggest
  * (best-quality) model that still fits to the front — same "show the best
- * option first" convention LocalLlamaCppService's detection picker already uses.
+ * option first" convention LlamaCppRuntime's detection picker already uses.
  */
 function recommendCatalogEntries(hw, catalog, limit = 6) {
     const budget = effectiveBudgetMiB(hw);

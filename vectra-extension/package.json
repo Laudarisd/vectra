@@ -386,13 +386,17 @@
   "scripts": {
     "check": "tsc --noEmit -p .",
     "check:release": "node scripts/check-release.mjs",
-    "compile": "tsc -p . && node scripts/build-extension.mjs",
+    "compile": "tsc -p .",
+    "prebundle": "node scripts/clean-extension.mjs",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.js --log-level=info",
+    "build": "npm run compile && npm run bundle",
     "watch": "tsc -watch -p .",
-    "test": "npm run compile && node --test --test-isolation=none test/*.test.cjs && npm run test:web",
-    "package": "npm run test && npm run build:web && npm run check:release && vsce package --no-dependencies",
+    "test": "npm run compile && node --test --test-isolation=none test/*.test.cjs",
+    "test:all": "npm test && npm run test:web",
+    "package": "npm test && npm run bundle && npm run check:release && vsce package --no-dependencies",
     "build:web": "npm run build --prefix ../vectra-web",
     "web": "npm start --prefix ../vectra-web",
-    "build:all": "npm run compile && npm run build:web && npm run test:web",
+    "build:all": "npm run build && npm run build:web && npm run test:all",
     "test:web": "npm test --prefix ../vectra-web"
   },
   "dependencies": {

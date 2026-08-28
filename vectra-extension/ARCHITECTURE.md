@@ -30,4 +30,4 @@ Conversational responses stream when supported. Structured agent/tool responses 
 
 ## Build boundary
 
-Extension TypeScript compiles to the ignored `build/` directory for tests, then esbuild creates the single Marketplace runtime file `dist/extension.js`. The VSIX excludes TypeScript source, intermediate output, scripts, dependencies, and Web files. Vectra Web compiles `core/src/` into its own ignored `core/dist/` before starting, testing, or building.
+Extension TypeScript compiles to the ignored `build/` directory for tests, then the esbuild CLI creates the single Marketplace runtime file `dist/extension.js`. The VSIX excludes TypeScript source, intermediate output, scripts, dependencies, and Web files. Extension packaging does not build or package Web. Vectra Web compiles `core/src/` into its own ignored `core/dist/` before starting, testing, or building.

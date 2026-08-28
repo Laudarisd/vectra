@@ -58,7 +58,9 @@ vectra-web/
 
 ## Build commands
 
-- From `vectra-extension/`, `npm run compile` builds test output and the single runtime bundle.
-- `npm test` runs Extension tests followed by canonical Web tests.
+- From `vectra-extension/`, `npm run compile` builds the intermediate test output.
+- `npm run build` compiles and creates the single runtime bundle.
+- `npm test` runs the Extension tests; `npm run test:all` also runs canonical Web tests.
 - `npm run build:web` builds the canonical Web product directly.
-- `npm run package` tests both products, validates release metadata, and creates the VSIX.
+- `npm run package` tests and bundles the Extension, validates release metadata, and creates the VSIX.
+- `npm run test:all` and `npm run build:all` are repository-wide checks for both products.

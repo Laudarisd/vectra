@@ -5,9 +5,9 @@
 <h1 align="center">Vectra</h1>
 
 <p align="center">
-  <a href="./vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
+  <a href="./vectra-extension"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
-  <a href="./vectra-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.1.2-blue" alt="Extension version 1.1.2"></a>
+  <a href="./vectra-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.1.3-blue" alt="Extension version 1.1.3"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
@@ -23,7 +23,7 @@ Download a GGUF model once, load it through llama.cpp, and run your coding agent
 
 | Package | Description | Documentation |
 | --- | --- | --- |
-| Vectra for VS Code (published as Vectra AI) | Repository-aware coding agent with local GGUF and optional cloud models | [Extension guide](vectra/README.md) |
+| Vectra for VS Code (published as Vectra AI) | Repository-aware coding agent with local GGUF and optional cloud models | [Extension guide](vectra-extension/README.md) |
 | Vectra Web | Browser-based local AI chat with file and document support | [Web guide](vectra-web/README.md) |
 
 ## Requirements
@@ -38,6 +38,7 @@ Download a GGUF model once, load it through llama.cpp, and run your coding agent
 
 - Run local `.gguf` models through llama.cpp and reduce API-token costs.
 - Explore repositories, read files, search code, and inspect diagnostics.
+- Delegate to a specialized agent team — planner, researcher, coder, tester, reviewer, security, and documentation — each limited to only the tools its role needs, with live grouped progress in the chat.
 - Preview workspace changes before applying them.
 - Run files, projects, tests, and commands only after approval.
 - Read PDF, DOCX, PPTX, XLSX, RTF, code, text, and image attachments.
@@ -47,19 +48,21 @@ Download a GGUF model once, load it through llama.cpp, and run your coding agent
 
 Open the guide for the package you want:
 
-- **VS Code**: install [llama.cpp](https://github.com/ggml-org/llama.cpp), open Vectra's sidebar, and select **Local Model** to load a `.gguf` file. Full steps in the [extension guide](vectra/README.md#quick-start).
+- **VS Code**: install [llama.cpp](https://github.com/ggml-org/llama.cpp), open Vectra's sidebar, and select **Local Model** to load a `.gguf` file. Full steps in the [extension guide](vectra-extension/README.md#quick-start).
 - **Web**: `cd vectra-web && npm start`, then choose **Local llama.cpp** in the browser UI. Full steps in the [web guide](vectra-web/README.md#quick-start).
 
 ## Development
 
 ```bash
-cd vectra
+cd vectra-extension
 npm install
 npm run check
 npm test
 ```
 
 Press `F5` in VS Code to open an Extension Development Host. See the package READMEs for extension and web setup details.
+
+The extension and web app each own their agent core independently — see [`vectra-extension/ARCHITECTURE.md`](vectra-extension/ARCHITECTURE.md) and [`vectra-extension/CODE_STRUCTURE.md`](vectra-extension/CODE_STRUCTURE.md) for how the two products relate, and [`TASKS.md`](TASKS.md) for the active roadmap.
 
 ## Author and license
 

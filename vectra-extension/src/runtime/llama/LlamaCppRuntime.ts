@@ -569,6 +569,8 @@ export class LlamaCppRuntime implements vscode.Disposable {
       requestedContextSize: config.llamaCppContextSize,
       deviceMode: config.deviceMode,
       gpuLayers: config.llamaCppGpuLayers,
+      cpuThreads: config.llamaCppThreads,
+      threadProfile: config.llamaCppThreadProfile,
       splitMode: config.llamaCppSplitMode,
       cpuMoe: config.llamaCppCpuMoe,
       noMmap: config.llamaCppNoMmap,

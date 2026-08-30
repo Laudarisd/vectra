@@ -298,7 +298,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           onProgress: (progress) => events.emit({ type: 'ui.progress', message: progress }),
           onDelta: (delta) => events.emit({ type: 'ui.delta', id: streamId, delta }),
           onTodosChanged: (todos) => events.emit({ type: 'ui.todos', todos }),
-          onPlanChanged: (plan) => events.emit({ type: 'ui.plan', plan })
+          onPlanChanged: (plan) => events.emit({ type: 'ui.plan', plan }),
+          onSubagentEvent: (subagent) => events.emit({ type: 'ui.subagent', subagent })
         });
       }, this.abortController.signal);
       this.session.addMessage({
@@ -424,6 +425,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'ui.plan':
         void this.post({ type: 'planUpdate', plan: event.plan });
+        break;
+      case 'ui.subagent':
+        void this.post({ type: 'subagentUpdate', subagent: event.subagent });
         break;
     }
   }

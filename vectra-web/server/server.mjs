@@ -19,10 +19,16 @@ import { recommendCatalogEntries } from './services/model-recommender.mjs';
 import { downloadFile } from './services/model-downloader.mjs';
 import { searchHuggingFace, resolveDownloadableFile } from './services/huggingface-search.mjs';
 import { installLatestLlamaCpp } from './services/llama-cpp-installer.mjs';
+import { Semaphore } from './services/concurrency.mjs';
 const require=createRequire(import.meta.url);
 let agentCore;
 agentCore=require('../core')
-const{AgentSession,VectraDeepAgentRuntime,createWebTools,describeDeepAgentTool}=agentCore;
+const{AgentSession,VectraDeepAgentRuntime,createWebTools,createWebToolExecutor,WEB_TOOL_DEFINITIONS,buildVectraSubagentSpecs,describeDeepAgentTool}=agentCore;
+// Throttles tool calls made by Deep Agents role subagents (planner/researcher/
+// coder/tester/reviewer/security/documentation) so several of them can't hammer
+// one local llama.cpp process or a rate-limited cloud endpoint at once. Not a
+// claim of true parallel inference -- see vectra-extension's maxConcurrentSubagents.
+const MAX_CONCURRENT_SUBAGENTS=Number(process.env.VECTRA_MAX_CONCURRENT_SUBAGENTS||2);
 const execFileAsync=promisify(execFile);
 const here=dirname(fileURLToPath(import.meta.url)); const webRoot=resolve(here,'..'); const publicRoot=existsSync(join(webRoot,'dist'))?join(webRoot,'dist'):join(webRoot,'public'); const host=process.env.VECTRA_HOST||'127.0.0.1'; let port=Number(process.env.VECTRA_PORT||4173); const MAX_BODY=110*1024*1024; const localLlama=new LocalLlamaManager(); const history=new ChatHistoryStore();
 const server=http.createServer(async(req,res)=>{try{const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);const pathname=url.pathname;if(pathname.startsWith('/api/'))assertApiRequest(req);if(pathname==='/api/chats'||pathname.startsWith('/api/chats/'))return await handleHistory(req,res,pathname,url);if(req.method==='POST'&&pathname==='/api/chat')return await handleChat(req,res);if(req.method==='POST'&&pathname==='/api/models')return await handleModels(req,res);if(req.method==='POST'&&pathname==='/api/test-connection')return await handleTestConnection(req,res);if(req.method==='POST'&&pathname==='/api/attachments/inspect')return await handleAttachmentInspect(req,res);if(req.method==='GET'&&pathname==='/api/local/status')return json(res,200,localLlama.snapshot());if(req.method==='GET'&&pathname==='/api/local/gpu-info'){assertLocalRuntimeAllowed();return json(res,200,{gpus:await detectGpus()})}if(req.method==='POST'&&pathname==='/api/local/discover'){assertLocalRuntimeAllowed();const extra=localLlama.snapshot().running?[{name:'Vectra llama.cpp',baseUrl:localLlama.snapshot().baseUrl,apiKey:localLlama.connection().apiKey}]:[];return json(res,200,await discoverInstalledModels({extraRoots:localLlama.modelSearchRoots(),runtimeTargets:extra}))}if(req.method==='POST'&&pathname==='/api/local/search-models'){assertLocalRuntimeAllowed();const body=await readJson(req);return json(res,200,{models:await searchGgufModels({query:body.query,limit:body.limit,roots:localLlama.modelSearchRoots()})})}if(req.method==='POST'&&pathname==='/api/local/models/catalog'){assertLocalRuntimeAllowed();return json(res,200,await handleModelCatalog())}if(req.method==='POST'&&pathname==='/api/local/models/search'){assertLocalRuntimeAllowed();return json(res,200,{results:await searchHuggingFace((await readJson(req)).query)})}if(req.method==='POST'&&pathname==='/api/local/models/resolve'){assertLocalRuntimeAllowed();const resolved=await resolveDownloadableFile((await readJson(req)).repoId);return resolved?json(res,200,resolved):json(res,404,{error:'Could not determine a single downloadable GGUF file for this repo.'})}if(req.method==='POST'&&pathname==='/api/local/models/download'){assertLocalRuntimeAllowed();return await handleModelDownload(req,res,await readJson(req))}if(req.method==='POST'&&pathname==='/api/local/llama-cpp/install'){assertLocalRuntimeAllowed();return await handleLlamaCppInstall(req,res)}if(req.method==='POST'&&pathname==='/api/local/choose-model'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseModel())}if(req.method==='POST'&&pathname==='/api/local/choose-model-directory'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseModelDirectory())}if(req.method==='POST'&&pathname==='/api/local/choose-download-directory'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseDownloadDirectory())}if(req.method==='POST'&&pathname==='/api/local/choose-mmproj'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseMmproj())}if(req.method==='POST'&&pathname==='/api/local/choose-server'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.chooseServer())}if(req.method==='POST'&&pathname==='/api/local/start'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.start(await readJson(req)))}if(req.method==='POST'&&pathname==='/api/local/stop'){assertLocalRuntimeAllowed();return json(res,200,await localLlama.stop())}if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'Method not allowed'});return await serveStatic(req,res)}catch(e){console.error('[Vectra Web]',e instanceof Error?e.message:e);return json(res,500,{error:e instanceof Error?e.message:String(e),code:e?.code})}});
@@ -88,6 +94,9 @@ async function handleChat(req,res){
     if(event.type==='ui.delta'&&!closed)send({delta:event.delta});
     if(event.type==='ui.progress'&&!closed)send({progress:event.message});
     if(event.type==='deepagent.tool.started'&&!closed&&typeof event.tool==='string')send({progress:describeDeepAgentTool(event.tool)});
+    if(event.type==='deepagent.subagent.started'&&!closed)send({subagent:{event:'started',runId:event.runId,role:event.role,description:event.description}});
+    if(event.type==='deepagent.subagent.finished'&&!closed)send({subagent:{event:'finished',runId:event.runId,role:event.role}});
+    if(event.type==='deepagent.subagent.failed'&&!closed)send({subagent:{event:'failed',runId:event.runId,role:event.role,error:event.error}});
   });
   const toolArtifacts=[];
 
@@ -107,7 +116,11 @@ async function handleChat(req,res){
           catch(error){const detail=error instanceof Error?error.message:String(error);if(/HTTP (400|404|422)|tool.?call|chat template|jinja/i.test(detail)){nativeToolsAvailable=false;throw new Error(`NATIVE_TOOL_CALLING_UNSUPPORTED: ${detail}`)}throw error}
         }}:{})};
         const tools=createWebTools(safeAttachments,toolArtifacts);
-        const runtime=new VectraDeepAgentRuntime({provider:bridge,model,tools,context:{},events,maxSteps:12,systemPrompt:systemPrompt(safeAttachments)});
+        const subagentSemaphore=new Semaphore(MAX_CONCURRENT_SUBAGENTS);
+        const executeWebTool=createWebToolExecutor(safeAttachments,toolArtifacts);
+        const gatedExecuteWebTool=async(name,input,context)=>{await subagentSemaphore.acquire();try{return await executeWebTool(name,input,context)}finally{subagentSemaphore.release()}};
+        const subagentSpecs=buildVectraSubagentSpecs(WEB_TOOL_DEFINITIONS,gatedExecuteWebTool,!!bridge.completeWithTools);
+        const runtime=new VectraDeepAgentRuntime({provider:bridge,model,tools,context:{},events,maxSteps:12,systemPrompt:systemPrompt(safeAttachments),subagentSpecs});
         const last=safeMessages.at(-1)?.content||'Please analyze the attached files.';
         const deep=await runtime.run({task:last,history:safeMessages.slice(0,-1),threadId:conversationId||undefined,signal:requestAbort.signal});
         generated=deep.text;

@@ -4,11 +4,12 @@ import { BaseChatModel, BaseChatModelCallOptions, BindToolsInput } from '@langch
 import { ChatResult } from '@langchain/core/outputs';
 import { Runnable } from '@langchain/core/runnables';
 import { createDeepAgent, StateBackend } from 'deepagents';
-import type { AnyBackendProtocol, AnySubAgent, FilesystemPermission } from 'deepagents';
+import type { AnyBackendProtocol, AnySubAgent, FilesystemPermission, SubAgent } from 'deepagents';
 import { todoListMiddleware, tool } from 'langchain';
 import { z } from 'zod';
 import type { AgentEventStream } from './index';
 import { VectraDeepTool } from './tools/contracts';
+import { VectraSubagentSpec } from './tools/subagents';
 
 export interface VectraModelRequest {
   systemPrompt: string;
@@ -60,8 +61,11 @@ export interface VectraDeepAgentOptions<TContext = unknown> {
   backend?: AnyBackendProtocol;
   /** Deep Agents filesystem permission rules, applied to all built-in filesystem tools. */
   permissions?: FilesystemPermission[];
-  /** Synchronous and/or asynchronous Deep Agents subagent definitions. */
+  /** Synchronous and/or asynchronous Deep Agents subagent definitions, passed through as-is. */
   subagents?: AnySubAgent[];
+  /** Vectra's own role-scoped subagent team, converted to Deep Agents subagents here
+   * (the one file that owns the LangChain/deepagents boundary) and merged with `subagents`. */
+  subagentSpecs?: readonly VectraSubagentSpec<TContext>[];
 }
 
 export interface VectraDeepAgentRunRequest {
@@ -88,19 +92,14 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
 
   constructor(private readonly options: VectraDeepAgentOptions<TContext>) {
     const model = new VectraLangChainChatModel(options.provider, options.model, options.events);
-    const tools = options.tools.map((definition) => tool(
-      async (input: Record<string, unknown>) => {
-        options.events?.emit({ type: 'deepagent.tool.requested', tool: definition.name, input });
-        const result = await definition.execute(input, options.context);
-        options.events?.emit({ type: 'deepagent.tool.completed', tool: definition.name, result });
-        return typeof result === 'string' ? result : JSON.stringify(result);
-      },
-      {
-        name: definition.name,
-        description: definition.description,
-        schema: definition.schema ?? z.object({}).catchall(z.unknown())
-      }
-    ));
+    const tools = options.tools.map((definition) => wrapVectraTool(definition, options.context, options.events));
+    const subagentsFromSpecs: SubAgent[] = (options.subagentSpecs ?? []).map((spec) => ({
+      name: spec.name,
+      description: spec.description,
+      systemPrompt: spec.systemPrompt,
+      tools: spec.tools.map((definition) => wrapVectraTool(definition, options.context, options.events))
+    }));
+    const subagents = [...(options.subagents ?? []), ...subagentsFromSpecs];
 
     this.agent = createDeepAgent({
       name: 'vectra',
@@ -108,7 +107,7 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
       tools,
       backend: options.backend ?? new StateBackend(),
       permissions: options.permissions,
-      subagents: options.subagents,
+      subagents: subagents.length ? subagents : undefined,
       // Deep Agents 1.13 only adds planning for selected harness profiles.
       // Vectra is provider-neutral, so install it explicitly for every model.
       middleware: [todoListMiddleware()],
@@ -130,26 +129,49 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
     ];
     this.options.events?.emit({ type: 'deepagent.started', threadId: request.threadId });
     const activeTools = new Map<string, string>();
+    // The builtin `task` tool is how Deep Agents invokes one of Vectra's role
+    // subagents (subagent_type). Tracking its runId separately lets the UI
+    // group everything that tool call does under one collapsible entry,
+    // without needing to walk LangChain's parent-run chain for every event.
+    const activeSubagents = new Map<string, { role: string; description: string }>();
     const callbacks = BaseCallbackHandler.fromMethods({
       handleToolStart: (tool, input, runId, _parentRunId, _tags, _metadata, runName) => {
         const name = runName || tool.name || tool.id?.[tool.id.length - 1] || 'tool';
         activeTools.set(runId, name);
+        const parsedInput = parseCallbackInput(input);
         this.options.events?.emit({
           type: 'deepagent.tool.started',
           runId,
           tool: name,
-          input: parseCallbackInput(input)
+          input: parsedInput
         });
+        if (name === 'task') {
+          const record = parsedInput && typeof parsedInput === 'object' ? parsedInput as Record<string, unknown> : {};
+          const role = typeof record.subagent_type === 'string' ? record.subagent_type : 'general-purpose';
+          const description = typeof record.description === 'string' ? record.description : '';
+          activeSubagents.set(runId, { role, description });
+          this.options.events?.emit({ type: 'deepagent.subagent.started', runId, role, description });
+        }
       },
       handleToolEnd: (output, runId) => {
         const name = activeTools.get(runId) ?? 'tool';
         activeTools.delete(runId);
         this.options.events?.emit({ type: 'deepagent.tool.finished', runId, tool: name, output: callbackOutput(output) });
+        const subagent = activeSubagents.get(runId);
+        if (subagent) {
+          activeSubagents.delete(runId);
+          this.options.events?.emit({ type: 'deepagent.subagent.finished', runId, role: subagent.role, output: callbackOutput(output) });
+        }
       },
       handleToolError: (error, runId) => {
         const name = activeTools.get(runId) ?? 'tool';
         activeTools.delete(runId);
         this.options.events?.emit({ type: 'deepagent.tool.failed', runId, tool: name, error: messageOf(error) });
+        const subagent = activeSubagents.get(runId);
+        if (subagent) {
+          activeSubagents.delete(runId);
+          this.options.events?.emit({ type: 'deepagent.subagent.failed', runId, role: subagent.role, error: messageOf(error) });
+        }
       }
     });
     try {
@@ -343,6 +365,23 @@ function lastAssistantText(messages: unknown[]): string {
     if (text) return text;
   }
   return '';
+}
+
+/** Wraps one Vectra host tool as a LangChain tool, shared by the top-level agent and every subagent. */
+function wrapVectraTool<TContext>(definition: VectraDeepTool<TContext>, context: TContext, events?: AgentEventStream) {
+  return tool(
+    async (input: Record<string, unknown>) => {
+      events?.emit({ type: 'deepagent.tool.requested', tool: definition.name, input });
+      const result = await definition.execute(input, context);
+      events?.emit({ type: 'deepagent.tool.completed', tool: definition.name, result });
+      return typeof result === 'string' ? result : JSON.stringify(result);
+    },
+    {
+      name: definition.name,
+      description: definition.description,
+      schema: definition.schema ?? z.object({}).catchall(z.unknown())
+    }
+  );
 }
 
 function abortError(): Error {

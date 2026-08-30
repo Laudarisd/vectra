@@ -1,7 +1,7 @@
 # Vectra Web
 
 <p align="center">
-  <a href="../vectra"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
+  <a href="../vectra-extension"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code"></a>
   <a href="https://github.com/ggml-org/llama.cpp"><img src="https://img.shields.io/badge/AI-Local--first-2ea44f" alt="Local AI"></a>
   <a href="https://github.com/Laudarisd/vectra/releases"><img src="https://img.shields.io/badge/version-1.0.0-blue" alt="Version 1.0.0"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
@@ -15,6 +15,7 @@ Vectra Web is the browser edition of Vectra: local-first AI chat with document s
 
 - **Local-first** — run GGUF models through llama.cpp, or auto-detect Ollama, LM Studio, vLLM, and other OpenAI-compatible runtimes already on your machine.
 - **Any model, any time** — switch to OpenAI, Anthropic, Gemini, or an OpenAI-compatible endpoint whenever you want.
+- **Specialized agent team** — the same planner/researcher/coder/tester/reviewer/security/documentation subagent roster as the VS Code extension, each scoped to only the tools its role needs, with live grouped progress in the chat.
 - **Documents in and out** — parse PDF, DOCX, PPTX, XLSX, RTF, code, and images; generate downloadable PDF, DOCX, Markdown, JSON, CSV, HTML, and code files.
 - **Real history, kept local** — chats persist in a local SQLite file, with edit, resend, reopen, and delete.
 - **Nothing phones home** — cloud keys live only in your browser session; the local server binds to `127.0.0.1`.

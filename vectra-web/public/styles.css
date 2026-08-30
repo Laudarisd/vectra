@@ -128,6 +128,11 @@ dialog::backdrop{background:#0008}
 .web-activity-step.done{opacity:.5}
 .web-spinner{width:14px;height:14px;flex:0 0 14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--fg-muted);animation:webspin .8s linear infinite}
 .web-activity-check{width:14px;height:14px;flex:0 0 14px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1;color:#7fd58a}
+.web-activity-group{display:flex;flex-direction:column;gap:7px;border-left:2px solid var(--border);padding-left:9px;margin-left:2px}
+.web-activity-group>summary{cursor:pointer;font-size:.92em;font-weight:600;color:var(--fg-muted);list-style:none}
+.web-activity-group>summary::-webkit-details-marker{display:none}
+.web-activity-group>summary::before{content:'▸';display:inline-block;margin-right:6px;transition:transform .15s}
+.web-activity-group[open]>summary::before{transform:rotate(90deg)}
 @keyframes webspin{to{transform:rotate(360deg)}}
 .artifact-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .artifact-download{display:inline-flex;padding:7px 10px;border:1px solid var(--border);border-radius:9px;color:var(--fg);text-decoration:none;background:var(--bg-elevated);font-size:12px}

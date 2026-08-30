@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import { AgentMode, AgentRunRequest, AgentRunResult, Attachment, ChatMessage, Plan, TextProvider, TodoItem, WorkspaceContext } from '../types';
+import { AgentMode, AgentRunRequest, AgentRunResult, Attachment, ChatMessage, Plan, SubagentEvent, TextProvider, TodoItem, WorkspaceContext } from '../types';
 import { ProviderManager } from '../providers/ProviderManager';
 import { AgentConfiguration, getConfig } from '../utils/config';
 import { truncateMiddle, estimateContextCharBudget, safeJson } from '../utils/text';
@@ -18,7 +18,8 @@ import { ExtensionToolExecutor } from './ExtensionToolExecutor';
 import { buildChatSystemPrompt, buildSystemPrompt, parseAgentEnvelope } from './protocol';
 import { classifyTurn, formatRecentHistory, isStatusOnlyReply } from './ConversationContext';
 import { AGENT_TOOL_DEFINITIONS } from './ExtensionToolCatalog';
-import { AgentEventStream, createVectraDiscoveryTools, createVectraHostTools, describeDeepAgentTool, VectraDeepAgentRuntime } from '../core';
+import { AgentEventStream, buildVectraSubagentSpecs, createVectraDiscoveryTools, createVectraHostTools, describeDeepAgentTool, VectraDeepAgentRuntime } from '../core';
+import { Semaphore } from '../utils/concurrency';
 
 const MAX_DELEGATIONS_PER_RUN = 3;
 
@@ -41,6 +42,8 @@ interface RunLoopOptions {
   onProgress?: (message: string) => void;
   onTodosChanged?: (todos: TodoItem[]) => void;
   onPlanChanged?: (plan: Plan) => void;
+  /** Only fires on the Deep Agents harness -- classic runLoop's delegate_task is unaffected. */
+  onSubagentEvent?: (event: SubagentEvent) => void;
 }
 
 /**
@@ -126,7 +129,8 @@ export class AgentController {
         signal: request.signal,
         onProgress: request.onProgress,
         onTodosChanged: request.onTodosChanged,
-        onPlanChanged: request.onPlanChanged
+        onPlanChanged: request.onPlanChanged,
+        onSubagentEvent: request.onSubagentEvent
       });
       return this.finish(message, [...proposalIds]);
     }
@@ -166,6 +170,15 @@ export class AgentController {
         if (event.tool === 'write_todos') this.syncDeepTodos(event.input, opts.onTodosChanged);
       }
       if (event.type === 'deepagent.delta' && typeof event.delta === 'string') opts.onProgress?.('Generating response…');
+      if (event.type === 'deepagent.subagent.started' && typeof event.role === 'string') {
+        opts.onSubagentEvent?.({ event: 'started', role: event.role, description: typeof event.description === 'string' ? event.description : undefined });
+      }
+      if (event.type === 'deepagent.subagent.finished' && typeof event.role === 'string') {
+        opts.onSubagentEvent?.({ event: 'finished', role: event.role });
+      }
+      if (event.type === 'deepagent.subagent.failed' && typeof event.role === 'string') {
+        opts.onSubagentEvent?.({ event: 'failed', role: event.role, error: typeof event.error === 'string' ? event.error : undefined });
+      }
     });
     const executionContext = {
       mode: opts.mode,
@@ -217,6 +230,22 @@ export class AgentController {
       ? createVectraDiscoveryTools(hostDefinitions, executeHostTool)
       : createVectraHostTools(hostDefinitions, executeHostTool);
 
+    // Role subagents (planner/researcher/coder/tester/reviewer/security/documentation)
+    // share the same host-tool executor as the top-level agent, but every call they
+    // make is gated by this semaphore -- it exists to stop several subagents from
+    // hammering the single local llama.cpp process or spawning concurrent commands
+    // at once, not to claim true parallel inference.
+    const subagentSemaphore = new Semaphore(opts.config.maxConcurrentSubagents);
+    const gatedExecuteHostTool = async (toolName: string, input: Record<string, unknown>, context: typeof executionContext) => {
+      await subagentSemaphore.acquire();
+      try {
+        return await executeHostTool(toolName, input, context);
+      } finally {
+        subagentSemaphore.release();
+      }
+    };
+    const subagentSpecs = buildVectraSubagentSpecs(hostDefinitions, gatedExecuteHostTool, !!opts.provider.completeWithTools);
+
     const prompt = buildUserPrompt(
       opts.task,
       [],
@@ -235,7 +264,8 @@ export class AgentController {
       context: executionContext,
       events,
       maxSteps: opts.maxSteps,
-      systemPrompt: buildSystemPrompt(opts.mode)
+      systemPrompt: buildSystemPrompt(opts.mode),
+      subagentSpecs
     });
 
     try {

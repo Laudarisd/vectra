@@ -3,11 +3,16 @@
   const saved = vscode.getState() || {};
   let mode = saved.mode || 'agent';
   let editingMessageId = saved.editingMessageId || '';
-  // A running log of step labels for the current request, oldest first. The
+  // A running log of step entries for the current request, oldest first. The
   // last entry is "in progress" (spinner); everything before it is "done"
   // (checkmark) — this is what makes file-by-file progress visible instead
-  // of one line that keeps getting silently overwritten.
+  // of one line that keeps getting silently overwritten. Each entry is
+  // { text, role? } -- role is set while a Deep Agents role subagent
+  // (planner/researcher/coder/tester/reviewer/security/documentation) is
+  // active, so consecutive same-role entries can render nested under one
+  // collapsible group instead of a flat line.
   let activitySteps = [];
+  let activeSubagentRoles = [];
   let streamId = '';
   let streamText = '';
   let state = {
@@ -73,7 +78,7 @@
       document.body.dataset.theme = state.theme === 'grayWhite' ? 'grayWhite' : '';
       // A fresh run starts a fresh step log; a finished run clears it so the
       // next busy period starts empty instead of showing stale steps.
-      if (!state.busy || (state.busy && !wasBusy)) activitySteps = [];
+      if (!state.busy || (state.busy && !wasBusy)) { activitySteps = []; activeSubagentRoles = []; }
       streamId = '';
       streamText = '';
       if (editingMessageId && !state.messages.some((item) => item.id === editingMessageId)) {
@@ -97,6 +102,9 @@
     } else if (message.type === 'planUpdate') {
       state.plan = message.plan || null;
       renderMessages();
+    } else if (message.type === 'subagentUpdate') {
+      handleSubagentEvent(message.subagent || {});
+      renderMessages();
     } else if (message.type === 'error') {
       pushActivityStep("Uh-oh, somethin' went sideways…");
       renderMessages();
@@ -104,14 +112,38 @@
   });
 
   function pushActivityStep(text) {
-    if (activitySteps[activitySteps.length - 1] === text) return;
-    activitySteps.push(text);
+    const role = activeSubagentRoles[activeSubagentRoles.length - 1];
+    const last = activitySteps[activitySteps.length - 1];
+    if (last && last.text === text && last.role === role) return;
+    activitySteps.push({ text, role });
+  }
+
+  /** Tracks which role subagent (if any) is currently active so subsequent
+   * progress lines land inside its collapsible group until it finishes. */
+  function handleSubagentEvent(subagent) {
+    const role = subagent.role || 'general-purpose';
+    if (subagent.event === 'started') {
+      activeSubagentRoles.push(role);
+      activitySteps.push({ text: `${roleLabel(role)}…`, role });
+    } else {
+      const index = activeSubagentRoles.lastIndexOf(role);
+      if (index !== -1) activeSubagentRoles.splice(index, 1);
+    }
+  }
+
+  function roleLabel(role) {
+    const known = {
+      planner: 'Planner', researcher: 'Researcher', coder: 'Coder', tester: 'Tester',
+      reviewer: 'Reviewer', security: 'Security', documentation: 'Documentation'
+    };
+    return known[role] || (role.charAt(0).toUpperCase() + role.slice(1));
   }
 
   function send() {
     const text = els.prompt.value.trim();
     if (!text || state.busy || !state.workspaceTrusted) return;
     activitySteps = [];
+    activeSubagentRoles = [];
     vscode.postMessage({
       type: 'send',
       text,
@@ -332,17 +364,47 @@
     const MAX_VISIBLE_STEPS = 6;
     const log = document.createElement('div');
     log.className = 'activity-log';
-    const steps = activitySteps.length ? activitySteps : ["Wakin' up…"];
+    const steps = activitySteps.length ? activitySteps : [{ text: "Wakin' up…" }];
     const overflow = Math.max(0, steps.length - MAX_VISIBLE_STEPS);
     if (overflow > 0) {
       log.appendChild(activityStepRow(`${overflow} more step${overflow === 1 ? '' : 's'} done`, 'done', '…'));
     }
     const visible = steps.slice(-MAX_VISIBLE_STEPS);
-    visible.forEach((step, index) => {
-      const isLast = index === visible.length - 1;
-      log.appendChild(activityStepRow(step, isLast ? 'active' : 'done', isLast ? null : '✓'));
-    });
+    // Consecutive steps sharing the same subagent role collapse into one
+    // group instead of flat lines, so a delegated task reads as one entry
+    // the user can expand rather than interleaving with the main flow.
+    let index = 0;
+    while (index < visible.length) {
+      const role = visible[index].role;
+      let end = index + 1;
+      if (role) while (end < visible.length && visible[end].role === role) end++;
+      const group = visible.slice(index, end);
+      const isLastGroup = end === visible.length;
+      if (role) {
+        log.appendChild(buildActivityGroup(role, group, isLastGroup));
+      } else {
+        group.forEach((step, i) => {
+          const isLast = isLastGroup && i === group.length - 1;
+          log.appendChild(activityStepRow(step.text, isLast ? 'active' : 'done', isLast ? null : '✓'));
+        });
+      }
+      index = end;
+    }
     return log;
+  }
+
+  function buildActivityGroup(role, steps, isLastGroup) {
+    const details = document.createElement('details');
+    details.className = 'activity-group';
+    details.open = isLastGroup;
+    const summary = document.createElement('summary');
+    summary.textContent = roleLabel(role);
+    details.appendChild(summary);
+    steps.forEach((step, i) => {
+      const isLast = isLastGroup && i === steps.length - 1;
+      details.appendChild(activityStepRow(step.text, isLast ? 'active' : 'done', isLast ? null : '✓'));
+    });
+    return details;
   }
 
   function activityStepRow(text, status, checkGlyph) {

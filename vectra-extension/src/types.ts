@@ -127,6 +127,7 @@ export interface EditProposal {
   binaryOutputBase64?: string;
 }
 
-export interface AgentRunRequest { mode: AgentMode; userText: string; history: ChatMessage[]; attachments?: Attachment[]; onProgress?: (message: string) => void; onDelta?: (delta: string) => void; onTodosChanged?: (todos: TodoItem[]) => void; onPlanChanged?: (plan: Plan) => void; signal?: AbortSignal }
+export interface SubagentEvent { event: 'started' | 'finished' | 'failed'; role: string; description?: string; error?: string }
+export interface AgentRunRequest { mode: AgentMode; userText: string; history: ChatMessage[]; attachments?: Attachment[]; onProgress?: (message: string) => void; onDelta?: (delta: string) => void; onTodosChanged?: (todos: TodoItem[]) => void; onPlanChanged?: (plan: Plan) => void; onSubagentEvent?: (event: SubagentEvent) => void; signal?: AbortSignal }
 export interface AgentRunResult { text: string; proposals: EditProposal[] }
 export interface WorkspaceContext { workspaceFolders: string[]; workspaceOverview?: string; activeFile?: string; activeLanguage?: string; activeFileContent?: string; selectionText?: string; selectionStartLine?: number; selectionEndLine?: number; openFiles: string[]; diagnostics: string[]; projectInstructions?: string }

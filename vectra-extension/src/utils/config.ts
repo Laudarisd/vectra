@@ -20,6 +20,8 @@ export interface AgentConfiguration {
   llamaCppContextSize: number;
   llamaCppLoadTimeoutSeconds: number;
   llamaCppGpuLayers: string;
+  llamaCppThreads: number;
+  llamaCppThreadProfile: 'auto' | 'performance' | 'efficiency';
   llamaCppSplitMode: 'none' | 'layer' | 'row' | 'tensor';
   llamaCppCpuMoe: boolean;
   llamaCppNoMmap: boolean;
@@ -35,6 +37,7 @@ export interface AgentConfiguration {
   geminiBaseUrl: string;
   maxAgentSteps: number;
   maxSubagentSteps: number;
+  maxConcurrentSubagents: number;
   maxFileBytes: number;
   maxContextCharacters: number;
   localRequestTimeoutSeconds: number;
@@ -58,6 +61,8 @@ export function getConfig(): AgentConfiguration {
     llamaCppContextSize: c.get<number>('llamaCppContextSize', 16384),
     llamaCppLoadTimeoutSeconds: c.get<number>('llamaCppLoadTimeoutSeconds', 3600),
     llamaCppGpuLayers: c.get<string>('llamaCppGpuLayers', 'auto').trim() || 'auto',
+    llamaCppThreads: c.get<number>('llamaCppThreads', 0),
+    llamaCppThreadProfile: c.get<AgentConfiguration['llamaCppThreadProfile']>('llamaCppThreadProfile', 'auto'),
     llamaCppSplitMode: c.get<AgentConfiguration['llamaCppSplitMode']>('llamaCppSplitMode', 'layer'),
     llamaCppCpuMoe: c.get<boolean>('llamaCppCpuMoe', false),
     llamaCppNoMmap: c.get<boolean>('llamaCppNoMmap', false),
@@ -73,6 +78,7 @@ export function getConfig(): AgentConfiguration {
     geminiBaseUrl: trim(c.get<string>('geminiBaseUrl', 'https://generativelanguage.googleapis.com/v1beta')),
     maxAgentSteps: c.get<number>('maxAgentSteps', 12),
     maxSubagentSteps: c.get<number>('maxSubagentSteps', 6),
+    maxConcurrentSubagents: c.get<number>('maxConcurrentSubagents', 2),
     maxFileBytes: c.get<number>('maxFileBytes', 1_000_000),
     maxContextCharacters: c.get<number>('maxContextCharacters', 180_000),
     localRequestTimeoutSeconds: c.get<number>('localRequestTimeoutSeconds', 3600),

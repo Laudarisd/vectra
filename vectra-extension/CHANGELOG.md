@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.3
+
+- Added a specialized Deep Agents subagent team — planner, researcher, coder, tester, reviewer, security, and documentation — each limited to only the host tools its role needs (coordination tools and further delegation are never available to any of them).
+- Delegated work now shows as a live, collapsible group in the activity log instead of interleaving with the main run, in both the extension sidebar and Vectra Web.
+- Added `vectra.maxConcurrentSubagents` to bound how many subagent tool calls run at once, protecting the single local llama.cpp process from being hammered by several delegated tasks together.
+- Fixed Vectra Web's activity log: it previously cycled a handful of canned strings on a timer instead of reflecting the agent's real progress; it now renders the same live events the extension does.
+
 ## 1.1.2
 
 - Bounded local model detection with a wall-clock deadline, per-tier depth limits, and a per-directory read timeout, so a first scan finishes in seconds instead of crawling every drive letter to depth 12.

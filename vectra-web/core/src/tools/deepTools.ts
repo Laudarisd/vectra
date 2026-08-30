@@ -69,6 +69,29 @@ export function createVectraDiscoveryTools<TContext>(
   ];
 }
 
+/**
+ * Adapts an already-built, namespaced VectraDeepTool[] (e.g. from
+ * createWebTools) into a generic definitions+executor dispatcher, so
+ * per-role subsets can be rebuilt through createVectraHostTools /
+ * createVectraDiscoveryTools for subagents without a host needing its own
+ * separate action-routing layer.
+ */
+export function toHostToolExecutor<TContext>(
+  tools: readonly VectraDeepTool<TContext>[],
+  namespace = 'vectra'
+): VectraHostToolExecutor<TContext> {
+  const prefix = `${namespace}_`;
+  const byName = new Map(tools.map((item) => [
+    item.name.startsWith(prefix) ? item.name.slice(prefix.length) : item.name,
+    item.execute
+  ]));
+  return async (toolName, input, context) => {
+    const execute = byName.get(toolName);
+    if (!execute) throw new Error(`Unknown Vectra capability: ${toolName}`);
+    return execute(input, context);
+  };
+}
+
 export function searchToolCatalog(
   definitions: readonly VectraToolDefinition[],
   query: string,

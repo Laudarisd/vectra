@@ -2,7 +2,7 @@
   "name": "vectra-ai",
   "displayName": "Vectra AI",
   "description": "A fast, local-first AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -272,6 +272,13 @@
           "maximum": 30,
           "description": "Maximum read/reason cycles for a single delegate_task sub-agent, independent of and typically smaller than Maximum Agent Steps."
         },
+        "vectra.maxConcurrentSubagents": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Maximum number of tool calls from Deep Agents role subagents (planner, researcher, coder, tester, reviewer, security, documentation) that may run at once. Throttles load on the single local model process; it does not enable true parallel inference."
+        },
         "vectra.maxFileBytes": {
           "type": "number",
           "default": 1000000,
@@ -317,6 +324,28 @@
           "type": "string",
           "default": "auto",
           "description": "llama.cpp --gpu-layers value: auto, all, or an integer."
+        },
+        "vectra.llamaCppThreads": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 256,
+          "description": "Explicit CPU thread count for llama-server (-t/-tb), overriding llamaCppThreadProfile. 0 = let the thread profile decide."
+        },
+        "vectra.llamaCppThreadProfile": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "performance",
+            "efficiency"
+          ],
+          "enumDescriptions": [
+            "Uses performance cores only on hybrid CPUs (Apple Silicon) -- full speed on the fast cores while efficiency cores stay free for the OS, so the machine stays cool without a real speed cost. Falls back to all-cores-minus-2 elsewhere.",
+            "Uses every core, including efficiency cores, for maximum throughput at the cost of more heat and fan noise.",
+            "Uses roughly half the performance cores for the quietest, coolest option at the cost of slower responses."
+          ],
+          "default": "auto",
+          "description": "How many CPU threads llama-server claims when vectra.llamaCppThreads is 0."
         },
         "vectra.llamaCppSplitMode": {
           "type": "string",
@@ -391,7 +420,7 @@
     "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.js --log-level=info",
     "build": "npm run compile && npm run bundle",
     "watch": "tsc -watch -p .",
-    "test": "npm run compile && node --test --test-isolation=none test/*.test.cjs",
+    "test": "npm run compile && node --test --experimental-test-isolation=none test/*.test.cjs",
     "test:all": "npm test && npm run test:web",
     "package": "npm test && npm run bundle && npm run check:release && vsce package --no-dependencies",
     "build:web": "npm run build --prefix ../vectra-web",
@@ -423,6 +452,8 @@
         "vectra.llamaCppContextSize",
         "vectra.llamaCppLoadTimeoutSeconds",
         "vectra.llamaCppGpuLayers",
+        "vectra.llamaCppThreads",
+        "vectra.llamaCppThreadProfile",
         "vectra.llamaCppSplitMode",
         "vectra.llamaCppCpuMoe",
         "vectra.llamaCppNoMmap",

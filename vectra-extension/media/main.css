@@ -76,6 +76,12 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .activity-step.done{opacity:.5}
 .activity-spinner{width:12px;height:12px;flex:0 0 12px;border:2px solid var(--vscode-widget-border,currentColor);border-top-color:var(--vscode-progressBar-background,currentColor);border-radius:50%;animation:spin .8s linear infinite}
 .activity-check{width:12px;height:12px;flex:0 0 12px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:var(--vscode-charts-green,var(--vscode-progressBar-background,currentColor))}
+.activity-group{display:flex;flex-direction:column;gap:6px;border-left:2px solid var(--vscode-widget-border,var(--vscode-input-border));padding-left:8px;margin-left:2px}
+.activity-group>summary{cursor:pointer;font-size:.92em;font-weight:600;opacity:.86;list-style:none}
+.activity-group>summary::-webkit-details-marker{display:none}
+.activity-group>summary::before{content:'▸';display:inline-block;margin-right:6px;transition:transform .15s}
+.activity-group[open]>summary::before{transform:rotate(90deg)}
+.activity-group>.activity-step{margin-left:4px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .todo-panel{display:flex;flex-direction:column;gap:6px;margin:9px 0;padding:9px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;background:var(--vscode-editorWidget-background)}
 .todo-title{font-size:.8em;font-weight:700;letter-spacing:.04em;text-transform:uppercase;opacity:.72;margin-bottom:2px}

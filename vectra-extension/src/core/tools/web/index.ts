@@ -1,13 +1,15 @@
 import { z } from 'zod';
-import { VectraDeepTool } from '../contracts';
-import { createAttachmentTools, VectraAttachmentRecord } from '../attachments';
+import { VectraDeepTool, VectraHostToolExecutor } from '../contracts';
+import { ATTACHMENT_TOOL_DEFINITIONS, createAttachmentTools, VectraAttachmentRecord } from '../attachments';
 import { VECTRA_TOOL_DEFINITIONS } from '../catalog';
+import { toHostToolExecutor } from '../deepTools';
 
 export interface VectraWebArtifact { name: string; mime: string; base64: string }
 
-export const WEB_TOOL_DEFINITIONS = VECTRA_TOOL_DEFINITIONS.filter(
-  (item) => item.surface === 'web' || item.surface === 'all'
-);
+export const WEB_TOOL_DEFINITIONS = [
+  ...ATTACHMENT_TOOL_DEFINITIONS,
+  ...VECTRA_TOOL_DEFINITIONS.filter((item) => item.surface === 'web' || item.surface === 'all')
+];
 
 /** Portable web tools operate on uploaded files and downloadable artifacts.
  * They never gain arbitrary server filesystem or shell access. */
@@ -41,6 +43,16 @@ export function createWebTools<TContext = unknown>(
       execute: ({ files }) => (files as Array<{ path: string; content: string }>).map((file) => addArtifact(artifacts, file.path, file.content)).join('\n')
     }
   ];
+}
+
+/** Generic name-dispatch view of createWebTools, so role-scoped subagent tool
+ * subsets can be rebuilt from WEB_TOOL_DEFINITIONS the same way the extension
+ * host does it, instead of every subagent sharing one unrestricted tool set. */
+export function createWebToolExecutor<TContext = unknown>(
+  attachments: readonly VectraAttachmentRecord[],
+  artifacts: VectraWebArtifact[]
+): VectraHostToolExecutor<TContext> {
+  return toHostToolExecutor(createWebTools<TContext>(attachments, artifacts));
 }
 
 function addArtifact(artifacts: VectraWebArtifact[], requestedPath: string, content: string): string {

@@ -1,4 +1,4 @@
-import { VectraDeepTool } from './contracts';
+import { VectraDeepTool, VectraToolDefinition } from './contracts';
 
 export interface VectraAttachmentRecord {
   name: string;
@@ -6,6 +6,13 @@ export interface VectraAttachmentRecord {
   mime?: string;
   text?: string;
 }
+
+/** Metadata for the attachment tools below -- not part of VECTRA_TOOL_DEFINITIONS
+ * since they only exist on the web surface (uploaded files, not a workspace). */
+export const ATTACHMENT_TOOL_DEFINITIONS: readonly VectraToolDefinition[] = [
+  { name: 'list_attachments', displayName: 'List Attachments', description: 'List files uploaded to Vectra and report parsed-text availability.', risk: 'read', surface: 'web' },
+  { name: 'read_attachment', displayName: 'Read Attachment', description: "Read parsed text from an uploaded file by its exact name.", risk: 'read', surface: 'web' }
+];
 
 /** Shared safe attachment tools for browser/server hosts. */
 export function createAttachmentTools<TContext = unknown>(

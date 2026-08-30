@@ -33,6 +33,7 @@
     localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
     localModelPath: $('localModelPath'), localMmprojPath: $('localMmprojPath'), localServerPath: $('localServerPath'), localPort: $('localPort'), localContext: $('localContext'),
     localGpuLayers: $('localGpuLayers'), localSplitMode: $('localSplitMode'), localTimeout: $('localTimeout'), localExtraArgs: $('localExtraArgs'), localCpuMoe: $('localCpuMoe'),
+    localThreadProfile: $('localThreadProfile'), localThreads: $('localThreads'),
     localDevice: $('localDevice'), localGpuInfo: $('localGpuInfo'),
     localNoMmap: $('localNoMmap'), chooseLocalModel: $('chooseLocalModel'), chooseMmproj: $('chooseMmproj'), chooseLlamaServer: $('chooseLlamaServer'), startLocalModel: $('settingsTestConnection'),
     stopLocalModel: $('stopLocalModel'), localLogs: $('localLogs'), localModelSearch: $('localModelSearch'), searchLocalModels: $('searchLocalModels'), chooseModelFolder: $('chooseModelFolder'), localModelResults: $('localModelResults'),
@@ -689,7 +690,9 @@
       timeoutSeconds: Number(els.localTimeout.value || 3600),
       extraArgs: els.localExtraArgs.value.trim(),
       cpuMoe: els.localCpuMoe.checked,
-      noMmap: els.localNoMmap.checked
+      noMmap: els.localNoMmap.checked,
+      threadProfile: els.localThreadProfile.value,
+      threads: Number(els.localThreads.value || 0)
     };
     saveLocalConfig();
   }
@@ -708,6 +711,8 @@
     set(els.localExtraArgs, state.local.extraArgs || '');
     els.localCpuMoe.checked = Boolean(state.local.cpuMoe);
     els.localNoMmap.checked = Boolean(state.local.noMmap);
+    set(els.localThreadProfile, state.local.threadProfile || 'auto');
+    set(els.localThreads, state.local.threads || 0);
   }
 
   async function addFiles(files) {
@@ -761,15 +766,14 @@
     state.chatAbort = new AbortController();
     // Toddler-speak on purpose (matches the VS Code extension's live step
     // log): the words still name the real phase — analyzing, parsing,
-    // generating, producing — just dressed up as something fun to watch
-    // instead of one line silently overwriting itself.
-    const stages = payloadAttachments.length
-      ? ["Lookin' at the file-friends…", "Nom nom nommin' the documents…", "Makin' stuff, yay!…", "Still finkin' reeeal hard — da lokal robot brain is a slowpoke…"]
-      : ["Snoopy-snoopin' at errythin'…", "Makin' stuff, yay!…", "Still finkin' reeeal hard — da lokal robot brain is a slowpoke…"];
-    const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [stages[0]], artifacts: [], createdAt: Date.now() };
+    // generating, producing — just dressed up as something fun to watch.
+    // The log itself is driven by real server progress/subagent events, not
+    // a canned timer, so it reflects what the agent is actually doing.
+    const initialStep = payloadAttachments.length ? "Lookin' at the file-friends…" : "Snoopy-snoopin' at errythin'…";
+    const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [{ text: initialStep }], artifacts: [], createdAt: Date.now() };
     state.messages.push(placeholder); render();
     await persistChat().catch((error) => console.warn('Could not save chat history:', error));
-    let stageIndex = 0; const activityTimer = setInterval(() => { if (!placeholder.pending) return; stageIndex = Math.min(stageIndex + 1, stages.length - 1); if (placeholder.activityLog[placeholder.activityLog.length - 1] !== stages[stageIndex]) placeholder.activityLog.push(stages[stageIndex]); render(); }, 1200);
+    const activeSubagentRoles = [];
 
     try {
       const data = await streamChat({
@@ -787,6 +791,11 @@
         // visible progress instead of one long silent wait.
         placeholder.content = text;
         render();
+      }, (event) => {
+        if (!placeholder.pending) return;
+        if (event.type === 'progress') pushWebActivityStep(placeholder, activeSubagentRoles, event.message);
+        else if (event.type === 'subagent') handleWebSubagentEvent(placeholder, activeSubagentRoles, event.subagent || {});
+        render();
       });
       placeholder.content = data.text;
       placeholder.artifacts = data.artifacts || [];
@@ -795,9 +804,38 @@
       placeholder.content = error.name === 'AbortError' ? 'Generation stopped. Edit or resend your message whenever you are ready.' : `Error: ${error.message}`;
       placeholder.pending = false;
     } finally {
-      clearInterval(activityTimer); state.busy = false; state.chatAbort = null; render();
+      state.busy = false; state.chatAbort = null; render();
       await persistChat().catch((error) => console.warn('Could not save chat history:', error));
     }
+  }
+
+  function pushWebActivityStep(placeholder, activeRoles, text) {
+    if (typeof text !== 'string' || !text) return;
+    const role = activeRoles[activeRoles.length - 1];
+    const last = placeholder.activityLog[placeholder.activityLog.length - 1];
+    if (last && last.text === text && last.role === role) return;
+    placeholder.activityLog.push({ text, role });
+  }
+
+  /** Tracks which role subagent (if any) is currently active so subsequent
+   * progress lines land inside its collapsible group until it finishes. */
+  function handleWebSubagentEvent(placeholder, activeRoles, subagent) {
+    const role = subagent.role || 'general-purpose';
+    if (subagent.event === 'started') {
+      activeRoles.push(role);
+      placeholder.activityLog.push({ text: `${webRoleLabel(role)}…`, role });
+    } else {
+      const index = activeRoles.lastIndexOf(role);
+      if (index !== -1) activeRoles.splice(index, 1);
+    }
+  }
+
+  function webRoleLabel(role) {
+    const known = {
+      planner: 'Planner', researcher: 'Researcher', coder: 'Coder', tester: 'Tester',
+      reviewer: 'Reviewer', security: 'Security', documentation: 'Documentation'
+    };
+    return known[role] || (role.charAt(0).toUpperCase() + role.slice(1));
   }
 
   function renderLocalModelResults(models) {
@@ -1017,20 +1055,46 @@
     renderAttachments();
   }
 
-  /** Mirrors the VS Code extension's step log: earlier phases get a check, the newest gets a spinner. */
+  /**
+   * Mirrors the VS Code extension's step log: earlier phases get a check,
+   * the newest gets a spinner. Consecutive entries sharing the same
+   * subagent role (planner/researcher/coder/tester/reviewer/security/
+   * documentation) collapse into one collapsible group instead of flat
+   * lines, same idiom as the extension's activity log.
+   */
   function buildWebActivityLog(steps) {
     const log = document.createElement('div'); log.className = 'web-activity-log';
-    const list = steps && steps.length ? steps : ["Wakin' up…"];
-    list.forEach((step, index) => {
-      const isLast = index === list.length - 1;
-      const row = document.createElement('div'); row.className = `web-activity-step${isLast ? '' : ' done'}`;
-      const icon = document.createElement('span');
-      if (isLast) { icon.className = 'web-spinner'; }
-      else { icon.className = 'web-activity-check'; icon.textContent = '✓'; }
-      const label = document.createElement('span'); label.textContent = step;
-      row.append(icon, label); log.appendChild(row);
-    });
+    const list = steps && steps.length ? steps : [{ text: "Wakin' up…" }];
+    let index = 0;
+    while (index < list.length) {
+      const role = list[index].role;
+      let end = index + 1;
+      if (role) while (end < list.length && list[end].role === role) end++;
+      const group = list.slice(index, end);
+      const isLastGroup = end === list.length;
+      if (role) log.appendChild(buildWebActivityGroup(role, group, isLastGroup));
+      else group.forEach((step, i) => log.appendChild(webActivityStepRow(step.text, isLastGroup && i === group.length - 1)));
+      index = end;
+    }
     return log;
+  }
+
+  function buildWebActivityGroup(role, steps, isLastGroup) {
+    const details = document.createElement('details'); details.className = 'web-activity-group'; details.open = isLastGroup;
+    const summary = document.createElement('summary'); summary.textContent = webRoleLabel(role);
+    details.appendChild(summary);
+    steps.forEach((step, i) => details.appendChild(webActivityStepRow(step.text, isLastGroup && i === steps.length - 1)));
+    return details;
+  }
+
+  function webActivityStepRow(text, isActive) {
+    const row = document.createElement('div'); row.className = `web-activity-step${isActive ? '' : ' done'}`;
+    const icon = document.createElement('span');
+    if (isActive) { icon.className = 'web-spinner'; }
+    else { icon.className = 'web-activity-check'; icon.textContent = '✓'; }
+    const label = document.createElement('span'); label.textContent = text;
+    row.append(icon, label);
+    return row;
   }
 
   function renderAttachments() {
@@ -1088,7 +1152,7 @@
    * artifacts. Consuming it this way — rather than waiting for one JSON body
    * — is what makes a slow local generation show visible progress.
    */
-  async function streamChat(body, signal, onDelta) {
+  async function streamChat(body, signal, onDelta, onProgress) {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1117,6 +1181,8 @@
         let event;
         try { event = JSON.parse(payload); } catch { continue; }
         if (event.error) throw new Error(event.error);
+        if (typeof event.progress === 'string') onProgress?.({ type: 'progress', message: event.progress });
+        if (event.subagent) onProgress?.({ type: 'subagent', subagent: event.subagent });
         if (typeof event.delta === 'string') { result.text += event.delta; onDelta?.(result.text); }
         if (typeof event.replace === 'string') { result.text = event.replace; onDelta?.(result.text); }
         if (event.done) { result.artifacts = event.artifacts || []; result.attachments = event.attachments || []; }

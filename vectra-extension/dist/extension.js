@@ -34182,38 +34182,38 @@ function isZodTransformV3(schema) {
 function isZodTransformV4(schema) {
   return isZodSchemaV4(schema) && schema._zod.def.type === "pipe";
 }
-function interopZodTransformInputSchemaImpl(schema, recursive, cache3) {
-  const cached2 = cache3.get(schema);
+function interopZodTransformInputSchemaImpl(schema, recursive, cache4) {
+  const cached2 = cache4.get(schema);
   if (cached2 !== void 0) return cached2;
   if (isZodSchemaV3(schema)) {
-    if (isZodTransformV3(schema)) return interopZodTransformInputSchemaImpl(schema._def.schema, recursive, cache3);
+    if (isZodTransformV3(schema)) return interopZodTransformInputSchemaImpl(schema._def.schema, recursive, cache4);
     return schema;
   }
   if (isZodSchemaV4(schema)) {
     let outputSchema = schema;
-    if (isZodTransformV4(schema)) outputSchema = interopZodTransformInputSchemaImpl(schema._zod.def.in, recursive, cache3);
+    if (isZodTransformV4(schema)) outputSchema = interopZodTransformInputSchemaImpl(schema._zod.def.in, recursive, cache4);
     if (recursive) {
       if (isZodObjectV4(outputSchema)) {
         const outputShape = {};
-        for (const [key, keySchema] of Object.entries(outputSchema._zod.def.shape)) outputShape[key] = interopZodTransformInputSchemaImpl(keySchema, recursive, cache3);
+        for (const [key, keySchema] of Object.entries(outputSchema._zod.def.shape)) outputShape[key] = interopZodTransformInputSchemaImpl(keySchema, recursive, cache4);
         outputSchema = clone(outputSchema, {
           ...outputSchema._zod.def,
           shape: outputShape
         });
       } else if (isZodArrayV4(outputSchema)) {
-        const elementSchema = interopZodTransformInputSchemaImpl(outputSchema._zod.def.element, recursive, cache3);
+        const elementSchema = interopZodTransformInputSchemaImpl(outputSchema._zod.def.element, recursive, cache4);
         outputSchema = clone(outputSchema, {
           ...outputSchema._zod.def,
           element: elementSchema
         });
       } else if (isZodOptionalV4(outputSchema)) {
-        const innerSchema = interopZodTransformInputSchemaImpl(outputSchema._zod.def.innerType, recursive, cache3);
+        const innerSchema = interopZodTransformInputSchemaImpl(outputSchema._zod.def.innerType, recursive, cache4);
         outputSchema = clone(outputSchema, {
           ...outputSchema._zod.def,
           innerType: innerSchema
         });
       } else if (isZodNullableV4(outputSchema)) {
-        const innerSchema = interopZodTransformInputSchemaImpl(outputSchema._zod.def.innerType, recursive, cache3);
+        const innerSchema = interopZodTransformInputSchemaImpl(outputSchema._zod.def.innerType, recursive, cache4);
         outputSchema = clone(outputSchema, {
           ...outputSchema._zod.def,
           innerType: innerSchema
@@ -34222,7 +34222,7 @@ function interopZodTransformInputSchemaImpl(schema, recursive, cache3) {
     }
     const meta3 = globalRegistry.get(schema);
     if (meta3) globalRegistry.add(outputSchema, meta3);
-    cache3.set(schema, outputSchema);
+    cache4.set(schema, outputSchema);
     return outputSchema;
   }
   throw new Error("Schema must be an instance of z3.ZodType or z4.$ZodType");
@@ -44331,13 +44331,13 @@ var init_base5 = __esm({
       caller;
       cache;
       constructor({ callbacks, callbackManager, ...params }) {
-        const { cache: cache3, ...rest } = params;
+        const { cache: cache4, ...rest } = params;
         super({
           callbacks: callbacks ?? callbackManager,
           ...rest
         });
-        if (typeof cache3 === "object") this.cache = cache3;
-        else if (cache3) this.cache = InMemoryCache.global();
+        if (typeof cache4 === "object") this.cache = cache4;
+        else if (cache4) this.cache = InMemoryCache.global();
         else this.cache = void 0;
         this.caller = new AsyncCaller2(params ?? {});
       }
@@ -48295,7 +48295,7 @@ var init_chat_models = __esm({
         });
         return output;
       }
-      async _generateCached({ messages, cache: cache3, llmStringKey, parsedOptions, handledOptions }) {
+      async _generateCached({ messages, cache: cache4, llmStringKey, parsedOptions, handledOptions }) {
         const baseMessages = messages.map((messageList) => messageList.map(coerceMessageLikeToMessage));
         const inheritableMetadata = {
           ...handledOptions.metadata,
@@ -48315,7 +48315,7 @@ var init_chat_models = __esm({
         const missingPromptIndices = [];
         const cachedResults = (await Promise.allSettled(baseMessages.map(async (baseMessage, index2) => {
           const prompt = BaseChatModel2._convertInputToPromptValue(baseMessage).toString();
-          const result = await cache3.lookup(prompt, llmStringKey);
+          const result = await cache4.lookup(prompt, llmStringKey);
           if (result == null) missingPromptIndices.push(index2);
           return result;
         }))).map((result, index2) => ({
@@ -48375,11 +48375,11 @@ var init_chat_models = __esm({
         const [runnableConfig, callOptions] = this._separateRunnableConfigFromCallOptionsCompat(parsedOptions);
         runnableConfig.callbacks = runnableConfig.callbacks ?? callbacks;
         if (!this.cache) return this._generateUncached(baseMessages, callOptions, runnableConfig);
-        const { cache: cache3 } = this;
+        const { cache: cache4 } = this;
         const llmStringKey = this._getSerializedCacheKeyParametersForCall(callOptions);
         const { generations, missingPromptIndices, startedRunManagers } = await this._generateCached({
           messages: baseMessages,
-          cache: cache3,
+          cache: cache4,
           llmStringKey,
           parsedOptions: callOptions,
           handledOptions: runnableConfig
@@ -48391,7 +48391,7 @@ var init_chat_models = __esm({
             const promptIndex = missingPromptIndices[index2];
             generations[promptIndex] = generation;
             const prompt = BaseChatModel2._convertInputToPromptValue(baseMessages[promptIndex]).toString();
-            return cache3.update(prompt, llmStringKey, generation);
+            return cache4.update(prompt, llmStringKey, generation);
           }));
           llmOutput = results.llmOutput ?? {};
         }
@@ -53254,7 +53254,7 @@ var init_llms = __esm({
         });
         return output;
       }
-      async _generateCached({ prompts, cache: cache3, llmStringKey, parsedOptions, handledOptions, runId }) {
+      async _generateCached({ prompts, cache: cache4, llmStringKey, parsedOptions, handledOptions, runId }) {
         const invocationParams = this.invocationParams(parsedOptions);
         const callbackManager_ = await CallbackManager.configure(handledOptions.callbacks, this.callbacks, handledOptions.tags, this.tags, handledOptions.metadata, this.metadata, {
           verbose: this.verbose,
@@ -53268,7 +53268,7 @@ var init_llms = __esm({
         const runManagers = await callbackManager_?.handleLLMStart(this.toJSON(), prompts, runId, void 0, extra, void 0, void 0, handledOptions?.runName);
         const missingPromptIndices = [];
         const cachedResults = (await Promise.allSettled(prompts.map(async (prompt, index2) => {
-          const result = await cache3.lookup(prompt, llmStringKey);
+          const result = await cache4.lookup(prompt, llmStringKey);
           if (result == null) missingPromptIndices.push(index2);
           return result;
         }))).map((result, index2) => ({
@@ -53315,11 +53315,11 @@ var init_llms = __esm({
         const [runnableConfig, callOptions] = this._separateRunnableConfigFromCallOptionsCompat(parsedOptions);
         runnableConfig.callbacks = runnableConfig.callbacks ?? callbacks;
         if (!this.cache) return this._generateUncached(prompts, callOptions, runnableConfig);
-        const { cache: cache3 } = this;
+        const { cache: cache4 } = this;
         const llmStringKey = this._getSerializedCacheKeyParametersForCall(callOptions);
         const { generations, missingPromptIndices, startedRunManagers } = await this._generateCached({
           prompts,
-          cache: cache3,
+          cache: cache4,
           llmStringKey,
           parsedOptions: callOptions,
           handledOptions: runnableConfig,
@@ -53331,7 +53331,7 @@ var init_llms = __esm({
           await Promise.all(results.generations.map(async (generation, index2) => {
             const promptIndex = missingPromptIndices[index2];
             generations[promptIndex] = generation;
-            return cache3.update(prompts[promptIndex], llmStringKey, generation);
+            return cache4.update(prompts[promptIndex], llmStringKey, generation);
           }));
           llmOutput = results.llmOutput ?? {};
         }
@@ -53911,10 +53911,10 @@ var init_mustache = __esm({
       return new Context(view2, this);
     };
     Context.prototype.lookup = function lookup(name) {
-      var cache3 = this.cache;
+      var cache4 = this.cache;
       var value;
-      if (cache3.hasOwnProperty(name)) {
-        value = cache3[name];
+      if (cache4.hasOwnProperty(name)) {
+        value = cache4[name];
       } else {
         var context2 = this, intermediateValue, names, index2, lookupHit = false;
         while (context2) {
@@ -53937,7 +53937,7 @@ var init_mustache = __esm({
           }
           context2 = context2.parent;
         }
-        cache3[name] = value;
+        cache4[name] = value;
       }
       if (isFunction(value))
         value = value.call(this.view);
@@ -53949,13 +53949,13 @@ var init_mustache = __esm({
       }
     };
     Writer.prototype.parse = function parse6(template, tags) {
-      var cache3 = this.templateCache;
+      var cache4 = this.templateCache;
       var cacheKey = template + ":" + (tags || mustache.tags).join(":");
-      var isCacheEnabled = typeof cache3 !== "undefined";
-      var tokens = isCacheEnabled ? cache3.get(cacheKey) : void 0;
+      var isCacheEnabled = typeof cache4 !== "undefined";
+      var tokens = isCacheEnabled ? cache4.get(cacheKey) : void 0;
       if (tokens == void 0) {
         tokens = parseTemplate(template, tags);
-        isCacheEnabled && cache3.set(cacheKey, tokens);
+        isCacheEnabled && cache4.set(cacheKey, tokens);
       }
       return tokens;
     };
@@ -54085,8 +54085,8 @@ var init_mustache = __esm({
        * object with set, get and clear methods. This can also be used to disable
        * the cache by setting it to the literal `undefined`.
        */
-      set templateCache(cache3) {
-        defaultWriter.templateCache = cache3;
+      set templateCache(cache4) {
+        defaultWriter.templateCache = cache4;
       },
       /**
        * Gets the default or overridden caching object from the default writer.
@@ -62968,12 +62968,12 @@ var init_types7 = __esm({
       timeout;
       callbacks;
       __lg_type = "call";
-      constructor({ func, name, input, retry, cache: cache3, timeout, callbacks }) {
+      constructor({ func, name, input, retry, cache: cache4, timeout, callbacks }) {
         this.func = func;
         this.name = name;
         this.input = input;
         this.retry = retry;
-        this.cache = cache3;
+        this.cache = cache4;
         this.timeout = timeout;
         this.callbacks = callbacks;
       }
@@ -63007,11 +63007,11 @@ function getRunnableForEntrypoint(name, func) {
     recurse: false
   });
 }
-function call({ func, name, cache: cache3, retry, timeout }, ...args) {
+function call({ func, name, cache: cache4, retry, timeout }, ...args) {
   const config2 = AsyncLocalStorageProviderSingleton2.getRunnableConfig();
   if (typeof config2.configurable?.["__pregel_call"] === "function") return config2.configurable[CONFIG_KEY_CALL](func, name, args, {
     retry,
-    cache: cache3,
+    cache: cache4,
     timeout,
     callbacks: config2.callbacks
   });
@@ -64354,9 +64354,9 @@ var init_loop = __esm({
     AsyncBatchedCache = class extends BaseCache2 {
       cache;
       queue = Promise.resolve();
-      constructor(cache3) {
+      constructor(cache4) {
         super();
-        this.cache = cache3;
+        this.cache = cache4;
       }
       async get(keys) {
         return this.enqueueOperation("get", keys);
@@ -64703,8 +64703,8 @@ var init_loop = __esm({
           keyMap[serializeKey([task2.cache_key.ns, task2.cache_key.key])] = task2;
         }
         if (keys.length === 0) return [];
-        const cache3 = await this.cache.get(keys);
-        for (const { key, value } of cache3) {
+        const cache4 = await this.cache.get(keys);
+        for (const { key, value } of cache4) {
           const task2 = keyMap[serializeKey(key)];
           if (task2 != null) {
             task2.writes.push(...value);
@@ -67236,7 +67236,7 @@ var init_pregel = __esm({
         if (this.checkpointer !== void 0 && this.checkpointer !== false && inputConfig.configurable === void 0) throw new Error(`Checkpointer requires one or more of the following "configurable" keys: "thread_id", "checkpoint_ns", "checkpoint_id"`);
         const validInput = await this._validateInput(input);
         const { runId, ...restConfig } = inputConfig;
-        const [debug, streamMode, , outputKeys, config2, interruptBefore, interruptAfter, checkpointer, store, streamModeSingle, cache3, durability] = this._defaults(restConfig);
+        const [debug, streamMode, , outputKeys, config2, interruptBefore, interruptAfter, checkpointer, store, streamModeSingle, cache4, durability] = this._defaults(restConfig);
         config2.metadata = {
           ls_integration: "langgraph",
           ...config2.metadata
@@ -67299,7 +67299,7 @@ var init_pregel = __esm({
               outputKeys,
               streamKeys: this.streamChannelsAsIs,
               store,
-              cache: cache3,
+              cache: cache4,
               stream,
               interruptAfter,
               interruptBefore,
@@ -68851,8 +68851,8 @@ var init_meta = __esm({
       getExtendedChannelSchemas(schema, effects) {
         if (Object.keys(effects).length === 0) return schema;
         const cacheKey = Object.entries(effects).filter(([, v]) => v === true).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join("|");
-        const cache3 = this._extensionCache.get(cacheKey) ?? /* @__PURE__ */ new Map();
-        if (cache3.has(schema)) return cache3.get(schema);
+        const cache4 = this._extensionCache.get(cacheKey) ?? /* @__PURE__ */ new Map();
+        if (cache4.has(schema)) return cache4.get(schema);
         let modifiedSchema = schema;
         if (effects.withReducerSchema || effects.withJsonSchemaExtrasAsDescription) {
           const newShapeEntries = Object.entries(getInteropZodObjectShape(schema)).map(([key, schema2]) => {
@@ -68872,8 +68872,8 @@ var init_meta = __esm({
           if (isZodSchemaV3(modifiedSchema)) modifiedSchema._def.unknownKeys = "strip";
         }
         if (effects.asPartial) modifiedSchema = interopZodObjectPartial(modifiedSchema);
-        cache3.set(schema, modifiedSchema);
-        this._extensionCache.set(cacheKey, cache3);
+        cache4.set(schema, modifiedSchema);
+        this._extensionCache.set(cacheKey, cache4);
         return modifiedSchema;
       }
     };
@@ -69277,7 +69277,7 @@ var init_state2 = __esm({
         }
         return this;
       }
-      compile({ checkpointer, store, cache: cache3, interruptBefore, interruptAfter, name, description, transformers } = {}) {
+      compile({ checkpointer, store, cache: cache4, interruptBefore, interruptAfter, name, description, transformers } = {}) {
         const defaultErrorHandlerSpec = this._createDefaultErrorHandlerSpec();
         if (defaultErrorHandlerSpec !== void 0) {
           if (DEFAULT_ERROR_HANDLER_NODE in this.nodes) throw new Error(`Cannot apply a default error handler: the reserved node name \`${DEFAULT_ERROR_HANDLER_NODE}\` is already in use. setNodeDefaults({ errorHandler }) registers a node with that name; rename the conflicting node.`);
@@ -69287,7 +69287,7 @@ var init_state2 = __esm({
           return this._compileResolved({
             checkpointer,
             store,
-            cache: cache3,
+            cache: cache4,
             interruptBefore,
             interruptAfter,
             name,
@@ -69300,7 +69300,7 @@ var init_state2 = __esm({
         }
       }
       /** @internal */
-      _compileResolved({ checkpointer, store, cache: cache3, interruptBefore, interruptAfter, name, description, transformers, defaultErrorHandlerNode }) {
+      _compileResolved({ checkpointer, store, cache: cache4, interruptBefore, interruptAfter, name, description, transformers, defaultErrorHandlerNode }) {
         this.validate([...Array.isArray(interruptBefore) ? interruptBefore : [], ...Array.isArray(interruptAfter) ? interruptAfter : []]);
         const outputKeys = Object.keys(this._schemaDefinitions.get(this._outputDefinition));
         const outputChannels = outputKeys.length === 1 && outputKeys[0] === ROOT2 ? ROOT2 : outputKeys;
@@ -69323,7 +69323,7 @@ var init_state2 = __esm({
           streamChannels,
           streamMode: "updates",
           store,
-          cache: cache3,
+          cache: cache4,
           name,
           description,
           userInterrupt,
@@ -69613,15 +69613,15 @@ function task(optionsOrName, func) {
   const timeout = coerceTimeoutPolicy(options.timeout);
   if (isAsyncGeneratorFunction(func) || isGeneratorFunction(func)) throw new Error("Generators are disallowed as tasks. For streaming responses, use config.write.");
   const cachePolicy = options.cachePolicy ?? ("cache" in options ? options.cache : void 0);
-  let cache3;
-  if (typeof cachePolicy === "boolean") cache3 = cachePolicy ? {} : void 0;
-  else cache3 = cachePolicy;
+  let cache4;
+  if (typeof cachePolicy === "boolean") cache4 = cachePolicy ? {} : void 0;
+  else cache4 = cachePolicy;
   return (...args) => {
     return call({
       func,
       name,
       retry,
-      cache: cache3,
+      cache: cache4,
       timeout
     }, ...args);
   };
@@ -69644,7 +69644,7 @@ var init_func = __esm({
     init_ephemeral_value();
     init_singletons();
     entrypoint = function entrypoint2(optionsOrName, func) {
-      const { name, checkpointer, store, cache: cache3 } = typeof optionsOrName === "string" ? {
+      const { name, checkpointer, store, cache: cache4 } = typeof optionsOrName === "string" ? {
         name: optionsOrName,
         checkpointer: void 0,
         store: void 0
@@ -69697,7 +69697,7 @@ var init_func = __esm({
         streamChannels: END,
         streamMode,
         store,
-        cache: cache3
+        cache: cache4
       });
     };
     entrypoint.final = function final({ value, save }) {
@@ -83548,7 +83548,7 @@ var require_queue = __commonJS({
       if (!(_concurrency >= 1)) {
         throw new Error("fastqueue concurrency must be equal to or greater than 1");
       }
-      var cache3 = reusify(Task);
+      var cache4 = reusify(Task);
       var queueHead = null;
       var queueTail = null;
       var _running = 0;
@@ -83627,7 +83627,7 @@ var require_queue = __commonJS({
         return _running === 0 && self2.length() === 0;
       }
       function push2(value, done) {
-        var current = cache3.get();
+        var current = cache4.get();
         current.context = context2;
         current.release = release;
         current.value = value;
@@ -83648,7 +83648,7 @@ var require_queue = __commonJS({
         }
       }
       function unshift(value, done) {
-        var current = cache3.get();
+        var current = cache4.get();
         current.context = context2;
         current.release = release;
         current.value = value;
@@ -83670,7 +83670,7 @@ var require_queue = __commonJS({
       }
       function release(holder) {
         if (holder) {
-          cache3.release(holder);
+          cache4.release(holder);
         }
         var next = queueHead;
         if (next && _running <= _concurrency) {
@@ -85020,6 +85020,8 @@ function getConfig() {
     llamaCppContextSize: c.get("llamaCppContextSize", 16384),
     llamaCppLoadTimeoutSeconds: c.get("llamaCppLoadTimeoutSeconds", 3600),
     llamaCppGpuLayers: c.get("llamaCppGpuLayers", "auto").trim() || "auto",
+    llamaCppThreads: c.get("llamaCppThreads", 0),
+    llamaCppThreadProfile: c.get("llamaCppThreadProfile", "auto"),
     llamaCppSplitMode: c.get("llamaCppSplitMode", "layer"),
     llamaCppCpuMoe: c.get("llamaCppCpuMoe", false),
     llamaCppNoMmap: c.get("llamaCppNoMmap", false),
@@ -85035,6 +85037,7 @@ function getConfig() {
     geminiBaseUrl: trim(c.get("geminiBaseUrl", "https://generativelanguage.googleapis.com/v1beta")),
     maxAgentSteps: c.get("maxAgentSteps", 12),
     maxSubagentSteps: c.get("maxSubagentSteps", 6),
+    maxConcurrentSubagents: c.get("maxConcurrentSubagents", 2),
     maxFileBytes: c.get("maxFileBytes", 1e6),
     maxContextCharacters: c.get("maxContextCharacters", 18e4),
     localRequestTimeoutSeconds: c.get("localRequestTimeoutSeconds", 3600),
@@ -87160,8 +87163,8 @@ init_v3();
 var metaSymbol = Symbol.for("langgraph-zod");
 if (!(metaSymbol in globalThis)) globalThis[metaSymbol] = /* @__PURE__ */ new WeakSet();
 function applyPluginPrototype(prototype) {
-  const cache3 = globalThis[metaSymbol];
-  if (cache3.has(prototype)) return;
+  const cache4 = globalThis[metaSymbol];
+  if (cache4.has(prototype)) return;
   Object.defineProperty(prototype, "langgraph", { get() {
     const zodThis = this;
     return {
@@ -87179,7 +87182,7 @@ function applyPluginPrototype(prototype) {
       }
     };
   } });
-  cache3.add(prototype);
+  cache4.add(prototype);
 }
 try {
   applyPluginPrototype(external_exports.ZodType.prototype);
@@ -92642,15 +92645,15 @@ var ThreadStream = class {
   */
   get extensions() {
     if (this.#extensionsProxy) return this.#extensionsProxy;
-    const cache3 = this.#extensionsCache;
+    const cache4 = this.#extensionsCache;
     const createExtension = (name) => this.#createExtension(name);
     this.#extensionsProxy = new Proxy(/* @__PURE__ */ Object.create(null), {
       get: (_target, prop) => {
         if (typeof prop !== "string") return void 0;
-        const cached2 = cache3.get(prop);
+        const cached2 = cache4.get(prop);
         if (cached2) return cached2;
         const extension = createExtension(prop);
-        cache3.set(prop, extension);
+        cache4.set(prop, extension);
         return extension;
       },
       has: (_target, prop) => typeof prop === "string"
@@ -101745,26 +101748,21 @@ var VectraDeepAgentRuntime = class {
   constructor(options) {
     this.options = options;
     const model = new VectraLangChainChatModel(options.provider, options.model, options.events);
-    const tools = options.tools.map((definition) => tool$1(
-      async (input) => {
-        options.events?.emit({ type: "deepagent.tool.requested", tool: definition.name, input });
-        const result = await definition.execute(input, options.context);
-        options.events?.emit({ type: "deepagent.tool.completed", tool: definition.name, result });
-        return typeof result === "string" ? result : JSON.stringify(result);
-      },
-      {
-        name: definition.name,
-        description: definition.description,
-        schema: definition.schema ?? external_exports2.object({}).catchall(external_exports2.unknown())
-      }
-    ));
+    const tools = options.tools.map((definition) => wrapVectraTool(definition, options.context, options.events));
+    const subagentsFromSpecs = (options.subagentSpecs ?? []).map((spec) => ({
+      name: spec.name,
+      description: spec.description,
+      systemPrompt: spec.systemPrompt,
+      tools: spec.tools.map((definition) => wrapVectraTool(definition, options.context, options.events))
+    }));
+    const subagents = [...options.subagents ?? [], ...subagentsFromSpecs];
     this.agent = createDeepAgent({
       name: "vectra",
       model,
       tools,
       backend: options.backend ?? new StateBackend(),
       permissions: options.permissions,
-      subagents: options.subagents,
+      subagents: subagents.length ? subagents : void 0,
       // Deep Agents 1.13 only adds planning for selected harness profiles.
       // Vectra is provider-neutral, so install it explicitly for every model.
       middleware: [todoListMiddleware()],
@@ -101786,26 +101784,45 @@ var VectraDeepAgentRuntime = class {
     ];
     this.options.events?.emit({ type: "deepagent.started", threadId: request.threadId });
     const activeTools = /* @__PURE__ */ new Map();
+    const activeSubagents = /* @__PURE__ */ new Map();
     const callbacks = BaseCallbackHandler.fromMethods({
       handleToolStart: (tool3, input, runId, _parentRunId, _tags, _metadata, runName) => {
         const name = runName || tool3.name || tool3.id?.[tool3.id.length - 1] || "tool";
         activeTools.set(runId, name);
+        const parsedInput = parseCallbackInput(input);
         this.options.events?.emit({
           type: "deepagent.tool.started",
           runId,
           tool: name,
-          input: parseCallbackInput(input)
+          input: parsedInput
         });
+        if (name === "task") {
+          const record2 = parsedInput && typeof parsedInput === "object" ? parsedInput : {};
+          const role = typeof record2.subagent_type === "string" ? record2.subagent_type : "general-purpose";
+          const description = typeof record2.description === "string" ? record2.description : "";
+          activeSubagents.set(runId, { role, description });
+          this.options.events?.emit({ type: "deepagent.subagent.started", runId, role, description });
+        }
       },
       handleToolEnd: (output, runId) => {
         const name = activeTools.get(runId) ?? "tool";
         activeTools.delete(runId);
         this.options.events?.emit({ type: "deepagent.tool.finished", runId, tool: name, output: callbackOutput(output) });
+        const subagent = activeSubagents.get(runId);
+        if (subagent) {
+          activeSubagents.delete(runId);
+          this.options.events?.emit({ type: "deepagent.subagent.finished", runId, role: subagent.role, output: callbackOutput(output) });
+        }
       },
       handleToolError: (error51, runId) => {
         const name = activeTools.get(runId) ?? "tool";
         activeTools.delete(runId);
         this.options.events?.emit({ type: "deepagent.tool.failed", runId, tool: name, error: messageOf2(error51) });
+        const subagent = activeSubagents.get(runId);
+        if (subagent) {
+          activeSubagents.delete(runId);
+          this.options.events?.emit({ type: "deepagent.subagent.failed", runId, role: subagent.role, error: messageOf2(error51) });
+        }
       }
     });
     try {
@@ -101976,6 +101993,21 @@ function lastAssistantText(messages) {
   }
   return "";
 }
+function wrapVectraTool(definition, context2, events) {
+  return tool$1(
+    async (input) => {
+      events?.emit({ type: "deepagent.tool.requested", tool: definition.name, input });
+      const result = await definition.execute(input, context2);
+      events?.emit({ type: "deepagent.tool.completed", tool: definition.name, result });
+      return typeof result === "string" ? result : JSON.stringify(result);
+    },
+    {
+      name: definition.name,
+      description: definition.description,
+      schema: definition.schema ?? external_exports2.object({}).catchall(external_exports2.unknown())
+    }
+  );
+}
 function abortError2() {
   const error51 = new Error("Deep Agent run cancelled.");
   error51.name = "AbortError";
@@ -102009,6 +102041,12 @@ function summarizeState(state) {
     asyncTasks: Array.isArray(value.asyncTasks) ? value.asyncTasks : []
   };
 }
+
+// src/core/tools/attachments.ts
+var ATTACHMENT_TOOL_DEFINITIONS = [
+  { name: "list_attachments", displayName: "List Attachments", description: "List files uploaded to Vectra and report parsed-text availability.", risk: "read", surface: "web" },
+  { name: "read_attachment", displayName: "Read Attachment", description: "Read parsed text from an uploaded file by its exact name.", risk: "read", surface: "web" }
+];
 
 // src/core/tools/catalog.ts
 var VECTRA_TOOL_DEFINITIONS = [
@@ -102278,15 +102316,70 @@ function describeVectraTool(name, input = {}) {
   }
 }
 
+// src/core/tools/subagents.ts
+var VECTRA_SUBAGENT_ROLES = [
+  {
+    name: "planner",
+    description: "Breaks a complex task into a concrete, ordered set of steps before work begins. Read-only: reports a plan back as text.",
+    systemPrompt: "You are Vectra's planning specialist. Investigate the workspace with the tools you have, then return a clear, ordered breakdown of the steps needed to complete the task. You cannot write files, run commands, or delegate further -- report your plan as text for the orchestrating agent to act on.",
+    allowedRisk: ["read", "network"]
+  },
+  {
+    name: "researcher",
+    description: "Explores the codebase and the web to answer open questions or gather context. Read-only: reports findings back as text.",
+    systemPrompt: "You are Vectra's research specialist. Use workspace search/read tools and web search/fetch to investigate the task, then report a focused, well-grounded summary of what you found, citing files and lines or URLs. You cannot write files, run commands, or delegate further.",
+    allowedRisk: ["read", "network"]
+  },
+  {
+    name: "coder",
+    description: "Implements file changes for a well-scoped task. Can read and propose reviewed file writes; cannot run commands or delegate.",
+    systemPrompt: "You are Vectra's implementation specialist. Read whatever context you need, then propose the file changes that complete the task using Vectra's reviewed write tools. Every write you propose still requires the user's approval before it is applied -- you are preparing changes, not applying them directly. You cannot run commands or delegate further.",
+    allowedRisk: ["read", "write"]
+  },
+  {
+    name: "tester",
+    description: "Runs tests and commands to verify behavior. Can read and request approval to execute; cannot write files or delegate.",
+    systemPrompt: "You are Vectra's verification specialist. Read whatever context you need, then request approval to run the relevant tests or commands and report the real result. You cannot write files or delegate further.",
+    allowedRisk: ["read", "execute"]
+  },
+  {
+    name: "reviewer",
+    description: "Reviews existing code, diffs, and diagnostics for correctness and quality. Strictly read-only.",
+    systemPrompt: "You are Vectra's code review specialist. Read the relevant files, diffs, and diagnostics, then report concrete, evidence-backed findings with file and line references. You cannot write files, run commands, or delegate further.",
+    allowedRisk: ["read"]
+  },
+  {
+    name: "security",
+    description: "Reviews code and dependencies for security issues. Read-only, may consult public sources.",
+    systemPrompt: "You are Vectra's security review specialist. Read the relevant files and, when useful, check public sources for known issues, then report concrete, evidence-backed security findings with file and line references. You cannot write files, run commands, or delegate further.",
+    allowedRisk: ["read", "network"]
+  },
+  {
+    name: "documentation",
+    description: "Writes and updates documentation. Can read and propose reviewed file writes; cannot run commands or delegate.",
+    systemPrompt: "You are Vectra's documentation specialist. Read whatever context you need, then propose documentation file changes using Vectra's reviewed write tools. Every write you propose still requires the user's approval before it is applied. You cannot run commands or delegate further.",
+    allowedRisk: ["read", "write"]
+  }
+];
+function buildVectraSubagentSpecs(definitions, execute, completeWithTools) {
+  const eligible = definitions.filter((item) => item.risk !== "coordination" && item.name !== "delegate_task");
+  return VECTRA_SUBAGENT_ROLES.map((role) => {
+    const roleDefinitions = eligible.filter((item) => role.allowedRisk.includes(item.risk));
+    const tools = completeWithTools ? createVectraHostTools(roleDefinitions, execute) : createVectraDiscoveryTools(roleDefinitions, execute);
+    return { name: role.name, description: role.description, systemPrompt: role.systemPrompt, tools };
+  });
+}
+
 // src/core/tools/extension/index.ts
 var EXTENSION_TOOL_DEFINITIONS = VECTRA_TOOL_DEFINITIONS.filter(
   (item) => item.surface === "extension" || item.surface === "all"
 );
 
 // src/core/tools/web/index.ts
-var WEB_TOOL_DEFINITIONS = VECTRA_TOOL_DEFINITIONS.filter(
-  (item) => item.surface === "web" || item.surface === "all"
-);
+var WEB_TOOL_DEFINITIONS = [
+  ...ATTACHMENT_TOOL_DEFINITIONS,
+  ...VECTRA_TOOL_DEFINITIONS.filter((item) => item.surface === "web" || item.surface === "all")
+];
 
 // src/core/models/discovery.ts
 var import_node_child_process3 = require("node:child_process");
@@ -102655,7 +102748,8 @@ function buildLlamaRuntimeProfile(input) {
   const ceiling = mode === "gpu-resident" ? 16384 : 8192;
   const memoryTight = modelGiB > ramGiB * 0.55;
   const contextSize = Math.max(2048, Math.min(input.requestedContextSize, memoryTight ? 4096 : ceiling));
-  const args = ["-c", String(contextSize)];
+  const threads = resolveThreadCount(input);
+  const args = ["-c", String(contextSize), "-t", String(threads), "-tb", String(threads)];
   add(args, input.supportedFlags, "--fit", "on");
   args.push("--gpu-layers", input.deviceMode === "cpu" ? "0" : input.gpuLayers);
   args.push("--split-mode", input.splitMode);
@@ -102676,8 +102770,21 @@ function buildLlamaRuntimeProfile(input) {
     mode,
     contextSize,
     args,
-    summary: `${mode}; model ${modelGiB.toFixed(1)} GiB, VRAM ${vramGiB.toFixed(1)} GiB, RAM ${ramGiB.toFixed(1)} GiB, context ${contextSize}`
+    summary: `${mode}; model ${modelGiB.toFixed(1)} GiB, VRAM ${vramGiB.toFixed(1)} GiB, RAM ${ramGiB.toFixed(1)} GiB, context ${contextSize}, threads ${threads}`
   };
+}
+function resolveThreadCount(input) {
+  if (input.cpuThreads && input.cpuThreads > 0) return input.cpuThreads;
+  const { cpuCores, performanceCores } = input.hardware;
+  switch (input.threadProfile) {
+    case "performance":
+      return Math.max(1, cpuCores);
+    case "efficiency":
+      return Math.max(1, Math.ceil((performanceCores ?? cpuCores) / 2));
+    case "auto":
+    default:
+      return Math.max(1, performanceCores ?? cpuCores - 2);
+  }
 }
 function parseLlamaServerFlags(help) {
   return new Set(help.match(/--[a-z][a-z0-9-]*/gi) ?? []);
@@ -103358,6 +103465,27 @@ function isStatusOnlyReply(text) {
   return !value || STATUS_ONLY_REPLY.test(value);
 }
 
+// src/utils/concurrency.ts
+var Semaphore = class {
+  available;
+  queue = [];
+  constructor(permits) {
+    this.available = Math.max(1, permits);
+  }
+  async acquire() {
+    if (this.available > 0) {
+      this.available--;
+      return;
+    }
+    await new Promise((resolve3) => this.queue.push(resolve3));
+  }
+  release() {
+    const next = this.queue.shift();
+    if (next) next();
+    else this.available++;
+  }
+};
+
 // src/agent/AgentController.ts
 var MAX_DELEGATIONS_PER_RUN = 3;
 var AgentController = class {
@@ -103409,7 +103537,8 @@ var AgentController = class {
         signal: request.signal,
         onProgress: request.onProgress,
         onTodosChanged: request.onTodosChanged,
-        onPlanChanged: request.onPlanChanged
+        onPlanChanged: request.onPlanChanged,
+        onSubagentEvent: request.onSubagentEvent
       });
       return this.finish(message2, [...proposalIds]);
     }
@@ -103443,6 +103572,15 @@ var AgentController = class {
         if (event.tool === "write_todos") this.syncDeepTodos(event.input, opts.onTodosChanged);
       }
       if (event.type === "deepagent.delta" && typeof event.delta === "string") opts.onProgress?.("Generating response\u2026");
+      if (event.type === "deepagent.subagent.started" && typeof event.role === "string") {
+        opts.onSubagentEvent?.({ event: "started", role: event.role, description: typeof event.description === "string" ? event.description : void 0 });
+      }
+      if (event.type === "deepagent.subagent.finished" && typeof event.role === "string") {
+        opts.onSubagentEvent?.({ event: "finished", role: event.role });
+      }
+      if (event.type === "deepagent.subagent.failed" && typeof event.role === "string") {
+        opts.onSubagentEvent?.({ event: "failed", role: event.role, error: typeof event.error === "string" ? event.error : void 0 });
+      }
     });
     const executionContext = {
       mode: opts.mode,
@@ -103488,6 +103626,16 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
       return result.observation;
     };
     const tools = opts.provider.completeWithTools ? createVectraDiscoveryTools(hostDefinitions, executeHostTool) : createVectraHostTools(hostDefinitions, executeHostTool);
+    const subagentSemaphore = new Semaphore(opts.config.maxConcurrentSubagents);
+    const gatedExecuteHostTool = async (toolName, input, context2) => {
+      await subagentSemaphore.acquire();
+      try {
+        return await executeHostTool(toolName, input, context2);
+      } finally {
+        subagentSemaphore.release();
+      }
+    };
+    const subagentSpecs = buildVectraSubagentSpecs(hostDefinitions, gatedExecuteHostTool, !!opts.provider.completeWithTools);
     const prompt = buildUserPrompt(
       opts.task,
       [],
@@ -103506,7 +103654,8 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
       context: executionContext,
       events,
       maxSteps: opts.maxSteps,
-      systemPrompt: buildSystemPrompt(opts.mode)
+      systemPrompt: buildSystemPrompt(opts.mode),
+      subagentSpecs
     });
     try {
       opts.onProgress?.("Starting Deep Agents orchestration\u2026");
@@ -104976,11 +105125,11 @@ function isCloudProvider(provider) {
 }
 
 // src/runtime/llama/LlamaCppRuntime.ts
-var import_node_child_process6 = require("node:child_process");
+var import_node_child_process7 = require("node:child_process");
 var import_node_fs7 = require("node:fs");
 var os6 = __toESM(require("node:os"));
 var path12 = __toESM(require("node:path"));
-var import_node_util6 = require("node:util");
+var import_node_util7 = require("node:util");
 var vscode9 = __toESM(require("vscode"));
 
 // src/utils/hardware.ts
@@ -105049,14 +105198,44 @@ function namesToGpus(lines) {
   return lines.map((line) => line.trim()).filter(Boolean).map((name) => ({ name }));
 }
 
+// src/utils/cpuTopology.ts
+var import_node_child_process5 = require("node:child_process");
+var import_node_util5 = require("node:util");
+var execFileAsync5 = (0, import_node_util5.promisify)(import_node_child_process5.execFile);
+var PROBE_TIMEOUT_MS2 = 3e3;
+var CACHE_TTL_MS2 = 6e4;
+var cache3;
+async function detectCpuTopology() {
+  if (cache3 && Date.now() - cache3.at < CACHE_TTL_MS2) return cache3.topology;
+  const topology = process.platform === "darwin" ? await detectViaSysctl() : {};
+  cache3 = { at: Date.now(), topology };
+  return topology;
+}
+async function detectViaSysctl() {
+  try {
+    const { stdout } = await execFileAsync5(
+      "sysctl",
+      ["-n", "hw.perflevel0.physicalcpu", "hw.perflevel1.physicalcpu"],
+      { timeout: PROBE_TIMEOUT_MS2 }
+    );
+    const [performance2, efficiency] = stdout.trim().split("\n").map((line) => parseInt(line.trim(), 10));
+    if (!Number.isFinite(performance2) || performance2 <= 0) return {};
+    return { performanceCores: performance2, efficiencyCores: Number.isFinite(efficiency) ? efficiency : void 0 };
+  } catch {
+    return {};
+  }
+}
+
 // src/utils/hardware.ts
 async function getHardwareSnapshot() {
-  const gpus = await detectGpus();
+  const [gpus, topology] = await Promise.all([detectGpus(), detectCpuTopology()]);
   const vramValues = gpus.map((gpu) => gpu.vramMiB).filter((value) => typeof value === "number");
   return {
     gpus,
     maxVramMiB: vramValues.length ? Math.max(...vramValues) : void 0,
     cpuCores: os4.cpus().length,
+    performanceCores: topology.performanceCores,
+    efficiencyCores: topology.efficiencyCores,
     totalRamMiB: Math.round(os4.totalmem() / 1024 / 1024),
     platform: process.platform
   };
@@ -105092,11 +105271,11 @@ async function resolveDownloadableFile(repoId, signal) {
 }
 
 // src/runtime/llama/LlamaCppInstaller.ts
-var import_node_child_process5 = require("node:child_process");
+var import_node_child_process6 = require("node:child_process");
 var import_node_fs6 = require("node:fs");
 var os5 = __toESM(require("node:os"));
 var path11 = __toESM(require("node:path"));
-var import_node_util5 = require("node:util");
+var import_node_util6 = require("node:util");
 
 // src/models/ModelDownloader.ts
 var import_node_crypto4 = require("node:crypto");
@@ -105146,7 +105325,7 @@ function sha256OfFile(filePath) {
 }
 
 // src/runtime/llama/LlamaCppInstaller.ts
-var execFileAsync5 = (0, import_node_util5.promisify)(import_node_child_process5.execFile);
+var execFileAsync6 = (0, import_node_util6.promisify)(import_node_child_process6.execFile);
 var RELEASES_URL = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
 var USER_AGENT3 = "Mozilla/5.0 (compatible; Vectra/1.0; +https://github.com/Laudarisd/vectra)";
 var API_TIMEOUT_MS = 15e3;
@@ -105196,7 +105375,7 @@ async function installAsset(asset, onProgress, signal) {
   const zipPath = path11.join(destDir, asset.name);
   await downloadFile(asset.downloadUrl, zipPath, { onProgress, signal });
   try {
-    await execFileAsync5("tar", ["-xf", zipPath, "-C", destDir], { maxBuffer: 32 * 1024 * 1024 });
+    await execFileAsync6("tar", ["-xf", zipPath, "-C", destDir], { maxBuffer: 32 * 1024 * 1024 });
   } finally {
     await import_node_fs6.promises.rm(zipPath, { force: true }).catch(() => void 0);
   }
@@ -105229,7 +105408,7 @@ async function findServerExecutable(rootDir, maxDepth = 6) {
 }
 async function verifyExecutable(execPath) {
   try {
-    await execFileAsync5(execPath, ["--version"], { timeout: VERIFY_TIMEOUT_MS });
+    await execFileAsync6(execPath, ["--version"], { timeout: VERIFY_TIMEOUT_MS });
     return true;
   } catch {
     return false;
@@ -105445,7 +105624,7 @@ function recommendCatalogTiers(hw, catalog, limitPerTier = 6) {
 }
 
 // src/runtime/llama/LlamaCppRuntime.ts
-var execFileAsync6 = (0, import_node_util6.promisify)(import_node_child_process6.execFile);
+var execFileAsync7 = (0, import_node_util7.promisify)(import_node_child_process7.execFile);
 var LlamaCppRuntime = class {
   process;
   output = vscode9.window.createOutputChannel("Vectra \xB7 llama.cpp");
@@ -105917,6 +106096,8 @@ Saves to: ${modelPath}` },
       requestedContextSize: config2.llamaCppContextSize,
       deviceMode: config2.deviceMode,
       gpuLayers: config2.llamaCppGpuLayers,
+      cpuThreads: config2.llamaCppThreads,
+      threadProfile: config2.llamaCppThreadProfile,
       splitMode: config2.llamaCppSplitMode,
       cpuMoe: config2.llamaCppCpuMoe,
       noMmap: config2.llamaCppNoMmap,
@@ -105948,7 +106129,7 @@ Saves to: ${modelPath}` },
     this.output.appendLine(`[Vectra] Endpoint: ${this.baseUrl}`);
     this.output.appendLine(`[Vectra] Adaptive profile: ${profile.summary}`);
     this.output.appendLine(`[Vectra] Args: ${args.map(shellQuote2).join(" ")}`);
-    const child = (0, import_node_child_process6.spawn)(executable, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = (0, import_node_child_process7.spawn)(executable, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     this.process = child;
     this.currentModelPath = normalized;
     this.currentMmprojPath = mmproj || "";
@@ -105979,7 +106160,7 @@ Saves to: ${modelPath}` },
     if (cached2) return cached2;
     let output = "";
     try {
-      const result = await execFileAsync6(executable, ["--help"], { timeout: 1e4, maxBuffer: 4 * 1024 * 1024 });
+      const result = await execFileAsync7(executable, ["--help"], { timeout: 1e4, maxBuffer: 4 * 1024 * 1024 });
       output = `${result.stdout ?? ""}
 ${result.stderr ?? ""}`;
     } catch (error51) {
@@ -106231,8 +106412,8 @@ function scoreMmproj(name) {
 }
 async function commandExists(command) {
   try {
-    if (process.platform === "win32") await execFileAsync6("where", [command], { timeout: 3e3, windowsHide: true });
-    else await execFileAsync6("which", [command], { timeout: 3e3 });
+    if (process.platform === "win32") await execFileAsync7("where", [command], { timeout: 3e3, windowsHide: true });
+    else await execFileAsync7("which", [command], { timeout: 3e3 });
     return true;
   } catch {
     return false;
@@ -106803,7 +106984,7 @@ function assertWorkspaceTrusted() {
 
 // src/workspace/CommandRunner.ts
 var vscode12 = __toESM(require("vscode"));
-var import_node_child_process7 = require("node:child_process");
+var import_node_child_process8 = require("node:child_process");
 var path16 = __toESM(require("node:path"));
 var os7 = __toESM(require("node:os"));
 var import_node_crypto6 = require("node:crypto");
@@ -106985,7 +107166,7 @@ function spawnShell(command, cwd, timeoutMs, onData, signal) {
       reject(new Error("Request cancelled."));
       return;
     }
-    const child = (0, import_node_child_process7.spawn)(command, { cwd, shell: true, windowsHide: true, env: process.env });
+    const child = (0, import_node_child_process8.spawn)(command, { cwd, shell: true, windowsHide: true, env: process.env });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -107284,7 +107465,8 @@ var ChatViewProvider = class _ChatViewProvider {
           onProgress: (progress) => events.emit({ type: "ui.progress", message: progress }),
           onDelta: (delta) => events.emit({ type: "ui.delta", id: streamId, delta }),
           onTodosChanged: (todos) => events.emit({ type: "ui.todos", todos }),
-          onPlanChanged: (plan) => events.emit({ type: "ui.plan", plan })
+          onPlanChanged: (plan) => events.emit({ type: "ui.plan", plan }),
+          onSubagentEvent: (subagent) => events.emit({ type: "ui.subagent", subagent })
         });
       }, this.abortController.signal);
       this.session.addMessage({
@@ -107396,6 +107578,9 @@ var ChatViewProvider = class _ChatViewProvider {
         break;
       case "ui.plan":
         void this.post({ type: "planUpdate", plan: event.plan });
+        break;
+      case "ui.subagent":
+        void this.post({ type: "subagentUpdate", subagent: event.subagent });
         break;
     }
   }

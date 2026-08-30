@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { createServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { detectGpus } from './gpu-detect.mjs';
+import { detectCpuTopology } from './cpu-topology.mjs';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -121,6 +122,8 @@ export class LocalLlamaManager {
     const device = ['auto', 'gpu', 'cpu'].includes(options.device) ? options.device : 'auto';
     const gpuLayers = device === 'cpu' ? '0' : normalizeGpuLayers(options.gpuLayers);
     const splitMode = ['none', 'layer', 'row', 'tensor'].includes(options.splitMode) ? options.splitMode : 'layer';
+    const threadProfile = ['auto', 'performance', 'efficiency'].includes(options.threadProfile) ? options.threadProfile : 'auto';
+    const cpuThreads = clampInt(options.threads, 0, 256, 0);
     const serverPathInput = String(options.serverPath || '').trim();
     const mmprojPathInput = String(options.mmprojPath || '').trim();
     const extraArgs = Array.isArray(options.extraArgs)
@@ -130,7 +133,7 @@ export class LocalLlamaManager {
     // A request identical to the one already running is a no-op instead of a
     // stop-and-reload from disk.
     const requestKey = JSON.stringify({
-      modelPath, requestedPort, contextSize, gpuLayers, splitMode, serverPathInput, mmprojPathInput,
+      modelPath, requestedPort, contextSize, gpuLayers, splitMode, threadProfile, cpuThreads, serverPathInput, mmprojPathInput,
       cpuMoe: options.cpuMoe === true, noMmap: options.noMmap === true, extraArgs
     });
     if (
@@ -146,9 +149,10 @@ export class LocalLlamaManager {
     const port = await findAvailablePort(requestedPort, 60);
     const timeoutSeconds = clampInt(options.timeoutSeconds, 30, 7200, 3600);
     const serverPath = await resolveServerExecutable(serverPathInput);
-    const [modelInfo, gpus, supportedFlags] = await Promise.all([
+    const [modelInfo, gpus, topology, supportedFlags] = await Promise.all([
       stat(modelPath),
       detectGpus(),
+      detectCpuTopology(),
       this.probeCapabilities(serverPath)
     ]);
     const vramValues = gpus.map((gpu) => gpu.vramMiB).filter((value) => Number.isFinite(value));
@@ -157,6 +161,8 @@ export class LocalLlamaManager {
         gpus,
         maxVramMiB: vramValues.length ? Math.max(...vramValues) : undefined,
         cpuCores: cpus().length,
+        performanceCores: topology.performanceCores,
+        efficiencyCores: topology.efficiencyCores,
         totalRamMiB: Math.round(totalmem() / 1024 / 1024),
         platform: process.platform
       },
@@ -167,6 +173,8 @@ export class LocalLlamaManager {
       splitMode,
       cpuMoe: options.cpuMoe === true,
       noMmap: options.noMmap === true,
+      cpuThreads,
+      threadProfile,
       supportedFlags
     });
     let mmprojPath = mmprojPathInput;

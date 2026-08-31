@@ -67,6 +67,12 @@ test('controller suppresses repeated tool-action loops', () => {
   assert.match(src, /duplicateOnlySteps >= 2/);
 });
 
+test('controller treats plan proposal as an approval boundary', () => {
+  const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
+  assert.match(src, /proposedPlanAction = requestedActions\.find/);
+  assert.match(src, /actionsToExecute = proposedPlanAction \? \[proposedPlanAction\] : requestedActions/);
+});
+
 test('Deep Agents waits for plan approval and rejects narration without a real write', () => {
   const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
   assert.match(src, /action\.type === 'propose_plan'/);

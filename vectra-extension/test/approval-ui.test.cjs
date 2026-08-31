@@ -11,3 +11,15 @@ test('resolved human-in-the-loop cards disappear automatically', () => {
   assert.match(source, /this\.patches\.rejectAllPending\(\);\s*this\.patches\.clearCompleted\(\);/);
   assert.match(source, /plan: activePlan\?\.status === 'pending' \? activePlan : undefined/);
 });
+
+test('plan approval is inline, checklist styled, and auto-collapses after a decision', () => {
+  const script = fs.readFileSync('media/main.js', 'utf8');
+  const styles = fs.readFileSync('media/main.css', 'utf8');
+
+  assert.match(script, /renderPlans\(card\)/);
+  assert.match(script, /archiveResolvedPlan\(\{ \.\.\.plan, status: decision \}\)/);
+  assert.match(script, /collapsedPlanIds\.add\(plan\.id\)/);
+  assert.match(script, /plan-step-check/);
+  assert.match(styles, /\.inline-plan-header/);
+  assert.match(styles, /\.plan-step-check/);
+});

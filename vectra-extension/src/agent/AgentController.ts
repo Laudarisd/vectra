@@ -441,7 +441,16 @@ export class AgentController {
 
       let allActionsWereSuccessfulWrites = true;
       let executedActionCount = 0;
-      for (const action of envelope.actions.slice(0, 40)) {
+      const requestedActions = envelope.actions.slice(0, 40);
+      const proposedPlanAction = requestedActions.find((action) => action.type === 'propose_plan');
+      // Plan approval is a hard boundary. Small/tool-tuned models sometimes
+      // place the plan and the writes it describes in the same response. If
+      // those writes are dispatched now they are (correctly) denied, but the
+      // duplicate guard would then suppress the model's legitimate retry
+      // after approval. Execute only the plan here; this same run resumes with
+      // a clean chance to perform every approved action.
+      const actionsToExecute = proposedPlanAction ? [proposedPlanAction] : requestedActions;
+      for (const action of actionsToExecute) {
         if (opts.signal?.aborted) throw new Error('Request cancelled.');
         const fingerprint = actionFingerprint(action);
         if (attemptedActions.has(fingerprint)) {

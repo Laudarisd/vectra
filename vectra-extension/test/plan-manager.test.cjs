@@ -19,6 +19,20 @@ test('PlanManager.propose increments revision on each new proposal', () => {
   assert.equal(second.revision, 2);
 });
 
+test('PlanManager.propose removes repeated steps before review', () => {
+  const plans = new PlanManager();
+  const plan = plans.propose([
+    'Create the education folder',
+    'Prepare README.md',
+    ' create   THE education folder ',
+    'Prepare README.md'
+  ]);
+  assert.deepEqual(plan.steps.map((step) => step.text), [
+    'Create the education folder',
+    'Prepare README.md'
+  ]);
+});
+
 test('approve() resolves a pending waitForDecision with "approved"', async () => {
   const plans = new PlanManager();
   const plan = plans.propose(['Step 1']);

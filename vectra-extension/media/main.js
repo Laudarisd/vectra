@@ -15,6 +15,8 @@
   let activeSubagentRoles = [];
   let streamId = '';
   let streamText = '';
+  let resolvedPlans = [];
+  const collapsedPlanIds = new Set();
   let state = {
     messages: [], proposals: [], todos: [], plan: null, attachments: [], busy: false,
     provider: 'llamaCpp', model: '', localModelName: '', localModelRunning: false,
@@ -78,7 +80,12 @@
       document.body.dataset.theme = state.theme === 'grayWhite' ? 'grayWhite' : '';
       // A fresh run starts a fresh step log; a finished run clears it so the
       // next busy period starts empty instead of showing stale steps.
-      if (!state.busy || (state.busy && !wasBusy)) { activitySteps = []; activeSubagentRoles = []; }
+      if (!state.busy || (state.busy && !wasBusy)) {
+        activitySteps = [];
+        activeSubagentRoles = [];
+        resolvedPlans = [];
+        collapsedPlanIds.clear();
+      }
       streamId = '';
       streamText = '';
       if (editingMessageId && !state.messages.some((item) => item.id === editingMessageId)) {
@@ -100,7 +107,9 @@
       state.todos = message.todos || [];
       renderMessages();
     } else if (message.type === 'planUpdate') {
-      state.plan = message.plan || null;
+      const plan = message.plan || null;
+      if (plan && plan.status !== 'pending') archiveResolvedPlan(plan);
+      state.plan = plan?.status === 'pending' ? plan : null;
       renderMessages();
     } else if (message.type === 'subagentUpdate') {
       handleSubagentEvent(message.subagent || {});
@@ -277,52 +286,96 @@
       } else {
         card.append(meta, buildActivityLog());
       }
+      renderPlans(card);
       els.messages.appendChild(card);
     }
 
-    renderPlan(els.messages);
+    // A pending plan normally lives inside the active assistant message. Keep
+    // this fallback for restored/host state where no active run is visible.
+    if (!state.busy) renderPlans(els.messages);
     renderTodos(els.messages);
     renderProposals(els.messages);
     requestAnimationFrame(() => { els.messages.scrollTop = els.messages.scrollHeight; });
   }
 
-  /** A proposed plan renders as an inline reviewable card, same idiom as a proposal, clickable even while state.busy (the run is suspended waiting on it). */
-  function renderPlan(container) {
-    if (!state.plan) return;
+  /** Approval cards are part of the assistant turn, so they move with the chat instead of floating above the composer. */
+  function renderPlans(container) {
+    for (const plan of resolvedPlans) renderPlanCard(container, plan, true);
+    if (state.plan) renderPlanCard(container, state.plan, collapsedPlanIds.has(state.plan.id));
+  }
+
+  function renderPlanCard(container, plan, collapsed) {
     const card = document.createElement('article');
-    card.className = `proposal plan ${state.plan.status}`;
-    const top = document.createElement('div');
-    top.className = 'proposal-top';
+    card.className = `inline-plan ${plan.status}${collapsed ? ' collapsed' : ''}`;
+    const top = document.createElement('button');
+    top.className = 'inline-plan-header';
+    top.type = 'button';
+    top.setAttribute('aria-expanded', String(!collapsed));
+    const statusIcon = document.createElement('span');
+    statusIcon.className = `plan-status-icon ${plan.status}`;
+    statusIcon.textContent = plan.status === 'approved' ? '✓' : plan.status === 'rejected' ? '×' : '';
     const title = document.createElement('div');
-    title.className = 'proposal-path';
-    title.textContent = 'Proposed plan';
+    title.className = 'inline-plan-title';
+    title.textContent = plan.status === 'pending' ? 'Review plan' : `Plan ${plan.status}`;
     const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = state.plan.status;
-    top.append(title, badge);
+    badge.className = 'plan-chevron';
+    badge.textContent = collapsed ? '›' : '⌄';
+    top.append(statusIcon, title, badge);
+    top.addEventListener('click', () => {
+      if (collapsedPlanIds.has(plan.id)) collapsedPlanIds.delete(plan.id);
+      else collapsedPlanIds.add(plan.id);
+      renderMessages();
+    });
+    card.append(top);
+    if (collapsed) {
+      container.appendChild(card);
+      return;
+    }
+
+    const body = document.createElement('div');
+    body.className = 'inline-plan-body';
     const reason = document.createElement('div');
     reason.className = 'proposal-reason';
-    reason.textContent = state.plan.reason || '';
-    const steps = document.createElement('ol');
+    reason.textContent = plan.reason || '';
+    const steps = document.createElement('div');
     steps.className = 'plan-steps';
-    for (const step of state.plan.steps || []) {
-      const li = document.createElement('li');
-      li.textContent = step.text;
-      steps.appendChild(li);
+    for (const step of plan.steps || []) {
+      const row = document.createElement('div');
+      row.className = 'plan-step';
+      const check = document.createElement('span');
+      check.className = `plan-step-check ${plan.status}`;
+      check.textContent = plan.status === 'approved' ? '✓' : plan.status === 'rejected' ? '×' : '';
+      const label = document.createElement('span');
+      label.textContent = step.text;
+      row.append(check, label);
+      steps.appendChild(row);
     }
-    card.append(top);
-    if (state.plan.reason) card.append(reason);
-    card.append(steps);
-    if (state.plan.status === 'pending') {
+    if (plan.reason) body.append(reason);
+    body.append(steps);
+    if (plan.status === 'pending') {
       const actions = document.createElement('div');
       actions.className = 'proposal-actions';
       actions.append(
-        button('Approve', 'primary', () => vscode.postMessage({ type: 'approvePlan' })),
-        button('Reject', 'danger-outline', () => vscode.postMessage({ type: 'rejectPlan' }))
+        button('Approve', 'primary', () => decidePlan(plan, 'approved')),
+        button('Reject', 'danger-outline', () => decidePlan(plan, 'rejected'))
       );
-      card.append(actions);
+      body.append(actions);
     }
+    card.append(body);
     container.appendChild(card);
+  }
+
+  function decidePlan(plan, decision) {
+    archiveResolvedPlan({ ...plan, status: decision });
+    state.plan = null;
+    renderMessages();
+    vscode.postMessage({ type: decision === 'approved' ? 'approvePlan' : 'rejectPlan' });
+  }
+
+  function archiveResolvedPlan(plan) {
+    resolvedPlans = resolvedPlans.filter((item) => item.id !== plan.id);
+    resolvedPlans.push(plan);
+    collapsedPlanIds.add(plan.id);
   }
 
   /** A live checklist for multi-step tasks. Shown whenever the agent has set one, independent of busy/idle. */

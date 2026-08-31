@@ -6,4 +6,15 @@ import { Plan } from '../types';
  * propose-then-decide shape: propose() never blocks, and the decision is
  * delivered asynchronously to whoever is awaiting waitForDecision().
  */
-export class PlanManager extends PlanState<Plan> {}
+export class PlanManager extends PlanState<Plan> {
+  override propose(stepTexts: readonly string[], reason?: string): Plan {
+    const seen = new Set<string>();
+    const uniqueSteps = stepTexts.filter((text) => {
+      const key = String(text).trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return super.propose(uniqueSteps, reason);
+  }
+}

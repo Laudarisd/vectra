@@ -97,10 +97,12 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .inline-plan.pending{border-color:var(--vscode-focusBorder,var(--vscode-widget-border))}
 .inline-plan.approved{border-color:var(--vscode-charts-green,var(--vscode-widget-border))}
 .inline-plan.rejected{border-color:var(--vscode-inputValidation-errorBorder,var(--vscode-widget-border));opacity:.75}
-.inline-plan-header{width:100%;display:grid;grid-template-columns:18px minmax(0,1fr) 18px;align-items:center;gap:7px;border:0;background:transparent;color:var(--vscode-foreground);padding:8px 9px;text-align:left}
-.inline-plan-header:hover{background:var(--vscode-list-hoverBackground)}
+.inline-plan-header{width:100%;display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;border:0;background:transparent;color:var(--vscode-foreground);padding:6px 7px 6px 9px;text-align:left}
 .inline-plan-title{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.plan-chevron{text-align:center;opacity:.7;font-size:16px;line-height:1}
+.inline-plan-controls{display:flex;align-items:center;gap:2px}
+.plan-icon-button{width:24px;height:24px;display:grid;place-items:center;border:0;border-radius:4px;padding:0;background:transparent;color:var(--vscode-foreground);font-size:15px;line-height:1}
+.plan-icon-button:hover{background:var(--vscode-list-hoverBackground)}
+.plan-cancel-button:hover{color:var(--vscode-errorForeground)}
 .plan-status-icon,.plan-step-check{display:inline-grid;place-items:center;border:1.5px solid var(--vscode-widget-border,currentColor);color:transparent;background:transparent}
 .plan-status-icon{width:15px;height:15px;border-radius:4px;font-size:10px}
 .plan-status-icon.approved,.plan-step-check.approved{color:var(--vscode-charts-green,currentColor);border-color:var(--vscode-charts-green,currentColor)}

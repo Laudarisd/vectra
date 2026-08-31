@@ -188,6 +188,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.plans.reject();
           await this.postState();
           break;
+        case 'cancelPlan':
+          // Cancelling is stronger than rejecting: resolve the approval wait
+          // first, then stop the active run so the composer becomes available
+          // instead of letting the model immediately propose another plan.
+          this.plans.reject();
+          this.abortController?.abort();
+          await this.postState();
+          break;
         case 'clearChat':
           this.session.clear();
           this.pendingAttachments.splice(0);

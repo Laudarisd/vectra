@@ -33,6 +33,19 @@ test('PlanManager.propose removes repeated steps before review', () => {
   ]);
 });
 
+test('PlanManager.propose ignores cosmetic numbering and punctuation when deduplicating', () => {
+  const plans = new PlanManager();
+  const plan = plans.propose([
+    '1. Read existing education/README.md.',
+    '- read   existing education/README.md',
+    'Add transformer architecture details'
+  ]);
+  assert.deepEqual(plan.steps.map((step) => step.text), [
+    '1. Read existing education/README.md.',
+    'Add transformer architecture details'
+  ]);
+});
+
 test('approve() resolves a pending waitForDecision with "approved"', async () => {
   const plans = new PlanManager();
   const plan = plans.propose(['Step 1']);

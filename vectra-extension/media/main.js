@@ -17,6 +17,7 @@
   let streamText = '';
   let resolvedPlans = [];
   const collapsedPlanIds = new Set();
+  const dismissedPlanIds = new Set();
   let state = {
     messages: [], proposals: [], todos: [], plan: null, attachments: [], busy: false,
     provider: 'llamaCpp', model: '', localModelName: '', localModelRunning: false,
@@ -85,6 +86,7 @@
         activeSubagentRoles = [];
         resolvedPlans = [];
         collapsedPlanIds.clear();
+        dismissedPlanIds.clear();
       }
       streamId = '';
       streamText = '';
@@ -300,32 +302,41 @@
 
   /** Approval cards are part of the assistant turn, so they move with the chat instead of floating above the composer. */
   function renderPlans(container) {
-    for (const plan of resolvedPlans) renderPlanCard(container, plan, true);
-    if (state.plan) renderPlanCard(container, state.plan, collapsedPlanIds.has(state.plan.id));
+    for (const plan of resolvedPlans) {
+      if (!dismissedPlanIds.has(plan.id)) renderPlanCard(container, plan, true);
+    }
+    if (state.plan && !dismissedPlanIds.has(state.plan.id)) {
+      renderPlanCard(container, state.plan, collapsedPlanIds.has(state.plan.id));
+    }
   }
 
   function renderPlanCard(container, plan, collapsed) {
     const card = document.createElement('article');
     card.className = `inline-plan ${plan.status}${collapsed ? ' collapsed' : ''}`;
-    const top = document.createElement('button');
+    const top = document.createElement('div');
     top.className = 'inline-plan-header';
-    top.type = 'button';
-    top.setAttribute('aria-expanded', String(!collapsed));
     const statusIcon = document.createElement('span');
     statusIcon.className = `plan-status-icon ${plan.status}`;
     statusIcon.textContent = plan.status === 'approved' ? '✓' : plan.status === 'rejected' ? '×' : '';
     const title = document.createElement('div');
     title.className = 'inline-plan-title';
     title.textContent = plan.status === 'pending' ? 'Review plan' : `Plan ${plan.status}`;
-    const badge = document.createElement('span');
-    badge.className = 'plan-chevron';
-    badge.textContent = collapsed ? '›' : '⌄';
-    top.append(statusIcon, title, badge);
-    top.addEventListener('click', () => {
+    const controls = document.createElement('div');
+    controls.className = 'inline-plan-controls';
+    const minimize = button(collapsed ? 'Expand' : 'Minimize', 'plan-icon-button', () => {
       if (collapsedPlanIds.has(plan.id)) collapsedPlanIds.delete(plan.id);
       else collapsedPlanIds.add(plan.id);
       renderMessages();
     });
+    minimize.textContent = collapsed ? '□' : '−';
+    minimize.title = collapsed ? 'Expand plan' : 'Minimize plan';
+    minimize.setAttribute('aria-label', minimize.title);
+    const cancel = button('Cancel', 'plan-icon-button plan-cancel-button', () => cancelOrDismissPlan(plan));
+    cancel.textContent = '×';
+    cancel.title = plan.status === 'pending' ? 'Cancel this task' : 'Dismiss this plan';
+    cancel.setAttribute('aria-label', cancel.title);
+    controls.append(minimize, cancel);
+    top.append(statusIcon, title, controls);
     card.append(top);
     if (collapsed) {
       container.appendChild(card);
@@ -376,6 +387,17 @@
     resolvedPlans = resolvedPlans.filter((item) => item.id !== plan.id);
     resolvedPlans.push(plan);
     collapsedPlanIds.add(plan.id);
+  }
+
+  function cancelOrDismissPlan(plan) {
+    dismissedPlanIds.add(plan.id);
+    if (plan.status === 'pending') {
+      state.plan = null;
+      vscode.postMessage({ type: 'cancelPlan' });
+    } else {
+      resolvedPlans = resolvedPlans.filter((item) => item.id !== plan.id);
+    }
+    renderMessages();
   }
 
   /** A live checklist for multi-step tasks. Shown whenever the agent has set one, independent of busy/idle. */

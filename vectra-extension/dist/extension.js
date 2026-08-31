@@ -103792,7 +103792,10 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
       }
       let allActionsWereSuccessfulWrites = true;
       let executedActionCount = 0;
-      for (const action of envelope.actions.slice(0, 40)) {
+      const requestedActions = envelope.actions.slice(0, 40);
+      const proposedPlanAction = requestedActions.find((action) => action.type === "propose_plan");
+      const actionsToExecute = proposedPlanAction ? [proposedPlanAction] : requestedActions;
+      for (const action of actionsToExecute) {
         if (opts.signal?.aborted) throw new Error("Request cancelled.");
         const fingerprint = actionFingerprint(action);
         if (attemptedActions.has(fingerprint)) {
@@ -105060,6 +105063,16 @@ function clamp2(value, min, max) {
 
 // src/state/PlanManager.ts
 var PlanManager = class extends PlanState {
+  propose(stepTexts, reason) {
+    const seen = /* @__PURE__ */ new Set();
+    const uniqueSteps = stepTexts.filter((text) => {
+      const key = String(text).trim().replace(/\s+/g, " ").toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return super.propose(uniqueSteps, reason);
+  }
 };
 
 // src/state/TodoManager.ts

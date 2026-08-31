@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4
+
+- Fixed plan approval as a hard execution boundary so approved file operations continue in the same request instead of requiring repeated prompts.
+- Moved plan review into the chat flow with checklist steps, duplicate-step cleanup, and automatic collapse after approval or rejection.
+
 ## 1.1.3
 
 - Added a specialized Deep Agents subagent team — planner, researcher, coder, tester, reviewer, security, and documentation — each limited to only the host tools its role needs (coordination tools and further delegation are never available to any of them).

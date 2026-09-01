@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.5
+
+- Added remote/self-hosted OpenAI-compatible API configuration with optional self-signed TLS support.
+- Added shared local chat history for the web app and VS Code extension; reloads now begin with a fresh chat.
+
 ## 1.1.4
 
 - Fixed plan approval as a hard execution boundary so approved file operations continue in the same request instead of requiring repeated prompts.

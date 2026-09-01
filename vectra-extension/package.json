@@ -161,7 +161,7 @@
             "OpenAI API using your locally stored key.",
             "Anthropic Claude API using your locally stored key.",
             "Google Gemini API using your locally stored key.",
-            "Any OpenAI-compatible endpoint such as LM Studio or vLLM.",
+            "Local API: a remote or self-hosted OpenAI-compatible endpoint with an API key.",
             "Advanced compatibility option for an existing Ollama server."
           ],
           "default": "llamaCpp",
@@ -228,7 +228,12 @@
         "vectra.openaiCompatibleBaseUrl": {
           "type": "string",
           "default": "http://localhost:1234/v1",
-          "description": "OpenAI-compatible API endpoint such as LM Studio, vLLM, or a private gateway."
+          "description": "Local API / OpenAI-compatible endpoint, including a remote self-hosted server. Include /v1 when required."
+        },
+        "vectra.openaiCompatibleAllowInsecureTls": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow an invalid or self-signed TLS certificate only for the Local API endpoint. This weakens connection security."
         },
         "vectra.openaiBaseUrl": {
           "type": "string",
@@ -462,6 +467,7 @@
         "vectra.deviceMode",
         "vectra.ollamaBaseUrl",
         "vectra.openaiCompatibleBaseUrl",
+        "vectra.openaiCompatibleAllowInsecureTls",
         "vectra.openaiBaseUrl",
         "vectra.anthropicBaseUrl",
         "vectra.geminiBaseUrl",

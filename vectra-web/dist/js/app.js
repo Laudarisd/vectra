@@ -11,6 +11,7 @@
     provider: sessionStorage.getItem('vectra.provider') || 'openai',
     apiKey: sessionStorage.getItem('vectra.apiKey') || '',
     baseUrl: sessionStorage.getItem('vectra.baseUrl') || '',
+    allowInsecureTls: sessionStorage.getItem('vectra.allowInsecureTls') === 'true',
     model: sessionStorage.getItem('vectra.model') || '',
     local: loadLocalConfig(),
     localStatus: { status: 'stopped', running: false, logs: [] },
@@ -28,7 +29,7 @@
     settings: $('settings'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
     autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
     localRuntimeFields: $('localRuntimeFields'), downloadFields: $('downloadFields'),
-    apiKey: $('apiKey'), saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
+    apiKey: $('apiKey'), localApiFields: $('localApiFields'), localApiBaseUrl: $('localApiBaseUrl'), localApiAllowInsecureTls: $('localApiAllowInsecureTls'), saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
     chatHistory: $('chatHistory'), refreshHistory: $('refreshHistory'),
     localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
     localModelPath: $('localModelPath'), localMmprojPath: $('localMmprojPath'), localServerPath: $('localServerPath'), localPort: $('localPort'), localContext: $('localContext'),
@@ -73,6 +74,8 @@
       // provider the session isn't actually using must not show whatever
       // another provider (often a local GGUF path/URL) left in there.
       els.apiKey.value = state.provider === value ? state.apiKey : '';
+      els.localApiBaseUrl.value = state.provider === value ? state.baseUrl : '';
+      els.localApiAllowInsecureTls.checked = state.provider === value && state.allowInsecureTls;
     }
   });
   els.refreshDetectedModels.addEventListener('click', () => void loadDetectedModelsForSettings());
@@ -122,11 +125,28 @@
   els.saveSettings.addEventListener('click', () => {
     const selectedSource = els.settingsProvider.value;
     if (selectedSource === 'download') { els.dialog.close(); return; }
+    if (['openai', 'anthropic', 'gemini', 'openaiCompatible'].includes(selectedSource) && !els.apiKey.value.trim()) {
+      setSettingsConnectionResult('error', 'Not saved', 'Enter an API key.');
+      els.apiKey.focus();
+      return;
+    }
+    if (selectedSource === 'openaiCompatible') {
+      try {
+        const url = new URL(els.localApiBaseUrl.value.trim());
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      } catch {
+        setSettingsConnectionResult('error', 'Not saved', 'Enter a valid http:// or https:// remote host.');
+        els.localApiBaseUrl.focus();
+        return;
+      }
+      if (els.localApiAllowInsecureTls.checked && !confirm('Allowing a self-signed certificate disables TLS certificate verification for this Local API. Your API key could be intercepted. Continue?')) return;
+    }
     const providerChanged = state.provider !== selectedSource;
     state.provider = selectedSource;
     if (!['llamaCpp', 'localAuto'].includes(state.provider)) {
       state.apiKey = els.apiKey.value.trim();
-      state.baseUrl = '';
+      state.baseUrl = state.provider === 'openaiCompatible' ? els.localApiBaseUrl.value.trim().replace(/\/+$/, '') : '';
+      state.allowInsecureTls = state.provider === 'openaiCompatible' && els.localApiAllowInsecureTls.checked;
       if (providerChanged) state.model = '';
     } else if (state.provider === 'localAuto') {
       state.apiKey = '';
@@ -349,11 +369,14 @@
   function syncSettingsFromState() {
     els.settingsProvider.value = state.provider;
     els.apiKey.value = state.apiKey;
+    els.localApiBaseUrl.value = state.provider === 'openaiCompatible' ? state.baseUrl : '';
+    els.localApiAllowInsecureTls.checked = state.provider === 'openaiCompatible' && state.allowInsecureTls;
   }
   function updateSettingsProviderUi() {
     const value = els.settingsProvider.value;
-    const apiProvider = ['openai', 'anthropic', 'gemini'].includes(value);
+    const apiProvider = ['openai', 'anthropic', 'gemini', 'openaiCompatible'].includes(value);
     els.apiFields.hidden = !apiProvider;
+    els.localApiFields.hidden = value !== 'openaiCompatible';
     els.autoDetectFields.hidden = value !== 'localAuto';
     els.localRuntimeFields.hidden = value !== 'llamaCpp';
     els.downloadFields.hidden = value !== 'download';
@@ -365,6 +388,7 @@
     sessionStorage.setItem('vectra.provider', state.provider);
     sessionStorage.setItem('vectra.apiKey', state.apiKey);
     sessionStorage.setItem('vectra.baseUrl', state.baseUrl);
+    sessionStorage.setItem('vectra.allowInsecureTls', String(state.allowInsecureTls));
     sessionStorage.setItem('vectra.model', state.model);
   }
   function applyProviderDefaults() {
@@ -398,6 +422,7 @@
         provider: state.provider,
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
+        allowInsecureTls: state.allowInsecureTls,
         model: state.model
       });
       alert(data.message);
@@ -443,7 +468,8 @@
       const data = await api('/api/test-connection', {
         provider: source,
         apiKey: els.apiKey.value.trim(),
-        baseUrl: '',
+        baseUrl: source === 'openaiCompatible' ? els.localApiBaseUrl.value.trim() : '',
+        allowInsecureTls: source === 'openaiCompatible' && els.localApiAllowInsecureTls.checked,
         model: ''
       });
       setSettingsConnectionResult(data.ok ? 'ready' : 'error', data.ok ? 'Connected' : 'Not connected', data.message);
@@ -470,7 +496,7 @@
     const previous = els.model.disabled;
     els.model.disabled = true;
     try {
-      const data = await api('/api/models', { provider: state.provider, apiKey: state.apiKey, baseUrl: state.baseUrl });
+      const data = await api('/api/models', { provider: state.provider, apiKey: state.apiKey, baseUrl: state.baseUrl, allowInsecureTls: state.allowInsecureTls });
       state.detectedRuntimes = data.runtimes || [];
       if (state.provider === 'localAuto' && !(data.models || []).length) throw new Error('No local model server was detected. Start Ollama, LM Studio, llama.cpp, vLLM, or another OpenAI-compatible runtime, then try again.');
       populateModels(data.models || []);
@@ -753,7 +779,8 @@
       persistSession();
     }
     if (!state.model) { if (state.provider === 'llamaCpp') await openLocalDialog(); else if (state.provider === 'localAuto') await loadModels(); else openSettings(); return; }
-    if (!['llamaCpp', 'openaiCompatible', 'localAuto'].includes(state.provider) && !state.apiKey) { openSettings(); return; }
+    if (!['llamaCpp', 'localAuto'].includes(state.provider) && !state.apiKey) { openSettings(); return; }
+    if (state.provider === 'openaiCompatible' && !state.baseUrl) { openSettings(); return; }
 
     if (state.editingIndex >= 0) state.messages.splice(state.editingIndex);
     state.editingIndex = -1;
@@ -780,6 +807,7 @@
         provider: state.provider,
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
+        allowInsecureTls: state.allowInsecureTls,
         model: state.model,
         agentHarness: 'deepagents',
         conversationId: state.currentChatId,

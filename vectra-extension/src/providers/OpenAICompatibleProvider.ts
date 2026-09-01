@@ -5,7 +5,7 @@ interface ChatResponse{choices?:Array<{message?:{content?:string}}>}
 interface ModelsResponse{data?:Array<{id:string;owned_by?:string}>}
 export class OpenAICompatibleProvider implements TextProvider{
   readonly id='openaiCompatible' as const;
-  constructor(private readonly baseUrl:string,private readonly apiKey?:string,private readonly structuredAgentJson=false,private readonly timeoutMs=3_600_000){}
+  constructor(private readonly baseUrl:string,private readonly apiKey?:string,private readonly structuredAgentJson=false,private readonly timeoutMs=3_600_000,private readonly allowInsecureTls=false){}
   async complete(request:ProviderRequest):Promise<string>{
     const userContent:Array<Record<string,unknown>>=[{type:'text',text:request.userPrompt}];
     for(const f of request.attachments??[]) append(userContent,f);
@@ -19,12 +19,12 @@ export class OpenAICompatibleProvider implements TextProvider{
     // schema-constrained tool-loop JSON stays non-streaming: partial JSON is
     // not useful to render and cannot be parsed until it is complete.
     if(request.structured===false&&request.onDelta){
-      const text=await streamSse(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify({...body,stream:true}),signal:request.signal},{onDelta:request.onDelta,idleTimeoutMs:this.timeoutMs,signal:request.signal});
+      const text=await streamSse(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify({...body,stream:true}),signal:request.signal},{onDelta:request.onDelta,idleTimeoutMs:this.timeoutMs,signal:request.signal,allowInsecureTls:this.allowInsecureTls});
       if(!text.trim())throw new Error('OpenAI-compatible endpoint returned no text output.');
       return text.trim();
     }
     try{
-      const data=await fetchJson<ChatResponse>(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify(body),signal:request.signal},this.timeoutMs);
+      const data=await fetchJson<ChatResponse>(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify(body),signal:request.signal},this.timeoutMs,this.allowInsecureTls);
       const text=data.choices?.[0]?.message?.content?.trim();if(!text)throw new Error('OpenAI-compatible endpoint returned no text output.');return text;
     }catch(error){
       // Some llama.cpp builds crash their grammar interpreter mid-string on
@@ -35,13 +35,13 @@ export class OpenAICompatibleProvider implements TextProvider{
       // once unconstrained keeps the turn alive instead of surfacing a crash.
       if(wantsEnvelope&&isGrammarInitError(error)){
         const{response_format:_dropped,...unconstrained}=body as typeof body&{response_format?:unknown};
-        const data=await fetchJson<ChatResponse>(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify(unconstrained),signal:request.signal},this.timeoutMs);
+        const data=await fetchJson<ChatResponse>(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify(unconstrained),signal:request.signal},this.timeoutMs,this.allowInsecureTls);
         const text=data.choices?.[0]?.message?.content?.trim();if(!text)throw new Error('OpenAI-compatible endpoint returned no text output.');return text;
       }
       throw error;
     }
   }
-  async listModels(signal?:AbortSignal):Promise<ModelInfo[]>{const d=await fetchJson<ModelsResponse>(`${this.baseUrl}/models`,{headers:this.headers(false),signal},this.timeoutMs);return(d.data??[]).map(m=>({id:m.id,detail:m.owned_by}))}
+  async listModels(signal?:AbortSignal):Promise<ModelInfo[]>{const d=await fetchJson<ModelsResponse>(`${this.baseUrl}/models`,{headers:this.headers(false),signal},this.timeoutMs,this.allowInsecureTls);return(d.data??[]).map(m=>({id:m.id,detail:m.owned_by}))}
   async testConnection(signal?:AbortSignal):Promise<string>{const m=await this.listModels(signal);return`Connected to OpenAI-compatible endpoint. ${m.length} model(s) available.`}
   private headers(ct:boolean):Record<string,string>{return{...(ct?{'Content-Type':'application/json'}:{}),...(this.apiKey?{Authorization:`Bearer ${this.apiKey}`}:{})}}
 }

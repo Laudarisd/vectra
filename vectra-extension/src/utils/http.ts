@@ -1,7 +1,36 @@
+import * as https from 'node:https';
+import { Readable } from 'node:stream';
+
+async function fetchWithTls(url: string, init: RequestInit, allowInsecureTls = false): Promise<Response> {
+  if (!allowInsecureTls || !url.toLowerCase().startsWith('https://')) return fetch(url, init);
+  return new Promise<Response>((resolve, reject) => {
+    const target = new URL(url);
+    const request = https.request(target, {
+      method: init.method ?? 'GET',
+      headers: init.headers as Record<string, string> | undefined,
+      rejectUnauthorized: false
+    }, (incoming) => {
+      const body = Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+      resolve(new Response(body, {
+        status: incoming.statusCode ?? 500,
+        statusText: incoming.statusMessage,
+        headers: incoming.headers as Record<string, string>
+      }));
+    });
+    request.on('error', reject);
+    const abort = () => request.destroy(new Error('Request cancelled.'));
+    init.signal?.addEventListener('abort', abort, { once: true });
+    request.on('close', () => init.signal?.removeEventListener('abort', abort));
+    if (init.body != null) request.write(init.body as string | Uint8Array);
+    request.end();
+  });
+}
+
 export async function fetchJson<T>(
   url: string,
   init: RequestInit,
-  timeoutMs = 120_000
+  timeoutMs = 120_000,
+  allowInsecureTls = false
 ): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -11,7 +40,7 @@ export async function fetchJson<T>(
   externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
 
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetchWithTls(url, { ...init, signal: controller.signal }, allowInsecureTls);
     const raw = await response.text();
     let parsed: unknown = undefined;
 
@@ -45,6 +74,7 @@ export interface StreamOptions {
   /** Reset on every received chunk, so a long-but-still-producing local generation is never killed by a total-duration cap. */
   idleTimeoutMs?: number;
   signal?: AbortSignal;
+  allowInsecureTls?: boolean;
 }
 
 /**
@@ -111,7 +141,7 @@ async function consumeStream(
   resetIdle();
 
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetchWithTls(url, { ...init, signal: controller.signal }, options.allowInsecureTls);
     if (!response.ok || !response.body) {
       const raw = await response.text().catch(() => '');
       throw new Error(`HTTP ${response.status} ${response.statusText}: ${raw.slice(0, 2000)}`);

@@ -53,6 +53,7 @@
           <option value="openai">OpenAI API</option>
           <option value="anthropic">Anthropic API</option>
           <option value="gemini">Google Gemini API</option>
+          <option value="openaiCompatible">Local API (remote/self-hosted)</option>
           <option value="localAuto">Auto-detect models on this PC</option>
           <option value="llamaCpp">Choose a llama.cpp model from this PC</option>
           <option value="download">Download a recommended model</option>
@@ -62,6 +63,12 @@
       <div id="apiFields">
         <div class="settings-subtitle">Your key stays in this browser session. Available models appear in the model box after you save it.</div>
         <label>API key<input id="apiKey" type="password" autocomplete="off" placeholder="Paste your API key" /></label>
+        <div id="localApiFields" hidden>
+          <label>Remote host<input id="localApiBaseUrl" type="url" autocomplete="off" placeholder="https://your-server.example/v1" /></label>
+          <span class="field-help">OpenAI-compatible base URL; include <code>/v1</code> when required.</span>
+          <label class="check-label"><input id="localApiAllowInsecureTls" type="checkbox" /> Allow a self-signed certificate (unsafe)</label>
+          <span class="field-help">Only enable this temporarily. Certificate verification protects your API key from interception.</span>
+        </div>
       </div>
 
       <div id="autoDetectFields" hidden>

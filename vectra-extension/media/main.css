@@ -50,6 +50,14 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .brand{font-size:14px;font-weight:700;white-space:nowrap}
 .settings-button{width:34px;height:34px;min-width:34px;min-height:34px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;background:transparent;color:var(--vscode-foreground);font-size:18px;display:grid;place-items:center;padding:0}
 .settings-button:hover,.connection-button:hover,.secondary:hover,.danger-outline:hover,.message-action:hover{background:var(--vscode-list-hoverBackground)}
+.history-panel{flex:0 0 auto;margin:0 10px 6px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:6px;max-height:150px;overflow:auto}
+.history-panel>summary{cursor:pointer;padding:5px 7px;font-size:11px;font-weight:600}
+.chat-history{padding:0 5px 5px}
+.history-item{display:flex;gap:4px;margin-top:3px}
+.history-open{flex:1;min-width:0;border:0;border-radius:4px;padding:4px 5px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;color:var(--vscode-foreground)}
+.history-delete{border:0;border-radius:4px;background:transparent;color:var(--vscode-foreground);padding:2px 6px}
+.history-open:hover,.history-delete:hover{background:var(--vscode-list-hoverBackground)}
+.history-empty{padding:5px;font-size:11px;opacity:.7}
 .connection-bar{display:grid;grid-template-columns:1fr 1fr .62fr .9fr;gap:5px;padding:2px 10px 8px;border-bottom:1px solid var(--vscode-sideBar-border,transparent);flex:0 0 auto}
 .connection-button,.secondary,.danger-outline{border:1px solid var(--vscode-widget-border,var(--vscode-input-border));color:var(--vscode-foreground);background:transparent;border-radius:6px}
 .connection-button{min-width:0;padding:6px 4px;font-size:10.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}

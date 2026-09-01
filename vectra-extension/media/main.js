@@ -19,7 +19,7 @@
   const collapsedPlanIds = new Set();
   const dismissedPlanIds = new Set();
   let state = {
-    messages: [], proposals: [], todos: [], plan: null, attachments: [], busy: false,
+    messages: [], history: [], proposals: [], todos: [], plan: null, attachments: [], busy: false,
     provider: 'llamaCpp', model: '', localModelName: '', localModelRunning: false,
     visionEnabled: false, hasKey: true, isLocal: true, workspaceTrusted: true,
     deviceMode: 'auto', gpuInfo: '', theme: 'auto'
@@ -27,7 +27,7 @@
 
   const $ = (id) => document.getElementById(id);
   const els = {
-    messages: $('messages'), attachments: $('attachments'),
+    messages: $('messages'), history: $('chatHistory'), historyPanel: $('historyPanel'), attachments: $('attachments'),
     prompt: $('prompt'), send: $('sendButton'), stop: $('stopButton'), attach: $('attachButton'),
     clear: $('clearButton'), api: $('apiKeyButton'), local: $('localModelButton'), test: $('testButton'),
     download: $('downloadModelButton'),
@@ -48,6 +48,9 @@
   els.clear.addEventListener('click', () => {
     cancelEditing(true);
     vscode.postMessage({ type: 'clearChat' });
+  });
+  els.historyPanel.addEventListener('toggle', () => {
+    if (els.historyPanel.open) vscode.postMessage({ type: 'refreshHistory' });
   });
   els.api.addEventListener('click', () => vscode.postMessage({ type: 'setApiKey' }));
   els.local.addEventListener('click', () => vscode.postMessage({ type: 'selectLocalModel' }));
@@ -197,6 +200,7 @@
   function renderAll() {
     renderModes();
     renderConnections();
+    renderHistory();
     renderMessages();
     renderAttachments();
     renderComposer();
@@ -307,6 +311,28 @@
     }
     if (state.plan && !dismissedPlanIds.has(state.plan.id)) {
       renderPlanCard(container, state.plan, collapsedPlanIds.has(state.plan.id));
+    }
+  }
+
+  function renderHistory() {
+    els.history.replaceChildren();
+    for (const chat of state.history || []) {
+      const row = document.createElement('div');
+      row.className = 'history-item';
+      const open = button(chat.title || 'New chat', 'history-open', () => vscode.postMessage({ type: 'openHistory', id: chat.id }));
+      open.title = chat.title || 'New chat';
+      open.disabled = state.busy;
+      const remove = button('×', 'history-delete', () => vscode.postMessage({ type: 'deleteHistory', id: chat.id }));
+      remove.title = 'Delete local chat';
+      remove.disabled = state.busy;
+      row.append(open, remove);
+      els.history.appendChild(row);
+    }
+    if (!(state.history || []).length) {
+      const empty = document.createElement('div');
+      empty.className = 'history-empty';
+      empty.textContent = 'Saved chats appear here.';
+      els.history.appendChild(empty);
     }
   }
 

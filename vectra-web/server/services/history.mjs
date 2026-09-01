@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -7,9 +7,10 @@ import { randomUUID } from 'node:crypto';
 // Chat history is deliberately local-only. Credentials are never accepted by
 // this store, and the database lives in the user's application-data directory.
 export class ChatHistoryStore {
-  constructor(databasePath = defaultDatabasePath()) {
+  constructor(databasePath = defaultDatabasePath(), sharedDirectory = defaultSharedHistoryDirectory(databasePath)) {
     mkdirSync(dirname(databasePath), { recursive: true });
     this.databasePath = databasePath;
+    this.sharedDirectory = sharedDirectory;
     this.db = new DatabaseSync(databasePath);
     this.db.exec(`
       PRAGMA journal_mode = WAL;
@@ -52,7 +53,7 @@ export class ChatHistoryStore {
   }
 
   list(limit = 100) {
-    return this.db.prepare(`
+    const databaseChats = this.db.prepare(`
       SELECT c.id, c.title, c.provider, c.model, c.created_at AS createdAt,
              c.updated_at AS updatedAt, COUNT(m.id) AS messageCount
       FROM conversations c
@@ -61,6 +62,12 @@ export class ChatHistoryStore {
       ORDER BY c.updated_at DESC
       LIMIT ?
     `).all(Math.max(1, Math.min(500, Number(limit) || 100)));
+    const merged = new Map(listSharedChats(this.sharedDirectory).map((chat) => [chat.id, chat]));
+    for (const chat of databaseChats) {
+      const shared = merged.get(chat.id);
+      if (!shared || chat.updatedAt >= shared.updatedAt) merged.set(chat.id, chat);
+    }
+    return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, Math.min(500, Number(limit) || 100)));
   }
 
   get(id) {
@@ -68,12 +75,14 @@ export class ChatHistoryStore {
       SELECT id, title, provider, model, created_at AS createdAt, updated_at AS updatedAt
       FROM conversations WHERE id = ?
     `).get(id);
-    if (!conversation) return undefined;
+    const shared = readSharedChat(this.sharedDirectory, id);
+    if (!conversation) return shared;
+    if (shared && shared.updatedAt > conversation.updatedAt) return shared;
     const rows = this.db.prepare(`
       SELECT role, content, artifacts_json AS artifactsJson, created_at AS createdAt
       FROM messages WHERE conversation_id = ? ORDER BY position
     `).all(id);
-    return {
+    const saved = {
       ...conversation,
       messages: rows.map((row) => ({
         role: row.role,
@@ -82,6 +91,7 @@ export class ChatHistoryStore {
         createdAt: row.createdAt
       }))
     };
+    return saved;
   }
 
   save(input = {}) {
@@ -102,11 +112,15 @@ export class ChatHistoryStore {
       this.db.exec('ROLLBACK');
       throw error;
     }
-    return this.get(id);
+    const saved = this.get(id);
+    if (saved) writeSharedChat(this.sharedDirectory, saved);
+    return saved;
   }
 
   delete(id) {
-    return this.db.prepare('DELETE FROM conversations WHERE id = ?').run(id).changes > 0;
+    const databaseDeleted = this.db.prepare('DELETE FROM conversations WHERE id = ?').run(id).changes > 0;
+    const sharedDeleted = deleteSharedChat(this.sharedDirectory, id);
+    return databaseDeleted || sharedDeleted;
   }
 
   close() { this.db.close(); }
@@ -118,6 +132,41 @@ export function defaultDatabasePath() {
     || (process.platform === 'win32' ? process.env.LOCALAPPDATA : '')
     || (process.platform === 'darwin' ? join(homedir(), 'Library', 'Application Support') : join(homedir(), '.local', 'share'));
   return join(base, 'Vectra Web', 'vectra.sqlite');
+}
+
+export function defaultSharedHistoryDirectory(databasePath = defaultDatabasePath()) {
+  if (process.env.VECTRA_HISTORY_DIR) return process.env.VECTRA_HISTORY_DIR;
+  if (process.env.VECTRA_DATABASE_PATH || databasePath !== defaultDatabasePath()) return join(dirname(databasePath), 'history');
+  return join(homedir(), '.agent', 'vectra', 'history');
+}
+
+function listSharedChats(directory) {
+  try {
+    return readdirSync(directory)
+      .filter((name) => /^[a-zA-Z0-9-]{8,80}\.json$/.test(name))
+      .flatMap((name) => { const chat = readSharedChat(directory, name.slice(0, -5)); return chat ? [{ ...chat, messageCount: chat.messages.length, messages: undefined }] : []; })
+      .map(({ messages: _messages, ...chat }) => chat);
+  } catch { return []; }
+}
+
+function readSharedChat(directory, id) {
+  if (!validId(id)) return undefined;
+  try { return JSON.parse(readFileSync(join(directory, `${id}.json`), 'utf8')); }
+  catch { return undefined; }
+}
+
+function writeSharedChat(directory, chat) {
+  mkdirSync(directory, { recursive: true });
+  const target = join(directory, `${chat.id}.json`);
+  const temporary = `${target}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify(chat), 'utf8');
+  renameSync(temporary, target);
+}
+
+function deleteSharedChat(directory, id) {
+  if (!validId(id)) return false;
+  try { rmSync(join(directory, `${id}.json`)); return true; }
+  catch { return false; }
 }
 
 function sanitizeMessages(value) {

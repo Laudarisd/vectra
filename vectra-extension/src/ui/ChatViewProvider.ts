@@ -13,6 +13,7 @@ import { EditProposalManager } from '../workspace/EditProposalManager';
 import { PlanManager } from '../state/PlanManager';
 import { TodoManager } from '../state/TodoManager';
 import { AgentRuntimeEvent, AgentSession } from '../core';
+import { LocalChatHistory } from '../history/LocalChatHistory';
 
 interface WebviewMessage {
   type: string;
@@ -28,6 +29,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'vectra.chat';
 
   private static readonly HISTORY_KEY = 'vectra.chatHistory';
+  private static readonly ACTIVE_CHAT_KEY = 'vectra.activeChatId';
   private static readonly MAX_STORED_MESSAGES = 300;
 
   private view?: vscode.WebviewView;
@@ -36,6 +38,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private readonly messageAttachments = new Map<string, Attachment[]>();
   private abortController?: AbortController;
   private pendingSelectionCheck = false;
+  private activeChatId: string = randomUUID();
+  private hasResolvedView = false;
 
   private get messages(): ChatMessage[] { return this.session.messages; }
   private get busy(): boolean { return this.session.isBusy; }
@@ -51,14 +55,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private readonly localLlama: LlamaCppRuntime,
     private readonly attachmentService: AttachmentService,
     private readonly workspaceState: vscode.Memento,
+    private readonly history: LocalChatHistory,
     private readonly extensionVersion: string = ''
   ) {
     // Attachment payloads (base64/text) are deliberately not persisted here —
     // ChatMessage only carries attachment metadata, so history survives a
     // reload without workspaceState ballooning from re-stored file content.
     const saved = this.workspaceState.get<ChatMessage[]>(ChatViewProvider.HISTORY_KEY, []);
+    const savedId = this.workspaceState.get<string>(ChatViewProvider.ACTIVE_CHAT_KEY, '');
+    if (Array.isArray(saved) && saved.length) this.history.save(saved, getConfig().provider, getConfig().model, savedId || undefined);
+    void this.workspaceState.update(ChatViewProvider.HISTORY_KEY, []);
+    void this.workspaceState.update(ChatViewProvider.ACTIVE_CHAT_KEY, '');
     this.session = new AgentSession<ChatMessage>({
-      messages: Array.isArray(saved) ? saved : [],
+      messages: [],
       todos: this.todos,
       plans: this.plans
     });
@@ -70,9 +79,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       ? this.messages.slice(-ChatViewProvider.MAX_STORED_MESSAGES)
       : this.messages;
     void this.workspaceState.update(ChatViewProvider.HISTORY_KEY, trimmed);
+    void this.workspaceState.update(ChatViewProvider.ACTIVE_CHAT_KEY, this.activeChatId);
+    if (trimmed.length) this.history.save(trimmed, getConfig().provider, getConfig().model, this.activeChatId);
+  }
+
+  private startNewChat(): void {
+    this.session.clear();
+    this.activeChatId = randomUUID();
+    this.pendingAttachments.splice(0);
+    this.messageAttachments.clear();
+    void this.workspaceState.update(ChatViewProvider.HISTORY_KEY, []);
+    void this.workspaceState.update(ChatViewProvider.ACTIVE_CHAT_KEY, '');
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
+    if (this.hasResolvedView) this.startNewChat();
+    this.hasResolvedView = true;
     this.view = webviewView;
     webviewView.webview.options = {
       enableScripts: true,
@@ -123,6 +145,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     try {
       switch (message.type) {
         case 'ready':
+          await this.postState();
+          break;
+        case 'refreshHistory':
           await this.postState();
           break;
         case 'send':
@@ -197,11 +222,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           await this.postState();
           break;
         case 'clearChat':
-          this.session.clear();
-          this.pendingAttachments.splice(0);
-          this.messageAttachments.clear();
+          this.startNewChat();
+          await this.postState();
+          break;
+        case 'openHistory': {
+          if (!message.id) break;
+          const chat = this.history.get(message.id);
+          if (!chat) break;
+          this.startNewChat();
+          this.activeChatId = chat.id;
+          for (const item of chat.messages) this.session.addMessage(item);
           this.persistMessages();
           await this.postState();
+          break;
+        }
+        case 'deleteHistory':
+          if (message.id) {
+            this.history.delete(message.id);
+            if (message.id === this.activeChatId) this.startNewChat();
+            await this.postState();
+          }
           break;
         case 'setApiKey':
           await vscode.commands.executeCommand('vectra.setApiKey');
@@ -381,6 +421,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     await this.post({
       type: 'state',
       messages: this.messages,
+      history: this.history.list(),
       proposals: this.patches.list().map(toWebviewProposal),
       todos: this.todos.list(),
       // Resolved HITL cards are execution state, not permanent chat history.
@@ -449,10 +490,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';"/><link rel="stylesheet" href="${style}"/><title>Vectra</title></head><body data-theme="${theme}">
 <main id="app">
 <header class="topbar"><div class="brand-wrap"><img class="brand-icon" src="${icon}" alt=""/><span class="brand">Vectra</span></div><button id="settingsButton" class="settings-button" title="Vectra settings" aria-label="Vectra settings">⚙</button></header>
+<details id="historyPanel" class="history-panel"><summary>Local history</summary><div id="chatHistory" class="chat-history"></div></details>
 <section class="connection-bar"><button id="apiKeyButton" class="connection-button">API Key</button><button id="localModelButton" class="connection-button">Local Model</button><button id="testButton" class="connection-button">Test</button><button id="downloadModelButton" class="connection-button">Download Model</button></section>
 <nav class="modes"><button class="mode active" data-mode="agent">Agent</button><button class="mode" data-mode="ask">Ask</button><button class="mode" data-mode="selection">Check Selection</button></nav>
 <section id="messages" class="messages" aria-live="polite"></section>
-<section class="composer-wrap"><div id="attachments" class="attachment-list"></div><textarea id="prompt" rows="3" placeholder="Ask Vectra…"></textarea><div class="composer-actions"><div class="left-actions"><button id="attachButton" class="secondary">＋ File</button><button id="clearButton" class="secondary">Clear Chat</button></div><button id="sendButton" class="primary">Send</button><button id="stopButton" class="danger hidden">Stop</button></div></section>
+<section class="composer-wrap"><div id="attachments" class="attachment-list"></div><textarea id="prompt" rows="3" placeholder="Ask Vectra…"></textarea><div class="composer-actions"><div class="left-actions"><button id="attachButton" class="secondary">＋ File</button><button id="clearButton" class="secondary">New Chat</button></div><button id="sendButton" class="primary">Send</button><button id="stopButton" class="danger hidden">Stop</button></div></section>
 </main>
 <dialog id="settingsDialog" class="settings-dialog"><form method="dialog" class="settings-card"><div class="settings-title"><div><strong>Vectra Settings</strong><div class="settings-subtitle">Runtime, model capability and support</div></div><button class="dialog-close" value="cancel" aria-label="Close">×</button></div><section class="settings-section"><h3>Runtime</h3><div id="runtimeInfo" class="runtime-info"></div><div class="device-row"><span>Device</span><select id="deviceMode"><option value="auto">Auto</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select></div><div class="device-row"><span>Theme</span><select id="themeMode"><option value="auto">Match VS Code</option><option value="grayWhite">Gray / White</option></select></div><div id="gpuInfo" class="capability-info hidden"></div><div id="capabilityInfo" class="capability-info"></div></section><section class="settings-section"><h3>General information</h3><div class="contact-grid"><span>Version</span><strong>v${this.extensionVersion}</strong><span>Email</span><strong>test@gmail.com</strong><span>Contact</span><strong>+0000000000</strong><span>GitHub</span><strong>Laudarisd</strong></div></section><section class="settings-section"><h3>Support & advanced</h3><div class="settings-actions"><button id="advancedSettingsButton" type="button" class="secondary">Advanced Settings</button><button id="supportButton" type="button" class="secondary">Support Developer</button></div></section><div class="dialog-actions"><button value="cancel" class="primary">Done</button></div></form></dialog>
 <script nonce="${nonce}" src="${script}"></script></body></html>`;

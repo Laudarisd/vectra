@@ -27,7 +27,7 @@ export class ProviderManager {
       case 'openaiCompatible':
         // Often another local/self-hosted runtime (LM Studio, vLLM, a private
         // gateway), so it gets the same generous local timeout as llama.cpp/Ollama.
-        return new OpenAICompatibleProvider(config.openaiCompatibleBaseUrl, await this.credentials.get('openaiCompatible'), false, config.localRequestTimeoutSeconds * 1000);
+        return new OpenAICompatibleProvider(config.openaiCompatibleBaseUrl, await this.credentials.get('openaiCompatible'), false, config.localRequestTimeoutSeconds * 1000, config.openaiCompatibleAllowInsecureTls);
       default:
         return assertNever(config.provider);
     }

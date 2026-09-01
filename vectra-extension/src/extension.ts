@@ -13,7 +13,8 @@ import { CommandRunner } from './workspace/CommandRunner';
 import { AttachmentService } from './documents/AttachmentService';
 import { ChatViewProvider } from './ui/ChatViewProvider';
 import { ModelInfo, ProviderId } from './types';
-import { getConfig, updateModel, updateProvider } from './utils/config';
+import { getConfig, updateModel, updateOpenAICompatibleAllowInsecureTls, updateOpenAICompatibleBaseUrl, updateProvider } from './utils/config';
+import { LocalChatHistory } from './history/LocalChatHistory';
 
 let localLlama: LlamaCppRuntime | undefined;
 let extensionOutput: vscode.OutputChannel | undefined;
@@ -38,6 +39,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
   const credentials = new LocalCredentialStore();
+  const history = new LocalChatHistory();
   localLlama = new LlamaCppRuntime();
   const providers = new ProviderManager(credentials);
   const tools = new WorkspaceTools();
@@ -59,6 +61,7 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
     localLlama,
     attachments,
     context.workspaceState,
+    history,
     String(context.extension.packageJSON.version ?? '')
   );
 
@@ -234,7 +237,7 @@ async function configureCloudProvider(
     { id: 'openai', label: 'OpenAI', description: 'Use your OpenAI API key' },
     { id: 'anthropic', label: 'Anthropic / Claude', description: 'Use your Anthropic API key' },
     { id: 'gemini', label: 'Google Gemini', description: 'Use your Gemini API key' },
-    { id: 'openaiCompatible', label: 'OpenAI-compatible API', description: 'Custom hosted endpoint; API key may be optional' }
+    { id: 'openaiCompatible', label: 'Local API', description: 'Remote/self-hosted OpenAI-compatible host and API key' }
   ];
   const current = getConfig().provider;
   const picked = await vscode.window.showQuickPick(cloudItems, {
@@ -250,15 +253,42 @@ async function configureCloudProvider(
     value: existing ?? '',
     password: true,
     ignoreFocusOut: true,
-    placeHolder: picked.id === 'openaiCompatible' ? 'Optional for local/custom endpoints' : 'Paste API key'
+    placeHolder: 'Paste API key'
   });
   if (key === undefined) return;
-  if (!key.trim() && picked.id !== 'openaiCompatible') {
+  if (!key.trim()) {
     void vscode.window.showWarningMessage('An API key is required for this provider.');
     return;
   }
-  if (key.trim()) await credentials.set(picked.id, key);
-  else await credentials.delete(picked.id);
+  if (picked.id === 'openaiCompatible') {
+    const currentConfig = getConfig();
+    const baseUrl = await vscode.window.showInputBox({
+      title: 'Vectra: Local API host',
+      prompt: 'Enter the OpenAI-compatible base URL. Include /v1 when your server requires it.',
+      value: currentConfig.openaiCompatibleBaseUrl,
+      ignoreFocusOut: true,
+      placeHolder: 'https://your-server.example/v1',
+      validateInput: (value) => {
+        try { const url = new URL(value.trim()); return ['http:', 'https:'].includes(url.protocol) ? undefined : 'Use an http:// or https:// URL.'; }
+        catch { return 'Enter a valid URL, for example https://server.example/v1'; }
+      }
+    });
+    if (baseUrl === undefined) return;
+    let allowInsecureTls = false;
+    if (baseUrl.trim().toLowerCase().startsWith('https://')) {
+      const choice = await vscode.window.showWarningMessage(
+        'Does this Local API use a self-signed or otherwise untrusted certificate? Disabling certificate verification makes interception possible.',
+        { modal: true },
+        'Keep verification (recommended)',
+        'Allow self-signed certificate'
+      );
+      if (!choice) return;
+      allowInsecureTls = choice === 'Allow self-signed certificate';
+    }
+    await updateOpenAICompatibleBaseUrl(baseUrl.trim());
+    await updateOpenAICompatibleAllowInsecureTls(allowInsecureTls);
+  }
+  await credentials.set(picked.id, key);
   await updateProvider(picked.id);
   await updateModel('');
   await chat.refresh();
@@ -306,7 +336,7 @@ function providerItems(): Array<vscode.QuickPickItem & { id: ProviderId }> {
     { id: 'openai', label: 'OpenAI' },
     { id: 'anthropic', label: 'Anthropic / Claude' },
     { id: 'gemini', label: 'Google Gemini' },
-    { id: 'openaiCompatible', label: 'OpenAI-compatible', description: 'LM Studio, vLLM, private gateway, etc.' }
+    { id: 'openaiCompatible', label: 'Local API', description: 'Remote/self-hosted OpenAI-compatible endpoint' }
   ];
 }
 function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error); }

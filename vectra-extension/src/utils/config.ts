@@ -32,6 +32,7 @@ export interface AgentConfiguration {
   ollamaBaseUrl: string;
   ollamaContextSize: number;
   openaiCompatibleBaseUrl: string;
+  openaiCompatibleAllowInsecureTls: boolean;
   openaiBaseUrl: string;
   anthropicBaseUrl: string;
   geminiBaseUrl: string;
@@ -73,6 +74,7 @@ export function getConfig(): AgentConfiguration {
     ollamaBaseUrl: trim(c.get<string>('ollamaBaseUrl', 'http://localhost:11434')),
     ollamaContextSize: c.get<number>('ollamaContextSize', 8192),
     openaiCompatibleBaseUrl: trim(c.get<string>('openaiCompatibleBaseUrl', 'http://localhost:1234/v1')),
+    openaiCompatibleAllowInsecureTls: c.get<boolean>('openaiCompatibleAllowInsecureTls', false),
     openaiBaseUrl: trim(c.get<string>('openaiBaseUrl', 'https://api.openai.com/v1')),
     anthropicBaseUrl: trim(c.get<string>('anthropicBaseUrl', 'https://api.anthropic.com/v1')),
     geminiBaseUrl: trim(c.get<string>('geminiBaseUrl', 'https://generativelanguage.googleapis.com/v1beta')),
@@ -129,6 +131,9 @@ export async function updateModelsDirectory(value: string): Promise<void> {
 }
 export async function updateOpenAICompatibleBaseUrl(value: string): Promise<void> {
   await vscode.workspace.getConfiguration(SECTION).update('openaiCompatibleBaseUrl', value, vscode.ConfigurationTarget.Global);
+}
+export async function updateOpenAICompatibleAllowInsecureTls(value: boolean): Promise<void> {
+  await vscode.workspace.getConfiguration(SECTION).update('openaiCompatibleAllowInsecureTls', value, vscode.ConfigurationTarget.Global);
 }
 export async function updateLlamaServerPath(value: string): Promise<void> {
   await vscode.workspace.getConfiguration(SECTION).update('llamaCppServerPath', value, vscode.ConfigurationTarget.Global);

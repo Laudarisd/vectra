@@ -1,4 +1,6 @@
 import http from 'node:http';
+import https from 'node:https';
+import { Readable } from 'node:stream';
 import { readFile, stat, mkdtemp, writeFile, readdir, rm, mkdir } from 'node:fs/promises';
 import { createReadStream, existsSync } from 'node:fs';
 import { extname, join, normalize, resolve, dirname } from 'node:path';
@@ -52,7 +54,8 @@ async function handleHistory(req,res,pathname,url){
 }
 
 async function handleChat(req,res){
-  const b=await readJson(req);let{provider='openai',apiKey='',model='',baseUrl='',agentHarness='deepagents',conversationId='',messages=[],attachments=[]}=b;
+  const b=await readJson(req);let{provider='openai',apiKey='',model='',baseUrl='',allowInsecureTls=false,agentHarness='deepagents',conversationId='',messages=[],attachments=[]}=b;
+  allowInsecureTls=provider==='openaiCompatible'&&allowInsecureTls===true;
   if(provider==='localAuto'&&!baseUrl){const runtimes=await discoverRuntimes();const runtime=runtimes.find(item=>item.models.includes(model))||runtimes[0];if(!runtime)return json(res,400,{error:'No supported local model server was detected. Start Ollama, LM Studio, llama.cpp, vLLM, or another OpenAI-compatible runtime.'});baseUrl=runtime.baseUrl;model=model||runtime.models[0]}
   let localContextTokens=0;
   if(provider==='llamaCpp'){
@@ -62,6 +65,7 @@ async function handleChat(req,res){
   }
   if(!model)return json(res,400,{error:'Select or enter a model.'});
   if(!['llamaCpp','openaiCompatible','localAuto'].includes(provider)&&!apiKey)return json(res,400,{error:'API key is required for this provider.'});
+  if(provider==='openaiCompatible'&&!baseUrl)return json(res,400,{error:'Remote host is required for Local API.'});
 
   // A local llama.cpp/Ollama-class server has a real, often small, context
   // window and returns HTTP 400 rather than truncating gracefully when a
@@ -107,12 +111,12 @@ async function handleChat(req,res){
       if(agentHarness==='deepagents'){
         let nativeToolsAvailable=true;
         const bridge={complete:async({systemPrompt:agentPrompt,userPrompt})=>callProvider(provider,{
-          apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',
+          apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,
           messages:[{role:'user',content:`${agentPrompt}\n\n${userPrompt}`}],
           attachments:safeAttachments,timeoutMs:idleTimeoutMs
         }),...(['llamaCpp','openaiCompatible','localAuto'].includes(provider)?{completeWithTools:async(request)=>{
           if(!nativeToolsAvailable)throw new Error('NATIVE_TOOL_CALLING_UNSUPPORTED: disabled for this run.');
-          try{return await compatibleToolChat({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',timeoutMs:idleTimeoutMs,...request})}
+          try{return await compatibleToolChat({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,timeoutMs:idleTimeoutMs,...request})}
           catch(error){const detail=error instanceof Error?error.message:String(error);if(/HTTP (400|404|422)|tool.?call|chat template|jinja/i.test(detail)){nativeToolsAvailable=false;throw new Error(`NATIVE_TOOL_CALLING_UNSUPPORTED: ${detail}`)}throw error}
         }}:{})};
         const tools=createWebTools(safeAttachments,toolArtifacts);
@@ -126,15 +130,15 @@ async function handleChat(req,res){
         generated=deep.text;
       }else{
         generated=streamable
-          ? await compatibleChatStream({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',messages:safeMessages,attachments:safeAttachments},(delta)=>events.emit({type:'ui.delta',delta}),idleTimeoutMs)
-          : await callProvider(provider,{apiKey,model,baseUrl,messages:safeMessages,attachments:safeAttachments});
+          ? await compatibleChatStream({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,messages:safeMessages,attachments:safeAttachments},(delta)=>events.emit({type:'ui.delta',delta}),idleTimeoutMs)
+          : await callProvider(provider,{apiKey,model,baseUrl,allowInsecureTls,messages:safeMessages,attachments:safeAttachments});
       }
       if(!streamable||agentHarness==='deepagents')events.emit({type:'ui.delta',delta:generated});
       return generated;
     },requestAbort.signal);
     if(hasUsableAttachmentContent(safeAttachments)&&looksLikeFalseAttachmentRefusal(text)){
       const retryMessages=[...safeMessages,{role:'user',content:'SYSTEM CORRECTION FROM VECTRA RUNTIME: The attached files have already been parsed and their actual content is included in this request. Answer the original user request using that content now. Do not ask the user to paste the file, and do not say you cannot access attachments.'}];
-      text=await callProvider(provider,{apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',messages:retryMessages,attachments:safeAttachments,timeoutMs:idleTimeoutMs});
+      text=await callProvider(provider,{apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,messages:retryMessages,attachments:safeAttachments,timeoutMs:idleTimeoutMs});
       if(!closed)send({replace:text});
     }
     const latestUser=[...safeMessages].reverse().find(m=>m.role==='user')?.content||'';
@@ -160,20 +164,22 @@ async function handleAttachmentInspect(req,res){const body=await readJson(req);c
 async function callProvider(provider,args){if(provider==='openai')return openAIChat(args);if(provider==='anthropic')return anthropicChat(args);if(provider==='gemini')return geminiChat(args);return compatibleChat({...args,baseUrl:args.baseUrl||'http://127.0.0.1:8080/v1'})}
 
 /** Shared by /api/models and /api/test-connection for every cloud/OpenAI-compatible provider (llamaCpp and localAuto keep their own runtime-aware branches, out of this helper). */
-async function fetchProviderModels(provider,apiKey,baseUrl){
+async function fetchProviderModels(provider,apiKey,baseUrl,allowInsecureTls=false){
   if(provider==='openai'){const d=await fetchJson(`${trim(baseUrl||'https://api.openai.com/v1')}/models`,{headers:{Authorization:`Bearer ${apiKey}`}});return (d.data||[]).map(x=>x.id).filter(Boolean).sort()}
   if(provider==='anthropic'){const d=await fetchJson(`${trim(baseUrl||'https://api.anthropic.com/v1')}/models`,{headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01'}});return (d.data||[]).map(x=>x.id).filter(Boolean)}
   if(provider==='gemini'){const root=trim(baseUrl||'https://generativelanguage.googleapis.com/v1beta');const d=await fetchJson(`${root}/models`,{headers:{'x-goog-api-key':apiKey}});return (d.models||[]).map(x=>String(x.name||'').replace(/^models\//,'')).filter(Boolean)}
   const d=await fetchJson(
     `${trim(baseUrl||'http://127.0.0.1:8080/v1')}/models`,
     {headers:apiKey?{Authorization:`Bearer ${apiKey}`}:{ }},
-    3_600_000
+    3_600_000,
+    provider==='openaiCompatible'&&allowInsecureTls===true
   );
   return (d.data||[]).map(x=>x.id).filter(Boolean);
 }
 async function handleModels(req,res){
-  let{provider='openai',apiKey='',baseUrl=''}=await readJson(req);
+  let{provider='openai',apiKey='',baseUrl='',allowInsecureTls=false}=await readJson(req);
   if(!['llamaCpp','openaiCompatible','localAuto'].includes(provider)&&!apiKey)return json(res,400,{error:'API key required.'});
+  if(provider==='openaiCompatible'&&!baseUrl)return json(res,400,{error:'Remote host is required for Local API.'});
   let models=[];let runtimes=[];
   if(provider==='llamaCpp'){
     const local=localLlama.snapshot();
@@ -184,13 +190,13 @@ async function handleModels(req,res){
     runtimes=await discoverRuntimes();
     models=[...new Set(runtimes.flatMap(runtime=>runtime.models))];
   }else{
-    models=await fetchProviderModels(provider,apiKey,baseUrl);
+    models=await fetchProviderModels(provider,apiKey,baseUrl,allowInsecureTls);
   }
   return json(res,200,{models,runtimes});
 }
 /** Lightweight connectivity check: for cloud/OpenAI-compatible providers this lists models as proof the key/endpoint works; for local runtimes it checks the runtime is actually reachable. Always resolves 200 with {ok,message} so the client can show a plain result either way. */
 async function handleTestConnection(req,res){
-  const {provider='openai',apiKey='',baseUrl='',model=''}=await readJson(req);
+  const {provider='openai',apiKey='',baseUrl='',allowInsecureTls=false,model=''}=await readJson(req);
   try{
     if(provider==='llamaCpp'){
       const local=localLlama.snapshot();
@@ -204,7 +210,8 @@ async function handleTestConnection(req,res){
       return json(res,200,{ok:true,message:`Connected to ${runtimes.map(r=>r.name).join(', ')}.`});
     }
     if(provider!=='openaiCompatible'&&!apiKey)throw new Error('API key is required for this provider.');
-    const models=await fetchProviderModels(provider,apiKey,baseUrl);
+    if(provider==='openaiCompatible'&&!baseUrl)throw new Error('Remote host is required for Local API.');
+    const models=await fetchProviderModels(provider,apiKey,baseUrl,allowInsecureTls);
     if(model&&models.length&&!models.includes(model))return json(res,200,{ok:true,message:`Connected, but "${model}" was not among the ${models.length} model(s) this endpoint returned.`});
     return json(res,200,{ok:true,message:`Connected. ${models.length} model${models.length===1?'':'s'} available.`});
   }catch(error){
@@ -296,17 +303,17 @@ async function handleLlamaCppInstall(req,res){
 async function openAIChat({apiKey,model,baseUrl,messages,attachments}){const content=[{type:'input_text',text:transcript(messages)}];for(const f of attachments){if(f.kind==='text'||f.kind==='document')content.push({type:'input_text',text:`\n[Attachment: ${f.name}]\n${f.text}`});else if(f.mime.startsWith('image/')&&f.base64)content.push({type:'input_image',image_url:`data:${f.mime};base64,${f.base64}`,detail:'auto'});else if(f.base64)content.push({type:'input_file',filename:f.name,file_data:`data:${f.mime};base64,${f.base64}`});if(f.kind==='pdf'&&f.text)content.push({type:'input_text',text:`\n[Extracted PDF text fallback: ${f.name}]\n${f.text}`})}const d=await fetchJson(`${trim(baseUrl||'https://api.openai.com/v1')}/responses`,{method:'POST',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({model,instructions:systemPrompt(attachments),input:[{role:'user',content}]})});const parts=[];if(d.output_text)parts.push(d.output_text);for(const i of d.output||[])for(const p of i.content||[])if(p.text)parts.push(p.text);if(!parts.join('').trim())throw new Error('OpenAI returned no text output.');return parts.join('\n').trim()}
 async function anthropicChat({apiKey,model,baseUrl,messages,attachments}){const last=messages.at(-1)?.content||'';const history=messages.slice(0,-1).map(m=>({role:m.role,content:m.content}));const content=[{type:'text',text:last||'Please analyze the attached files.'}];for(const f of attachments){if(f.kind==='text'||f.kind==='document')content.push({type:'text',text:`\n[Attachment: ${f.name}]\n${f.text}`});else if(f.mime.startsWith('image/')&&f.base64)content.push({type:'image',source:{type:'base64',media_type:f.mime,data:f.base64}});else if(f.mime==='application/pdf'&&f.base64)content.push({type:'document',source:{type:'base64',media_type:f.mime,data:f.base64}});else if(f.text)content.push({type:'text',text:`\n[Extracted attachment: ${f.name}]\n${f.text}`})}const d=await fetchJson(`${trim(baseUrl||'https://api.anthropic.com/v1')}/messages`,{method:'POST',headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','Content-Type':'application/json'},body:JSON.stringify({model,max_tokens:8192,system:systemPrompt(attachments),messages:[...history,{role:'user',content}]})});const text=(d.content||[]).filter(p=>p.type==='text').map(p=>p.text).join('\n').trim();if(!text)throw new Error('Anthropic returned no text output.');return text}
 async function geminiChat({apiKey,model,baseUrl,messages,attachments}){const parts=[{text:transcript(messages)}];for(const f of attachments){if(f.kind==='text'||f.kind==='document')parts.push({text:`\n[Attachment: ${f.name}]\n${f.text}`});else if(f.base64)parts.push({inline_data:{mime_type:f.mime||'application/octet-stream',data:f.base64}});else if(f.text)parts.push({text:`\n[Attachment: ${f.name}]\n${f.text}`})}const root=trim(baseUrl||'https://generativelanguage.googleapis.com/v1beta');const d=await fetchJson(`${root}/models/${encodeURIComponent(model)}:generateContent`,{method:'POST',headers:{'x-goog-api-key':apiKey,'Content-Type':'application/json'},body:JSON.stringify({system_instruction:{parts:[{text:systemPrompt(attachments)}]},contents:[{role:'user',parts}]})});const text=(d.candidates||[]).flatMap(c=>c.content?.parts||[]).map(p=>p.text||'').join('\n').trim();if(!text)throw new Error('Gemini returned no text output.');return text}
-async function compatibleChat({apiKey,model,baseUrl,messages,attachments,timeoutMs=3_600_000}){const content=[{type:'text',text:messages.at(-1)?.content||'Please analyze the attached files.'}];for(const f of attachments){if((f.kind==='text'||f.kind==='pdf'||f.kind==='document')&&f.text)content.push({type:'text',text:`\n[Attachment: ${f.name}]\n${f.text}`});if(f.mime.startsWith('image/')&&f.base64)content.push({type:'image_url',image_url:{url:`data:${f.mime};base64,${f.base64}`}})}const history=messages.slice(0,-1).map(m=>({role:m.role,content:m.content}));const d=await fetchJson(`${trim(baseUrl)}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',...(apiKey?{Authorization:`Bearer ${apiKey}`}:{})},body:JSON.stringify({model,messages:[{role:'system',content:systemPrompt(attachments)},...history,{role:'user',content}],temperature:.2,cache_prompt:true})},timeoutMs);logCompatibleTimings(d,model);const text=d.choices?.[0]?.message?.content?.trim();if(!text)throw new Error('Model endpoint returned no text output.');return text}
+async function compatibleChat({apiKey,model,baseUrl,allowInsecureTls=false,messages,attachments,timeoutMs=3_600_000}){const content=[{type:'text',text:messages.at(-1)?.content||'Please analyze the attached files.'}];for(const f of attachments){if((f.kind==='text'||f.kind==='pdf'||f.kind==='document')&&f.text)content.push({type:'text',text:`\n[Attachment: ${f.name}]\n${f.text}`});if(f.mime.startsWith('image/')&&f.base64)content.push({type:'image_url',image_url:{url:`data:${f.mime};base64,${f.base64}`}})}const history=messages.slice(0,-1).map(m=>({role:m.role,content:m.content}));const d=await fetchJson(`${trim(baseUrl)}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',...(apiKey?{Authorization:`Bearer ${apiKey}`}:{})},body:JSON.stringify({model,messages:[{role:'system',content:systemPrompt(attachments)},...history,{role:'user',content}],temperature:.2,cache_prompt:true})},timeoutMs,allowInsecureTls);logCompatibleTimings(d,model);const text=d.choices?.[0]?.message?.content?.trim();if(!text)throw new Error('Model endpoint returned no text output.');return text}
 
-async function compatibleToolChat({apiKey,model,baseUrl,messages,tools,signal,timeoutMs=3_600_000}){
+async function compatibleToolChat({apiKey,model,baseUrl,allowInsecureTls=false,messages,tools,signal,timeoutMs=3_600_000}){
   const wireMessages=messages.map(message=>({role:message.role,content:message.content,...(message.toolCallId?{tool_call_id:message.toolCallId}:{}),...(message.toolCalls?.length?{tool_calls:message.toolCalls.map(call=>({id:call.id,type:'function',function:{name:call.name,arguments:JSON.stringify(call.args)}}))}:{})}));
-  const d=await fetchJson(`${trim(baseUrl)}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',...(apiKey?{Authorization:`Bearer ${apiKey}`}:{})},body:JSON.stringify({model,messages:wireMessages,tools:tools.map(item=>({type:'function',function:{name:item.name,description:item.description||'',parameters:item.parameters}})),tool_choice:'auto',temperature:.2,cache_prompt:true,stream:false}),signal},timeoutMs);
+  const d=await fetchJson(`${trim(baseUrl)}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',...(apiKey?{Authorization:`Bearer ${apiKey}`}:{})},body:JSON.stringify({model,messages:wireMessages,tools:tools.map(item=>({type:'function',function:{name:item.name,description:item.description||'',parameters:item.parameters}})),tool_choice:'auto',temperature:.2,cache_prompt:true,stream:false}),signal},timeoutMs,allowInsecureTls);
   logCompatibleTimings(d,model);
   const message=d.choices?.[0]?.message;if(!message)throw new Error('Model endpoint returned no assistant message.');
   const toolCalls=(message.tool_calls||[]).flatMap((call,index)=>{const name=call?.function?.name;if(!name)return[];let args={};try{args=typeof call.function.arguments==='string'?JSON.parse(call.function.arguments):(call.function.arguments||{})}catch{}return[{id:call.id||`call-${Date.now()}-${index}`,name,args}]});
   return{text:String(message.content||'').trim(),toolCalls};
 }
-async function compatibleChatStream({apiKey,model,baseUrl,messages,attachments},onDelta,idleTimeoutMs){
+async function compatibleChatStream({apiKey,model,baseUrl,allowInsecureTls=false,messages,attachments},onDelta,idleTimeoutMs){
   const content=[{type:'text',text:messages.at(-1)?.content||'Please analyze the attached files.'}];
   for(const f of attachments){
     if((f.kind==='text'||f.kind==='pdf'||f.kind==='document')&&f.text)content.push({type:'text',text:`\n[Attachment: ${f.name}]\n${f.text}`});
@@ -317,7 +324,7 @@ async function compatibleChatStream({apiKey,model,baseUrl,messages,attachments},
     method:'POST',
     headers:{'Content-Type':'application/json',...(apiKey?{Authorization:`Bearer ${apiKey}`}:{})},
     body:JSON.stringify({model,messages:[{role:'system',content:systemPrompt(attachments)},...history,{role:'user',content}],temperature:.2,cache_prompt:true,stream:true})
-  },{onDelta,idleTimeoutMs});
+  },{onDelta,idleTimeoutMs,allowInsecureTls});
   if(!text.trim())throw new Error('Model endpoint returned no text output.');
   return text;
 }
@@ -335,12 +342,26 @@ function hasUsableAttachmentContent(files){return files.some(f=>(f.text||'').tri
 function looksLikeFalseAttachmentRefusal(text){const v=String(text||'').toLowerCase();return[/cannot (?:directly )?(?:access|view|open|read)/,/don't have (?:the )?(?:ability|capability) to (?:access|view|open|read)/,/paste (?:the )?text/,/copy and paste/,/share the text/,/cannot generate or send files/,/don't have (?:a )?file-sharing/].some(r=>r.test(v))}
 function transcript(messages){return messages.map(m=>`${m.role==='assistant'?'ASSISTANT':'USER'}: ${m.content}`).join('\n\n')||'USER: Please analyze the attached files.'}
 function sanitizeAttachment(f){return{name:String(f?.name||'attachment').slice(0,240),mime:String(f?.mime||'application/octet-stream').slice(0,120),size:Number(f?.size||0),kind:['text','pdf','image','document'].includes(f?.kind)?f.kind:'binary',text:typeof f?.text==='string'?f.text.slice(0,2_000_000):'',base64:typeof f?.base64==='string'?f.base64.slice(0,48_000_000):''}}
-async function fetchJson(url,init={},timeoutMs=120_000){
+async function fetchWithTls(url,init={},allowInsecureTls=false){
+  if(!allowInsecureTls||!String(url).toLowerCase().startsWith('https://'))return fetch(url,init);
+  return new Promise((resolve,reject)=>{
+    const request=https.request(new URL(url),{method:init.method||'GET',headers:init.headers,rejectUnauthorized:false},incoming=>{
+      resolve(new Response(Readable.toWeb(incoming),{status:incoming.statusCode||500,statusText:incoming.statusMessage,headers:incoming.headers}));
+    });
+    request.on('error',reject);
+    const abort=()=>request.destroy(new Error('Request cancelled.'));
+    init.signal?.addEventListener('abort',abort,{once:true});
+    request.on('close',()=>init.signal?.removeEventListener('abort',abort));
+    if(init.body!=null)request.write(init.body);
+    request.end();
+  });
+}
+async function fetchJson(url,init={},timeoutMs=120_000,allowInsecureTls=false){
   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
   const external=init.signal;const onExternalAbort=()=>controller.abort();
   external?.addEventListener('abort',onExternalAbort,{once:true});
   try{
-    const r=await fetch(url,{...init,signal:controller.signal});
+    const r=await fetchWithTls(url,{...init,signal:controller.signal},allowInsecureTls);
     const raw=await r.text();let d;try{d=raw?JSON.parse(raw):{}}catch{d={raw}}
     if(!r.ok)throw new Error(`HTTP ${r.status}: ${typeof d==='object'?JSON.stringify(d).slice(0,3000):raw.slice(0,3000)}`);
     return d;
@@ -356,14 +377,14 @@ async function fetchJson(url,init={},timeoutMs=120_000){
  * received chunk instead of running against a fixed total duration, so a slow
  * but still-producing local/CPU generation is never killed mid-answer.
  */
-async function fetchSseText(url,init={},{onDelta,idleTimeoutMs=120_000,signal}={}){
+async function fetchSseText(url,init={},{onDelta,idleTimeoutMs=120_000,signal,allowInsecureTls=false}={}){
   const controller=new AbortController();let idleTimer;
   const resetIdle=()=>{clearTimeout(idleTimer);idleTimer=setTimeout(()=>controller.abort(),idleTimeoutMs)};
   const onExternalAbort=()=>controller.abort();
   signal?.addEventListener('abort',onExternalAbort,{once:true});
   resetIdle();
   try{
-    const response=await fetch(url,{...init,signal:controller.signal});
+    const response=await fetchWithTls(url,{...init,signal:controller.signal},allowInsecureTls);
     if(!response.ok||!response.body){const raw=await response.text().catch(()=>'');throw new Error(`HTTP ${response.status}: ${raw.slice(0,2000)}`)}
     const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';let full='';
     while(true){

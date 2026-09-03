@@ -1,3 +1,4 @@
+// Beginner guide: Handles m od el d ow nl oa de r responsibilities for Vectra.
 import { createWriteStream } from 'node:fs';
 import { rename, rm } from 'node:fs/promises';
 import { Readable, Transform } from 'node:stream';

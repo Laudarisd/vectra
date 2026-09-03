@@ -1,3 +1,4 @@
+// Beginner guide: Checks that l oc al m od el p ic ke r.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');

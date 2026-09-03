@@ -1,3 +1,4 @@
+// Beginner guide: Checks that d oc um en ts.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { buildDocx, buildPdf } = require('../build/documents/DocumentCodec.js');

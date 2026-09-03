@@ -1,3 +1,4 @@
+// Beginner guide: Handles d if fc on te nt pr ov id er responsibilities for Vectra.
 import * as vscode from 'vscode';
 import { EditProposalManager } from './EditProposalManager';
 

@@ -1,3 +1,4 @@
+// Beginner guide: Checks that c on tr ol le r c on tr ac t.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -78,12 +79,20 @@ test('Deep Agents waits for plan approval and rejects narration without a real w
   assert.match(src, /action\.type === 'propose_plan'/);
   assert.match(src, /this\.plans\.waitForDecision\(plan\.id, opts\.signal\)/);
   assert.match(src, /PLAN APPROVED: proceed now using the real Vectra workspace tools/);
-  assert.match(src, /let successfulWorkspaceWrites = 0/);
-  assert.match(src, /successfulWorkspaceWrites === 0/);
+  assert.match(src, /let successfulWorkspaceMutations = 0/);
+  assert.match(src, /successfulWorkspaceMutations === 0/);
+  assert.match(src, /this\.resolveProposals\(\[\.\.\.opts\.proposalIds\]\)\.length === 0/);
   assert.match(src, /existingPlan\?\.status === 'approved'/);
   assert.match(src, /requestsWorkspaceMutation\(opts\.task\)/);
   assert.match(src, /No real workspace action was called/);
   assert.match(src, /preparing a safe approval plan/);
   assert.match(src, /this\.plans\.waitForDecision\(fallbackPlan\.id, opts\.signal\)/);
   assert.match(src, /use real workspace tools now; do not merely describe/);
+});
+
+test('pending proposals produce a deterministic not-written completion', () => {
+  const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
+  assert.match(src, /Nothing in this batch has been written to disk yet/);
+  assert.match(src, /Use Accept or Accept all below to apply/);
+  assert.doesNotMatch(src, /\[message, suffix\]/);
 });

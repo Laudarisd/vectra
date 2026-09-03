@@ -1,3 +1,4 @@
+// Beginner guide: Starts the Vectra Web server and connects API routes to the underlying services.
 import http from 'node:http';
 import https from 'node:https';
 import { Readable } from 'node:stream';

@@ -1,3 +1,4 @@
+// Beginner guide: Checks that c ha t t oo ls.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';

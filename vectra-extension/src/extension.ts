@@ -1,3 +1,4 @@
+// Beginner guide: Starts the VS Code extension and connects its commands, services, and sidebar.
 import * as vscode from 'vscode';
 import { AgentController } from './agent/AgentController';
 import { ProviderManager } from './providers/ProviderManager';

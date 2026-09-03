@@ -1,3 +1,4 @@
+// Beginner guide: Handles m od el ca ta lo g responsibilities for Vectra.
 export interface CatalogEntry {
   id: string;
   label: string;

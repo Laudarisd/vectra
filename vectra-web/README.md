@@ -9,11 +9,11 @@
 
 **ChatGPT-style AI chat, running entirely on your machine.**
 
-Vectra Web is the browser edition of Vectra: local-first AI chat with document support, no server-side account, no cloud required.
+Vectra Web is the browser edition of Vectra: local agent AI chat with document support, no server-side account, no cloud required.
 
 ## Why Vectra Web
 
-- **Local-first** — run GGUF models through llama.cpp, or auto-detect Ollama, LM Studio, vLLM, and other OpenAI-compatible runtimes already on your machine.
+- **Local agent** — run GGUF models through llama.cpp, or auto-detect Ollama, LM Studio, vLLM, and other OpenAI-compatible runtimes already on your machine.
 - **Any model, any time** — switch to OpenAI, Anthropic, Gemini, or an OpenAI-compatible endpoint whenever you want.
 - **Specialized agent team** — the same planner/researcher/coder/tester/reviewer/security/documentation subagent roster as the VS Code extension, each scoped to only the tools its role needs, with live grouped progress in the chat.
 - **Documents in and out** — parse PDF, DOCX, PPTX, XLSX, RTF, code, and images; generate downloadable PDF, DOCX, Markdown, JSON, CSV, HTML, and code files.

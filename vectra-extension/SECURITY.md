@@ -1,6 +1,6 @@
 # Security
 
-Vectra is local-first but can send selected context to configured cloud providers.
+Vectra is a local agent but can send selected context to configured cloud providers.
 
 - VS Code workspace writes are review-before-apply.
 - File proposals use stale-content hashes.

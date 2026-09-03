@@ -1,3 +1,4 @@
+// Beginner guide: Handles c on fi g responsibilities for Vectra.
 // Central limits for document ingestion. Environment overrides remain server-only.
 export const MAX_DOCUMENT_TEXT_CHARS=8_000_000;
 export const DEFAULT_PDF_VISUAL_PAGES=60;

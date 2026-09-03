@@ -1,3 +1,4 @@
+// Beginner guide: Handles c on cu rr en cy responsibilities for Vectra.
 /** Simple counting semaphore. Bounds how many gated calls run at once without
  * claiming anything about true parallelism in the underlying process. */
 export class Semaphore {

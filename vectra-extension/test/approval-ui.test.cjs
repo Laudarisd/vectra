@@ -1,3 +1,4 @@
+// Beginner guide: Checks that a pp ro va l u i.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -32,4 +33,14 @@ test('plan cards expose explicit minimize and cancellation controls', () => {
   assert.match(script, /cancel\.title = plan\.status === 'pending' \? 'Cancel this task' : 'Dismiss this plan'/);
   assert.match(script, /vscode\.postMessage\(\{ type: 'cancelPlan' \}\)/);
   assert.match(host, /case 'cancelPlan':[\s\S]*this\.plans\.reject\(\);[\s\S]*this\.abortController\?\.abort\(\);/);
+});
+
+test('file review is published immediately and clearly distinguished from plan approval', () => {
+  const host = fs.readFileSync('src/ui/ChatViewProvider.ts', 'utf8');
+  const controller = fs.readFileSync('src/agent/AgentController.ts', 'utf8');
+  const script = fs.readFileSync('media/main.js', 'utf8');
+
+  assert.match(host, /onProposalsChanged: \(\) => void this\.postState\(\)/);
+  assert.match(controller, /if \(result\.proposalIds\.length\) opts\.onProposalsChanged\?\.\(\)/);
+  assert.match(script, /Proposed changes · not written yet/);
 });

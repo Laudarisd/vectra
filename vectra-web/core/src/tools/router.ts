@@ -1,3 +1,4 @@
+// Beginner guide: Handles r ou te r responsibilities for Vectra.
 import type { AgentEventStream } from '../index';
 
 export type ToolHandler<TAction, TContext, TResult> = (action: TAction, context: TContext) => Promise<TResult> | TResult;

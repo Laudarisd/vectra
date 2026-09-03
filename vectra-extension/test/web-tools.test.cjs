@@ -1,3 +1,4 @@
+// Beginner guide: Checks that w eb t oo ls.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { WebTools } = require('../build/tools/WebTools.js');

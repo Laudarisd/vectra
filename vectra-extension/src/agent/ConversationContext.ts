@@ -1,3 +1,4 @@
+// Beginner guide: Handles c on ve rs at io nc on te xt responsibilities for Vectra.
 import { AgentMode, ChatMessage } from '../types';
 import { truncateMiddle } from '../utils/text';
 

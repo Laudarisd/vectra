@@ -1,3 +1,4 @@
+// Beginner guide: Handles h ug gi ng fa ce se ar ch responsibilities for Vectra.
 import { fetchJson } from '../utils/http';
 
 const SEARCH_TIMEOUT_MS = 15_000;

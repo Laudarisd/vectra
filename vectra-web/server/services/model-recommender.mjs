@@ -1,3 +1,4 @@
+// Beginner guide: Handles m od el r ec om me nd er responsibilities for Vectra.
 /**
  * A GPU with a known VRAM size sizes the recommendation directly (llama.cpp
  * offloads to it). Without one (no GPU, or a non-NVIDIA GPU the platform

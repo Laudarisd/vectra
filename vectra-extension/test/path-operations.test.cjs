@@ -1,3 +1,4 @@
+// Beginner guide: Checks that p at h o pe ra ti on s.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

@@ -1,3 +1,4 @@
+// Beginner guide: Handles m od el do wn lo ad er responsibilities for Vectra.
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { rename, rm } from 'node:fs/promises';

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make Vectra more capable than Deep Agents while remaining local-first, cross-platform, safe, and usable from both the VS Code extension and Vectra Web.
+Make Vectra more capable than Deep Agents while remaining a local agent, cross-platform, safe, and usable from both the VS Code extension and Vectra Web.
 
 ## Tasks
 
@@ -78,7 +78,7 @@ Make Vectra more capable than Deep Agents while remaining local-first, cross-pla
 - [ ] Support ACP so the Vectra agent can run in compatible editors.
 - [ ] Support A2A for interoperable remote and local agents.
 - [ ] Add agent evaluations for coding quality, context recall, tool correctness, safety, speed, and local-model reliability.
-- [ ] Add local-first traces, runtime metrics, benchmark comparisons, and regression tests.
+- [ ] Add local-agent traces, runtime metrics, benchmark comparisons, and regression tests.
 
 ## Definition of done
 
@@ -93,4 +93,3 @@ Make Vectra more capable than Deep Agents while remaining local-first, cross-pla
 
 ## Allow user to type and send queue promt in extension 
 ## Add line suggestions like copilot
-

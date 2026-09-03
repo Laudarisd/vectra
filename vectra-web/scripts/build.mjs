@@ -1,3 +1,4 @@
+// Beginner guide: Builds the browser-ready Vectra Web files from the maintained source assets.
 import { cp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

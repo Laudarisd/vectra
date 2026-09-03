@@ -1,3 +1,4 @@
+// Beginner guide: Handles m od el re co mm en de r responsibilities for Vectra.
 import { HardwareSnapshot } from '../utils/hardware';
 import { CatalogEntry } from './ModelCatalog';
 

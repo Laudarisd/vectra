@@ -1,3 +1,4 @@
+// Beginner guide: Handles o ll am ap ro vi de r responsibilities for Vectra.
 import { ModelInfo, ProviderRequest, TextProvider } from '../types';
 import { AGENT_ENVELOPE_SCHEMA } from '../agent/protocol';
 import { fetchJson, streamNdjson } from '../utils/http';

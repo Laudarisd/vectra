@@ -1,3 +1,4 @@
+// Beginner guide: Handles h is to ry responsibilities for Vectra.
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

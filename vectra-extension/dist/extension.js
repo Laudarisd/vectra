@@ -103139,7 +103139,7 @@ ${errors.map((error51) => `- ${error51}`).join("\n")}` : "";
         action,
         `${prepared}${failures}`,
         ids,
-        paths.length > 0 && errors.length === 0
+        paths.length > 0 ? "proposal" : "none"
       );
     }
     if (action.type === "create_file" || action.type === "propose_file") {
@@ -103153,7 +103153,7 @@ ${errors.map((error51) => `- ${error51}`).join("\n")}` : "";
         if (current.exists) return this.denied(action, `${action.path} already exists. Read it, then use propose_file.`);
       }
       const proposal = await this.patches.proposeFile(action.path, action.content, action.reason);
-      return this.result(action, `Prepared reviewed ${proposal.kind} proposal for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed ${proposal.kind} proposal for ${proposal.path}. Nothing has been written to disk.`, [proposal.id], "proposal");
     }
     if (action.type === "replace_lines" || action.type === "delete_lines" || action.type === "insert_lines") {
       if (context2.mode !== "agent") return this.denied(action, "This mode is read-only.");
@@ -103165,7 +103165,7 @@ ${errors.map((error51) => `- ${error51}`).join("\n")}` : "";
         action.position === "before" ? "insert-before" : "insert-after",
         action.reason
       );
-      return this.result(action, `Prepared reviewed line edit for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed line edit for ${proposal.path}. Nothing has been written to disk.`, [proposal.id], "proposal");
     }
     if (action.type === "create_document" || action.type === "edit_document") {
       if (context2.mode !== "agent") return this.denied(action, "This mode is read-only.");
@@ -103176,7 +103176,7 @@ ${errors.map((error51) => `- ${error51}`).join("\n")}` : "";
         action.title,
         action.type === "edit_document"
       );
-      return this.result(action, `Prepared reviewed document proposal for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed document proposal for ${proposal.path}. Nothing has been written to disk.`, [proposal.id], "proposal");
     }
     if (action.type === "delete_file") {
       if (context2.mode !== "agent") return this.denied(action, "This mode is read-only.");
@@ -103187,11 +103187,11 @@ ${errors.map((error51) => `- ${error51}`).join("\n")}` : "";
           action,
           `Cancelled the pending creation of ${pending.path}; it was never written to disk.`,
           [],
-          true
+          "none"
         );
       }
       const proposal = await this.patches.proposeDelete(action.path, action.reason);
-      return this.result(action, `Prepared reviewed deletion for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed deletion for ${proposal.path}. Nothing has been changed on disk.`, [proposal.id], "proposal");
     }
     if (action.type === "create_directory" || action.type === "rename_path" || action.type === "move_path" || action.type === "copy_path" || action.type === "delete_directory") {
       if (context2.mode !== "agent") return this.denied(action, "Path operations are available only in Agent mode.");
@@ -103199,7 +103199,7 @@ ${errors.map((error51) => `- ${error51}`).join("\n")}` : "";
         return this.denied(action, "Pending file proposals must be accepted or rejected before changing workspace paths.");
       }
       const output = action.type === "create_directory" ? await this.pathOperations.createDirectory(action.path, action.reason, context2.signal) : action.type === "rename_path" ? await this.pathOperations.rename(action.path, action.destinationPath, action.reason, context2.signal) : action.type === "move_path" ? await this.pathOperations.move(action.path, action.destinationPath, action.reason, context2.signal) : action.type === "copy_path" ? await this.pathOperations.copy(action.path, action.destinationPath, action.reason, context2.signal) : await this.pathOperations.deleteDirectory(action.path, action.recursive === true, action.reason, context2.signal);
-      return this.result(action, output, [], true);
+      return this.result(action, output, [], "workspace");
     }
     if (action.type === "run_file" || action.type === "run_project" || action.type === "run_command" || action.type === "run_tests") {
       if (context2.mode !== "agent") return this.denied(action, "Execution tools are available only in Agent mode.");
@@ -103238,7 +103238,7 @@ ${numbered.join("\n")}`;
     const guidance = /subagents are read-only/i.test(reason) ? " Do not retry this or any other write/execute/plan/delegate action. Continue read-only investigation and finish with actions=[] and your findings." : /read-only|only in Agent mode/i.test(reason) ? " Do not retry this or any other write/execute action in the current mode. Answer the CURRENT USER TASK with actions=[]." : /plan is pending/i.test(reason) ? " Do not retry this action. If you have not called propose_plan yet this run, call it now with actions=[propose_plan]; otherwise stop and wait for the user to decide." : " Do not repeat the identical action; correct it or finish the current task.";
     return this.result(action, `Denied: ${reason}${guidance}`);
   }
-  result(action, output, proposalIds = [], wrote = false) {
+  result(action, output, proposalIds = [], effect = "none") {
     return {
       // Never echo complete generated files back into the next model prompt.
       // The pending overlay can supply a file on demand, while this compact
@@ -103247,7 +103247,7 @@ ${numbered.join("\n")}`;
 RESULT
 ${output}`,
       proposalIds,
-      wrote
+      effect
     };
   }
 };
@@ -103749,6 +103749,7 @@ var AgentController = class {
         onProgress: request2.onProgress,
         onTodosChanged: request2.onTodosChanged,
         onPlanChanged: request2.onPlanChanged,
+        onProposalsChanged: request2.onProposalsChanged,
         onSubagentEvent: request2.onSubagentEvent
       });
       return this.finish(message2, [...proposalIds]);
@@ -103770,7 +103771,8 @@ var AgentController = class {
       signal: request2.signal,
       onProgress: request2.onProgress,
       onTodosChanged: request2.onTodosChanged,
-      onPlanChanged: request2.onPlanChanged
+      onPlanChanged: request2.onPlanChanged,
+      onProposalsChanged: request2.onProposalsChanged
     });
     return this.finish(message, [...proposalIds]);
   }
@@ -103800,7 +103802,7 @@ var AgentController = class {
       subagent: false
     };
     let hostToolCalls = 0;
-    let successfulWorkspaceWrites = 0;
+    let successfulWorkspaceMutations = 0;
     const hostDefinitions = AGENT_TOOL_DEFINITIONS.filter((definition) => definition.name !== "delegate_task");
     const executeHostTool = async (toolName, input, context2) => {
       const envelope = parseAgentEnvelope(JSON.stringify({
@@ -103815,10 +103817,11 @@ var AgentController = class {
       hostToolCalls++;
       opts.onProgress?.(this.toolRegistry.describe(action));
       const result = await this.toolRegistry.execute(action, context2);
-      if (result.wrote && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
-        successfulWorkspaceWrites++;
+      if (result.effect === "workspace" && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
+        successfulWorkspaceMutations++;
       }
       for (const id of result.proposalIds) opts.proposalIds.add(id);
+      if (result.proposalIds.length) opts.onProposalsChanged?.();
       opts.onTodosChanged?.(this.todos.list());
       const plan = this.plans.get();
       if (plan?.status === "pending") opts.onPlanChanged?.(plan);
@@ -103876,7 +103879,7 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
         signal: opts.signal
       });
       this.syncDeepTodos(result.state, opts.onTodosChanged);
-      if (successfulWorkspaceWrites === 0 && opts.mode === "agent" && (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))) {
+      if (successfulWorkspaceMutations === 0 && this.resolveProposals([...opts.proposalIds]).length === 0 && opts.mode === "agent" && (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))) {
         const existingPlan = this.plans.get();
         if (existingPlan?.status === "rejected") {
           return "I did not make any workspace changes because the plan was rejected.";
@@ -104001,7 +104004,7 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
         }
         return isStatusOnlyReply(answer) ? "I finished, but I do not have a useful summary to show for it. Could you rephrase what you need?" : answer;
       }
-      let allActionsWereSuccessfulWrites = true;
+      let allActionsChangedWorkspace = true;
       let executedActionCount = 0;
       const requestedActions = envelope.actions.slice(0, 40);
       const proposedPlanAction = requestedActions.find((action) => action.type === "propose_plan");
@@ -104013,7 +104016,7 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
           observations.push(
             `ERROR: Repeated tool action suppressed: ${action.type}. Do not retry it. Follow the CURRENT USER TASK and either choose a different evidence-gathering action or finish with actions=[].`
           );
-          allActionsWereSuccessfulWrites = false;
+          allActionsChangedWorkspace = false;
           continue;
         }
         attemptedActions.add(fingerprint);
@@ -104025,7 +104028,7 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
 RESULT
 ERROR: delegate_task call limit (${MAX_DELEGATIONS_PER_RUN}) reached this run. Proceed directly instead of delegating further.`
             );
-            allActionsWereSuccessfulWrites = false;
+            allActionsChangedWorkspace = false;
             continue;
           }
           delegateCallCount++;
@@ -104051,7 +104054,7 @@ ERROR: delegate_task call limit (${MAX_DELEGATIONS_PER_RUN}) reached this run. P
           observations.push(`ACTION ${safeJson({ type: "delegate_task", task: action.task })}
 RESULT
 ${summary}`);
-          allActionsWereSuccessfulWrites = false;
+          allActionsChangedWorkspace = false;
           continue;
         }
         opts.onProgress?.(this.toolRegistry.describe(action));
@@ -104063,8 +104066,9 @@ ${summary}`);
         });
         observations.push(result.observation);
         for (const id of result.proposalIds) opts.proposalIds.add(id);
-        if (!result.wrote || /\b(?:ERROR|Denied):/i.test(result.observation)) {
-          allActionsWereSuccessfulWrites = false;
+        if (result.proposalIds.length) opts.onProposalsChanged?.();
+        if (result.effect !== "workspace" || /\b(?:ERROR|Denied):/i.test(result.observation)) {
+          allActionsChangedWorkspace = false;
         }
         if (action.type === "todo_write") opts.onTodosChanged?.(this.todos.list());
       }
@@ -104093,14 +104097,14 @@ ${summary}`);
 `;
         return `${progress2}I stopped because I kept repeating the same step without making progress. Could you tell me a bit more about what you need, or point me at the file or folder to start from?`;
       }
-      if (envelope.done && allActionsWereSuccessfulWrites) {
+      if (envelope.done && allActionsChangedWorkspace) {
         if (verificationTurnUsed) {
-          return lastMessage || "Project changes prepared.";
+          return lastMessage || "The workspace change was applied.";
         }
         verificationTurnUsed = true;
         opts.onProgress?.("Checky-checky my own work\u2026");
         observations.push(
-          "VERIFICATION STEP: Your files are prepared but not yet reviewed by the user. Check your own work now: use list_directory to confirm the layout, read_file on the files you just prepared (the pending overlay serves their new content), and search_text to confirm imports, names, and references line up. Fix anything wrong with a new action. If everything is correct, reply with actions=[] and a final summary that states what you created or changed and what you verified. Do not repeat an unchanged proposal."
+          "VERIFICATION STEP: A real workspace path operation was applied. Check the real workspace now: use list_directory to confirm the layout, read_file for existing files, and search_text when relevant to confirm names and references line up. Fix anything wrong with a new action. If everything is correct, reply with actions=[] and a final summary that states what you created or changed and what you verified. Do not repeat an unchanged proposal."
         );
         continue;
       }
@@ -104162,9 +104166,16 @@ Reply to them directly and naturally.${nudge}`,
   finish(message, ids) {
     const proposals = this.resolveProposals(ids);
     if (proposals.length) {
-      const noun = proposals.length === 1 ? "change is" : "changes are";
-      const suffix = `${proposals.length} ${noun} ready for review. Accept them to write the project to disk.`;
-      return { text: [message, suffix].filter(Boolean).join("\n\n"), proposals };
+      const noun = proposals.length === 1 ? "change" : "changes";
+      const paths = proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}`).join("\n");
+      return {
+        text: `Prepared ${proposals.length} proposed ${noun} for review. Nothing in this batch has been written to disk yet.
+
+${paths}
+
+Use Accept or Accept all below to apply ${proposals.length === 1 ? "it" : "them"}.`,
+        proposals
+      };
     }
     return { text: message, proposals };
   }
@@ -107734,6 +107745,7 @@ var ChatViewProvider = class _ChatViewProvider {
           onDelta: (delta) => events.emit({ type: "ui.delta", id: streamId, delta }),
           onTodosChanged: (todos) => events.emit({ type: "ui.todos", todos }),
           onPlanChanged: (plan) => events.emit({ type: "ui.plan", plan }),
+          onProposalsChanged: () => void this.postState(),
           onSubagentEvent: (subagent) => events.emit({ type: "ui.subagent", subagent })
         });
       }, this.abortController.signal);

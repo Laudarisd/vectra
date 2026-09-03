@@ -1,3 +1,4 @@
+// Beginner guide: Checks that l oc al r un ti me.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';

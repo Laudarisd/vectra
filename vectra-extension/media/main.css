@@ -1,3 +1,4 @@
+/* Beginner guide: Defines the visual layout, colors, spacing, and responsive behavior for this interface. */
 :root{color-scheme:light dark}
 /*
  * Fixed gray/white look, opt-in via the vectra.theme setting. Every rule in

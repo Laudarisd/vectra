@@ -1,3 +1,4 @@
+// Beginner guide: Controls the VS Code sidebar interface and sends user actions to the extension host.
 (function () {
   const vscode = acquireVsCodeApi();
   const saved = vscode.getState() || {};
@@ -550,7 +551,7 @@
     const header = document.createElement('div');
     header.className = 'proposal-section-header';
     const title = document.createElement('strong');
-    title.textContent = 'Proposed changes';
+    title.textContent = 'Proposed changes · not written yet';
     header.appendChild(title);
     if (pending.length > 1) {
       const actions = document.createElement('div');

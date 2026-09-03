@@ -1,3 +1,4 @@
+// Beginner guide: Checks that l la ma r un ti me p ro fi le.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { buildLlamaRuntimeProfile, parseLlamaServerFlags } = require('../build/runtime/llama/LlamaRuntimeProfile.js');

@@ -1,3 +1,4 @@
+/* Beginner guide: Defines the visual layout, colors, spacing, and responsive behavior for this interface. */
 :root{
   --fg:#ececec;--fg-muted:#9a9a9a;--fg-faint:#777777;
   --bg:#212121;--bg-rgb:33,33,33;--bg-sidebar:#171717;

@@ -1,3 +1,4 @@
+// Beginner guide: Handles p re pr oc es s responsibilities for Vectra.
 import { extractPdfText, extractDocumentText, extractEmbeddedDocumentImages } from '../services/documents.mjs';
 import { renderPdfForVision } from '../services/pdf-renderer.mjs';
 import { MAX_DOCUMENT_TEXT_CHARS, PDF_RENDER_DPI, pdfVisualPageLimit } from './config.mjs';

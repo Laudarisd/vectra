@@ -1,3 +1,4 @@
+// Beginner guide: Handles l oc al mo de ld is co ve ry responsibilities for Vectra.
 /** Shared local-model discovery; kept as a compatibility import for extension services and tests. */
 export {
   appModelDirectories,

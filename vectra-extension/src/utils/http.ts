@@ -1,3 +1,4 @@
+// Beginner guide: Handles h tt p responsibilities for Vectra.
 import * as https from 'node:https';
 import { Readable } from 'node:stream';
 import { VisibleModelTextStream } from './modelText';

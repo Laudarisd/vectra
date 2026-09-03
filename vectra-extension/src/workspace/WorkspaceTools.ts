@@ -1,3 +1,4 @@
+// Beginner guide: Handles w or ks pa ce to ol s responsibilities for Vectra.
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { AgentAction, Attachment } from '../types';

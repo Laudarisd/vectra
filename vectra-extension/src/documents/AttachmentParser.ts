@@ -1,3 +1,4 @@
+// Beginner guide: Handles a tt ac hm en tp ar se r responsibilities for Vectra.
 import * as path from 'node:path';
 import { Attachment } from '../types';
 import {

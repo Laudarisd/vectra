@@ -1,3 +1,4 @@
+// Beginner guide: Checks that l oc al d is co ve ry.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';

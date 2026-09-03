@@ -1,3 +1,4 @@
+// Beginner guide: Handles c om ma nd ru nn er responsibilities for Vectra.
 import * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';

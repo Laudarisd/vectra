@@ -1,3 +1,4 @@
+// Beginner guide: Collects and re-exports the public pieces from this folder.
 import { z } from 'zod';
 import { VectraDeepTool, VectraHostToolExecutor } from '../contracts';
 import { ATTACHMENT_TOOL_DEFINITIONS, createAttachmentTools, VectraAttachmentRecord } from '../attachments';

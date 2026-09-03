@@ -1,3 +1,4 @@
+// Beginner guide: Handles l oc al d is co ve ry responsibilities for Vectra.
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);

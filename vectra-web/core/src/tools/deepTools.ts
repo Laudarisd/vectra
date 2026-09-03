@@ -1,3 +1,4 @@
+// Beginner guide: Handles d ee pt oo ls responsibilities for Vectra.
 import { VectraDeepTool, VectraHostToolExecutor, VectraToolDefinition } from './contracts';
 import { z } from 'zod';
 

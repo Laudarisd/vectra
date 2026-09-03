@@ -1,3 +1,4 @@
+// Beginner guide: Handles t od om an ag er responsibilities for Vectra.
 import { TodoState } from '../core';
 import { TodoItem } from '../types';
 

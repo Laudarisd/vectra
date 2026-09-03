@@ -1,3 +1,4 @@
+// Beginner guide: Controls the browser interface, sends API requests, and updates what the user sees.
 (() => {
   const LOCAL_CONFIG_KEY = 'vectra.local.config.v1';
   const state = {

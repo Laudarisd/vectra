@@ -1,3 +1,4 @@
+// Beginner guide: Handles c at al og responsibilities for Vectra.
 import { VectraToolDefinition } from './contracts';
 
 /** Canonical metadata for real Vectra host capabilities used by every UI. */

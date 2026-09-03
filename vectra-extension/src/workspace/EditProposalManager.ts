@@ -1,3 +1,4 @@
+// Beginner guide: Handles e di tp ro po sa lm an ag er responsibilities for Vectra.
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';

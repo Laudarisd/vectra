@@ -1,3 +1,4 @@
+// Beginner guide: Handles p ro vi de rm an ag er responsibilities for Vectra.
 import { ModelInfo, ProviderId, TextProvider } from '../types';
 import { getConfig } from '../utils/config';
 import { LocalCredentialStore } from './LocalCredentialStore';

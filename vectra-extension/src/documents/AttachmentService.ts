@@ -1,3 +1,4 @@
+// Beginner guide: Handles a tt ac hm en ts er vi ce responsibilities for Vectra.
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';

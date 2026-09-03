@@ -1,3 +1,4 @@
+// Beginner guide: Handles d oc um en ts responsibilities for Vectra.
 import { execFile } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

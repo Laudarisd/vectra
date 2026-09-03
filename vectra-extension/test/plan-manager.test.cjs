@@ -1,3 +1,4 @@
+// Beginner guide: Checks that p la n m an ag er.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PlanManager } = require('../build/state/PlanManager.js');

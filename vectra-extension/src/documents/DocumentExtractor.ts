@@ -1,3 +1,4 @@
+// Beginner guide: Handles d oc um en te xt ra ct or responsibilities for Vectra.
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';

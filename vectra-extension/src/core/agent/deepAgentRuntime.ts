@@ -1,3 +1,4 @@
+// Beginner guide: Handles d ee pa ge nt ru nt im e responsibilities for Vectra.
 import { AIMessage, BaseMessage } from '@langchain/core/messages';
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import { BaseChatModel, BaseChatModelCallOptions, BindToolsInput } from '@langchain/core/language_models/chat_models';

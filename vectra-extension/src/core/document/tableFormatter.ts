@@ -1,3 +1,4 @@
+// Beginner guide: Handles t ab le fo rm at te r responsibilities for Vectra.
 import { DocumentTableInput } from './types';
 
 /** Format dynamic extracted records without imposing a document-specific schema. */

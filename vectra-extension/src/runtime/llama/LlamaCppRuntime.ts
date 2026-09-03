@@ -1,3 +1,4 @@
+// Beginner guide: Handles l la ma cp pr un ti me responsibilities for Vectra.
 import { ChildProcess, execFile, spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';

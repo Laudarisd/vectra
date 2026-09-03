@@ -1,3 +1,4 @@
+// Beginner guide: Checks that d oc um en ts.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDocx, buildPdf, extractDocxText, extractPdfText, artifactForRequest } from '../server/services/documents.mjs';

@@ -1,3 +1,4 @@
+// Beginner guide: Handles c on fi g responsibilities for Vectra.
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { ProviderId } from '../types';

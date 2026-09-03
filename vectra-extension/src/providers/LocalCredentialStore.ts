@@ -1,3 +1,4 @@
+// Beginner guide: Handles l oc al cr ed en ti al st or e responsibilities for Vectra.
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';

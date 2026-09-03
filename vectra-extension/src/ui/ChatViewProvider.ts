@@ -1,3 +1,4 @@
+// Beginner guide: Handles c ha tv ie wp ro vi de r responsibilities for Vectra.
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -347,6 +348,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           onDelta: (delta) => events.emit({ type: 'ui.delta', id: streamId, delta }),
           onTodosChanged: (todos) => events.emit({ type: 'ui.todos', todos }),
           onPlanChanged: (plan) => events.emit({ type: 'ui.plan', plan }),
+          onProposalsChanged: () => void this.postState(),
           onSubagentEvent: (subagent) => events.emit({ type: 'ui.subagent', subagent })
         });
       }, this.abortController.signal);

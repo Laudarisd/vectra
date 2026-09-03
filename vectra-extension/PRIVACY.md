@@ -1,6 +1,6 @@
 # Vectra Privacy Notes
 
-Vectra is designed as a local-first developer tool. Local GGUF inference through
+Vectra is designed as a local agent developer tool. Local GGUF inference through
 llama.cpp remains on the user's computer. When a user explicitly selects a cloud
 provider, prompts and the context needed to fulfill the request are sent to that
 provider according to the provider's own terms and privacy policy.

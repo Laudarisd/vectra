@@ -1,3 +1,4 @@
+// Beginner guide: Handles a ge nt co nt ro ll er responsibilities for Vectra.
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { AgentMode, AgentRunRequest, AgentRunResult, Attachment, ChatMessage, Plan, SubagentEvent, TextProvider, TodoItem, WorkspaceContext } from '../types';
@@ -42,6 +43,7 @@ interface RunLoopOptions {
   onProgress?: (message: string) => void;
   onTodosChanged?: (todos: TodoItem[]) => void;
   onPlanChanged?: (plan: Plan) => void;
+  onProposalsChanged?: () => void;
   /** Only fires on the Deep Agents harness -- classic runLoop's delegate_task is unaffected. */
   onSubagentEvent?: (event: SubagentEvent) => void;
 }
@@ -130,6 +132,7 @@ export class AgentController {
         onProgress: request.onProgress,
         onTodosChanged: request.onTodosChanged,
         onPlanChanged: request.onPlanChanged,
+        onProposalsChanged: request.onProposalsChanged,
         onSubagentEvent: request.onSubagentEvent
       });
       return this.finish(message, [...proposalIds]);
@@ -152,7 +155,8 @@ export class AgentController {
       signal: request.signal,
       onProgress: request.onProgress,
       onTodosChanged: request.onTodosChanged,
-      onPlanChanged: request.onPlanChanged
+      onPlanChanged: request.onPlanChanged,
+      onProposalsChanged: request.onProposalsChanged
     });
 
     return this.finish(message, [...proposalIds]);
@@ -187,7 +191,7 @@ export class AgentController {
       subagent: false
     };
     let hostToolCalls = 0;
-    let successfulWorkspaceWrites = 0;
+    let successfulWorkspaceMutations = 0;
     // Deep Agents already owns read_file/write_file names for scratch space,
     // so the shared factory namespaces real project tools as vectra_*.
     const hostDefinitions = AGENT_TOOL_DEFINITIONS.filter((definition) => definition.name !== 'delegate_task');
@@ -204,10 +208,11 @@ export class AgentController {
           hostToolCalls++;
           opts.onProgress?.(this.toolRegistry.describe(action));
           const result = await this.toolRegistry.execute(action, context);
-          if (result.wrote && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
-            successfulWorkspaceWrites++;
+          if (result.effect === 'workspace' && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
+            successfulWorkspaceMutations++;
           }
           for (const id of result.proposalIds) opts.proposalIds.add(id);
+          if (result.proposalIds.length) opts.onProposalsChanged?.();
           opts.onTodosChanged?.(this.todos.list());
           const plan = this.plans.get();
           if (plan?.status === 'pending') opts.onPlanChanged?.(plan);
@@ -277,7 +282,8 @@ export class AgentController {
       });
       this.syncDeepTodos(result.state, opts.onTodosChanged);
       if (
-        successfulWorkspaceWrites === 0 &&
+        successfulWorkspaceMutations === 0 &&
+        this.resolveProposals([...opts.proposalIds]).length === 0 &&
         opts.mode === 'agent' &&
         (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))
       ) {
@@ -439,7 +445,7 @@ export class AgentController {
           : answer;
       }
 
-      let allActionsWereSuccessfulWrites = true;
+      let allActionsChangedWorkspace = true;
       let executedActionCount = 0;
       const requestedActions = envelope.actions.slice(0, 40);
       const proposedPlanAction = requestedActions.find((action) => action.type === 'propose_plan');
@@ -458,7 +464,7 @@ export class AgentController {
             `ERROR: Repeated tool action suppressed: ${action.type}. ` +
             'Do not retry it. Follow the CURRENT USER TASK and either choose a different evidence-gathering action or finish with actions=[].'
           );
-          allActionsWereSuccessfulWrites = false;
+          allActionsChangedWorkspace = false;
           continue;
         }
         attemptedActions.add(fingerprint);
@@ -475,7 +481,7 @@ export class AgentController {
               `ACTION ${safeJson({ type: 'delegate_task', task: action.task })}\n` +
               `RESULT\nERROR: delegate_task call limit (${MAX_DELEGATIONS_PER_RUN}) reached this run. Proceed directly instead of delegating further.`
             );
-            allActionsWereSuccessfulWrites = false;
+            allActionsChangedWorkspace = false;
             continue;
           }
           delegateCallCount++;
@@ -501,7 +507,7 @@ export class AgentController {
           observations.push(`ACTION ${safeJson({ type: 'delegate_task', task: action.task })}\nRESULT\n${summary}`);
           // A delegation is exploration, not a write — it must not make the
           // step look like a completed write batch to the done-check below.
-          allActionsWereSuccessfulWrites = false;
+          allActionsChangedWorkspace = false;
           continue;
         }
 
@@ -514,8 +520,9 @@ export class AgentController {
         });
         observations.push(result.observation);
         for (const id of result.proposalIds) opts.proposalIds.add(id);
-        if (!result.wrote || /\b(?:ERROR|Denied):/i.test(result.observation)) {
-          allActionsWereSuccessfulWrites = false;
+        if (result.proposalIds.length) opts.onProposalsChanged?.();
+        if (result.effect !== 'workspace' || /\b(?:ERROR|Denied):/i.test(result.observation)) {
+          allActionsChangedWorkspace = false;
         }
         if (action.type === 'todo_write') opts.onTodosChanged?.(this.todos.list());
       }
@@ -557,16 +564,16 @@ export class AgentController {
       // accepting that, give it exactly one turn to check its own work against
       // the real filesystem, so the final summary is evidence-based rather than
       // an assertion. Read and error results always get another turn anyway.
-      if (envelope.done && allActionsWereSuccessfulWrites) {
+      if (envelope.done && allActionsChangedWorkspace) {
         if (verificationTurnUsed) {
-          return lastMessage || 'Project changes prepared.';
+          return lastMessage || 'The workspace change was applied.';
         }
         verificationTurnUsed = true;
         opts.onProgress?.("Checky-checky my own work…");
         observations.push(
-          'VERIFICATION STEP: Your files are prepared but not yet reviewed by the user. ' +
-          'Check your own work now: use list_directory to confirm the layout, read_file on the files you just prepared ' +
-          '(the pending overlay serves their new content), and search_text to confirm imports, names, and references line up. ' +
+          'VERIFICATION STEP: A real workspace path operation was applied. ' +
+          'Check the real workspace now: use list_directory to confirm the layout, read_file for existing files, ' +
+          'and search_text when relevant to confirm names and references line up. ' +
           'Fix anything wrong with a new action. If everything is correct, reply with actions=[] and a final summary that ' +
           'states what you created or changed and what you verified. Do not repeat an unchanged proposal.'
         );
@@ -639,9 +646,12 @@ export class AgentController {
   private finish(message: string, ids: string[]): AgentRunResult {
     const proposals = this.resolveProposals(ids);
     if (proposals.length) {
-      const noun = proposals.length === 1 ? 'change is' : 'changes are';
-      const suffix = `${proposals.length} ${noun} ready for review. Accept them to write the project to disk.`;
-      return { text: [message, suffix].filter(Boolean).join('\n\n'), proposals };
+      const noun = proposals.length === 1 ? 'change' : 'changes';
+      const paths = proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}`).join('\n');
+      return {
+        text: `Prepared ${proposals.length} proposed ${noun} for review. Nothing in this batch has been written to disk yet.\n\n${paths}\n\nUse Accept or Accept all below to apply ${proposals.length === 1 ? 'it' : 'them'}.`,
+        proposals
+      };
     }
 
     return { text: message, proposals };

@@ -1,3 +1,4 @@
+// Beginner guide: Checks that c or e r un ti me.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {

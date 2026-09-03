@@ -1,3 +1,4 @@
+// Beginner guide: Handles l la ma cp pi ns ta ll er responsibilities for Vectra.
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';

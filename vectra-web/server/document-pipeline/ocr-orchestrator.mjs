@@ -1,3 +1,4 @@
+// Beginner guide: Handles o cr o rc he st ra to r responsibilities for Vectra.
 import { createHash } from 'node:crypto';
 import { OCR_CONCURRENCY } from './config.mjs';
 import { attachmentRootName, visualOcrEvidenceName } from './evidence.mjs';

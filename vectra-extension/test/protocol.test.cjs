@@ -1,3 +1,4 @@
+// Beginner guide: Checks that p ro to co l.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseAgentEnvelope, buildSystemPrompt } = require('../build/agent/protocol.js');

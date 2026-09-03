@@ -1,3 +1,4 @@
+// Beginner guide: Handles r un ti me pr of il e responsibilities for Vectra.
 export type LlamaRuntimeMode = 'gpu-resident' | 'hybrid' | 'cpu';
 export type LlamaThreadProfile = 'auto' | 'performance' | 'efficiency';
 

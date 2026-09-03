@@ -1,3 +1,4 @@
+// Beginner guide: Handles a tt ac hm en ts responsibilities for Vectra.
 import { VectraDeepTool, VectraToolDefinition } from './contracts';
 import { z } from 'zod';
 import { VectraAttachmentRecord } from '../document';

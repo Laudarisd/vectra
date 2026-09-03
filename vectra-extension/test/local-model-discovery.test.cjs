@@ -1,3 +1,4 @@
+// Beginner guide: Checks that l oc al m od el d is co ve ry.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdtemp, mkdir, symlink, writeFile, rm } = require('node:fs/promises');

@@ -1,3 +1,4 @@
+// Beginner guide: Handles g pu d et ec t responsibilities for Vectra.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 

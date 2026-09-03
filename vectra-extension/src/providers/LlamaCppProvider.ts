@@ -1,3 +1,4 @@
+// Beginner guide: Handles l la ma cp pp ro vi de r responsibilities for Vectra.
 import { ModelInfo, NativeToolCall, NativeToolRequest, NativeToolResult, ProviderRequest, TextProvider } from '../types';
 import { fetchJson } from '../utils/http';
 import { OpenAICompatibleProvider } from './OpenAICompatibleProvider';

@@ -1,3 +1,4 @@
+// Beginner guide: Checks that m od el d ow nl oa de r.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');

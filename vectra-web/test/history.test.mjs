@@ -1,3 +1,4 @@
+// Beginner guide: Checks that h is to ry.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';

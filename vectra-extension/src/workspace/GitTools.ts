@@ -1,3 +1,4 @@
+// Beginner guide: Handles g it to ol s responsibilities for Vectra.
 import { execFile } from 'node:child_process';
 import * as vscode from 'vscode';
 import { promisify } from 'node:util';

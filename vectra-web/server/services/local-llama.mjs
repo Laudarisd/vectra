@@ -1,3 +1,4 @@
+// Beginner guide: Handles l oc al l la ma responsibilities for Vectra.
 import { spawn, execFile } from 'node:child_process';
 import { access, readdir, stat } from 'node:fs/promises';
 import { dirname, basename, join, isAbsolute } from 'node:path';

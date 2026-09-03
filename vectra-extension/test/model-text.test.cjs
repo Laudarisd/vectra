@@ -1,3 +1,4 @@
+// Beginner guide: Checks that m od el t ex t.t es t behavior stays correct as the project changes.
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const{VisibleModelTextStream,visibleModelText}=require('../build/utils/modelText.js');

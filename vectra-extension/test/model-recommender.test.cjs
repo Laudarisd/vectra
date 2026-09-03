@@ -1,3 +1,4 @@
+// Beginner guide: Checks that m od el r ec om me nd er.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { effectiveBudgetMiB, recommendCatalogEntries, recommendCatalogTiers } = require('../build/models/ModelRecommender.js');

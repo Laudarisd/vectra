@@ -1,3 +1,4 @@
+// Beginner guide: Handles e vi de nc e responsibilities for Vectra.
 const CHILD_ASSET_SEPARATOR=' · ';
 const CHILD_ASSET_PATTERN=/(?: · | Â· )(?:page \d+|embedded image \d+|visual OCR)/i;
 

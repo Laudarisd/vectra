@@ -1,3 +1,4 @@
+// Beginner guide: Handles w eb to ol s responsibilities for Vectra.
 import { fetchJson } from '../utils/http';
 import { safeJson, truncateMiddle } from '../utils/text';
 

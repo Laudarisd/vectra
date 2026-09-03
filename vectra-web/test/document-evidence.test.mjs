@@ -1,3 +1,4 @@
+// Beginner guide: Checks that d oc um en t e vi de nc e.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { attachmentContextForPrompt } from '../server/document-pipeline/evidence.mjs';

@@ -47,7 +47,7 @@
 
 Initial public release, published on the VS Code Marketplace as **Vectra AI** (`laudarisd.vectra-ai`) — an upgraded, continued version of the previous Vectra agent, now released under a new Marketplace identifier.
 
-Vectra is a local-first AI coding agent for VS Code: point it at a GGUF model through llama.cpp (or your own OpenAI/Anthropic/Gemini/Ollama/OpenAI-compatible endpoint), and it reads your repository, proposes reviewed edits, and runs approved commands.
+Vectra is a local AI coding agent for VS Code: point it at a GGUF model through llama.cpp (or your own OpenAI/Anthropic/Gemini/Ollama/OpenAI-compatible endpoint), and it reads your repository, proposes reviewed edits, and runs approved commands.
 
 - Local and cloud model providers: llama.cpp (GGUF), Ollama, OpenAI, Anthropic, Gemini, and any OpenAI-compatible endpoint.
 - Repo-aware Agent and Ask modes with read/search/edit tools, a mandatory reviewed-plan step before any write or execution action, and a live todo checklist for multi-step tasks.

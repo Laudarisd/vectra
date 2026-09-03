@@ -1,3 +1,4 @@
+// Beginner guide: Handles a nt hr op ic pr ov id er responsibilities for Vectra.
 import { Attachment, ModelInfo, ProviderRequest, TextProvider } from '../types';
 import { fetchJson } from '../utils/http';
 interface AnthropicMessageResponse { content?: Array<{ type?: string; text?: string }> }

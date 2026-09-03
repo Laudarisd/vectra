@@ -11,7 +11,7 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Proprietary-orange" alt="License"></a>
 </p>
 
-Vectra is a local-first AI coding agent for VS Code and the web. It understands your workspace, helps create and review changes, works with documents, and can run approved tools—without forcing every conversation through a paid cloud model.
+Vectra is a local AI coding agent for VS Code and the web. It understands your workspace, helps create and review changes, works with documents, and can run approved tools—without forcing every conversation through a paid cloud model.
 
 > The VS Code extension is published on the Marketplace as **Vectra AI** (`laudarisd.vectra-ai`) — an upgraded, continued release of the original Vectra agent, now under a new Marketplace listing.
 

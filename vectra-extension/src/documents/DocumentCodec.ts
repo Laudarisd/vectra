@@ -1,3 +1,4 @@
+// Beginner guide: Handles d oc um en tc od ec responsibilities for Vectra.
 import * as path from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { extractDocxTextFromBuffer, extractPdfTextFromBuffer, extractPptxTextFromBuffer, extractXlsxTextFromBuffer, extractRtfTextFromBuffer } from './DocumentExtractor';

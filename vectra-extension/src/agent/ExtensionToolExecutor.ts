@@ -1,3 +1,4 @@
+// Beginner guide: Handles e xt en si on to ol ex ec ut or responsibilities for Vectra.
 import { AgentAction, AgentMode, Attachment, TodoItem } from '../types';
 import { CommandRunner } from '../workspace/CommandRunner';
 import { GitTools } from '../workspace/GitTools';
@@ -22,7 +23,8 @@ interface ToolExecutionContext {
 export interface ToolExecutionResult {
   observation: string;
   proposalIds: string[];
-  wrote: boolean;
+  /** Distinguishes an in-memory review proposal from a mutation already applied to the real workspace. */
+  effect: 'none' | 'proposal' | 'workspace';
 }
 
 /**
@@ -186,7 +188,7 @@ export class ExtensionToolExecutor {
         action,
         `${prepared}${failures}`,
         ids,
-        paths.length > 0 && errors.length === 0
+        paths.length > 0 ? 'proposal' : 'none'
       );
     }
 
@@ -201,7 +203,7 @@ export class ExtensionToolExecutor {
         if (current.exists) return this.denied(action, `${action.path} already exists. Read it, then use propose_file.`);
       }
       const proposal = await this.patches.proposeFile(action.path, action.content, action.reason);
-      return this.result(action, `Prepared reviewed ${proposal.kind} proposal for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed ${proposal.kind} proposal for ${proposal.path}. Nothing has been written to disk.`, [proposal.id], 'proposal');
     }
 
     if (action.type === 'replace_lines' || action.type === 'delete_lines' || action.type === 'insert_lines') {
@@ -218,7 +220,7 @@ export class ExtensionToolExecutor {
               action.position === 'before' ? 'insert-before' : 'insert-after',
               action.reason
             );
-      return this.result(action, `Prepared reviewed line edit for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed line edit for ${proposal.path}. Nothing has been written to disk.`, [proposal.id], 'proposal');
     }
 
     if (action.type === 'create_document' || action.type === 'edit_document') {
@@ -230,7 +232,7 @@ export class ExtensionToolExecutor {
         action.title,
         action.type === 'edit_document'
       );
-      return this.result(action, `Prepared reviewed document proposal for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed document proposal for ${proposal.path}. Nothing has been written to disk.`, [proposal.id], 'proposal');
     }
 
     if (action.type === 'delete_file') {
@@ -246,12 +248,12 @@ export class ExtensionToolExecutor {
           action,
           `Cancelled the pending creation of ${pending.path}; it was never written to disk.`,
           [],
-          true
+          'none'
         );
       }
 
       const proposal = await this.patches.proposeDelete(action.path, action.reason);
-      return this.result(action, `Prepared reviewed deletion for ${proposal.path}.`, [proposal.id], true);
+      return this.result(action, `Prepared reviewed deletion for ${proposal.path}. Nothing has been changed on disk.`, [proposal.id], 'proposal');
     }
 
     if (
@@ -271,7 +273,7 @@ export class ExtensionToolExecutor {
             : action.type === 'copy_path'
               ? await this.pathOperations.copy(action.path, action.destinationPath, action.reason, context.signal)
               : await this.pathOperations.deleteDirectory(action.path, action.recursive === true, action.reason, context.signal);
-      return this.result(action, output, [], true);
+      return this.result(action, output, [], 'workspace');
     }
 
     if (action.type === 'run_file' || action.type === 'run_project' || action.type === 'run_command' || action.type === 'run_tests') {
@@ -328,7 +330,7 @@ export class ExtensionToolExecutor {
     action: AgentAction,
     output: string,
     proposalIds: string[] = [],
-    wrote = false
+    effect: ToolExecutionResult['effect'] = 'none'
   ): ToolExecutionResult {
     return {
       // Never echo complete generated files back into the next model prompt.
@@ -336,7 +338,7 @@ export class ExtensionToolExecutor {
       // action summary preserves far more context for the rest of the project.
       observation: `ACTION ${safeJson(summarizeAction(action))}\nRESULT\n${output}`,
       proposalIds,
-      wrote
+      effect
     };
   }
 }

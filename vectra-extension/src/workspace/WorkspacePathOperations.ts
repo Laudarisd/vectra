@@ -1,3 +1,4 @@
+// Beginner guide: Handles w or ks pa ce pa th op er at io ns responsibilities for Vectra.
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { getConfig } from '../utils/config';

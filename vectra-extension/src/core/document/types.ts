@@ -1,3 +1,4 @@
+// Beginner guide: Defines shared TypeScript data shapes so related modules agree on the same values.
 /** Provider-neutral representation of one uploaded or derived document part. */
 export interface VectraAttachmentRecord {
   name: string;

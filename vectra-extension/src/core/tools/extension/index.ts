@@ -1,3 +1,4 @@
+// Beginner guide: Collects and re-exports the public pieces from this folder.
 import { VECTRA_TOOL_DEFINITIONS } from '../catalog';
 
 /** Canonical inventory consumed by the VS Code host adapter. Platform code

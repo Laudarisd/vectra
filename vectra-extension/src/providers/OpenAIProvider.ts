@@ -1,3 +1,4 @@
+// Beginner guide: Handles o pe na ip ro vi de r responsibilities for Vectra.
 import { Attachment, ModelInfo, ProviderRequest, TextProvider } from '../types';
 import { fetchJson } from '../utils/http';
 

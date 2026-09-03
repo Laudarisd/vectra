@@ -1,3 +1,4 @@
+// Beginner guide: Handles h ar dw ar e responsibilities for Vectra.
 import * as os from 'node:os';
 import { detectGpus, DetectedGpu } from './gpu';
 import { detectCpuTopology } from './cpuTopology';

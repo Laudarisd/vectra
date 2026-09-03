@@ -1,3 +1,4 @@
+// Beginner guide: Handles t ex t responsibilities for Vectra.
 import { createHash } from 'node:crypto';
 
 export function sha256(value: string): string {

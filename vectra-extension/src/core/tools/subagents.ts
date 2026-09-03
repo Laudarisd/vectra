@@ -1,3 +1,4 @@
+// Beginner guide: Handles s ub ag en ts responsibilities for Vectra.
 import { VectraDeepTool, VectraHostToolExecutor, VectraToolDefinition, VectraToolRisk } from './contracts';
 import { createVectraDiscoveryTools, createVectraHostTools } from './deepTools';
 

@@ -1,3 +1,4 @@
+// Beginner guide: Handles m od el te xt responsibilities for Vectra.
 /** Remove private reasoning and serialized tool markup from completed model text. */
 export function visibleModelText(raw: string): string {
   let text=String(raw??'');

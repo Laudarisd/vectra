@@ -1,3 +1,4 @@
+// Beginner guide: Checks that p ro vi de rs.t es t behavior stays correct as the project changes.
 const test=require('node:test');const assert=require('node:assert/strict');const http=require('node:http');
 const{OpenAIProvider}=require('../build/providers/OpenAIProvider.js');const{AnthropicProvider}=require('../build/providers/AnthropicProvider.js');const{GeminiProvider}=require('../build/providers/GeminiProvider.js');const{OllamaProvider}=require('../build/providers/OllamaProvider.js');const{OpenAICompatibleProvider}=require('../build/providers/OpenAICompatibleProvider.js');
 const{LlamaCppProvider}=require('../build/providers/LlamaCppProvider.js');

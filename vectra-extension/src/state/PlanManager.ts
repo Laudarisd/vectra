@@ -1,3 +1,4 @@
+// Beginner guide: Handles p la nm an ag er responsibilities for Vectra.
 import { PlanState } from '../core';
 import { Plan } from '../types';
 

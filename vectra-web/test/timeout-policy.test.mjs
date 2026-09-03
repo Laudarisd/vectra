@@ -1,3 +1,4 @@
+// Beginner guide: Checks that t im eo ut p ol ic y.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';

@@ -1,3 +1,4 @@
+// Beginner guide: Handles g em in ip ro vi de r responsibilities for Vectra.
 import { Attachment, ModelInfo, ProviderRequest, TextProvider } from '../types';
 import { fetchJson } from '../utils/http';
 interface GeminiResponse { candidates?:Array<{content?:{parts?:Array<{text?:string}>}}>; output_text?:string }

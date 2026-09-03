@@ -1,3 +1,4 @@
+// Beginner guide: Handles l oc al ch at hi st or y responsibilities for Vectra.
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';

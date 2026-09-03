@@ -1,3 +1,4 @@
+// Beginner guide: Handles d ee pa ge nt bu il ti ns responsibilities for Vectra.
 /** Deep Agents 1.13.x middleware tools made explicit for Vectra hosts. */
 export type DeepAgentToolFamily = 'planning' | 'scratch-filesystem' | 'delegation' | 'async-delegation';
 export type DeepAgentToolAvailability = 'default' | 'sandbox-backend' | 'async-subagent';

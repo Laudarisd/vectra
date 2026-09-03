@@ -1,3 +1,4 @@
+// Beginner guide: Handles p ro to co l responsibilities for Vectra.
 import { AgentEnvelope, AgentMode } from '../types';
 import { AGENT_ACTION_SCHEMA, AGENT_TOOL_DEFINITIONS, AGENT_TOOL_GUIDANCE } from './ExtensionToolCatalog';
 import { visibleModelText } from '../utils/modelText';

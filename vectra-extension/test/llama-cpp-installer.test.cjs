@@ -1,3 +1,4 @@
+// Beginner guide: Checks that l la ma c pp i ns ta ll er.t es t behavior stays correct as the project changes.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdtemp, mkdir, rm, writeFile } = require('node:fs/promises');

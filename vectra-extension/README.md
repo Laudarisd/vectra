@@ -17,7 +17,7 @@ Vectra is a repo-aware coding agent for VS Code. Point it at a GGUF model and ll
 
 ## Why Vectra
 
-- **Local-first** — run instruction-tuned GGUF models through llama.cpp; your model and prompts never leave your machine.
+- **Local agent** — run instruction-tuned GGUF models through llama.cpp; your model and prompts never leave your machine.
 - **Adaptive local runtime** — Vectra profiles the selected llama.cpp build and hardware, enables supported acceleration/cache options, and offers larger hybrid GPU/RAM models separately from latency-first choices.
 - **Repo-aware agent** — reads, searches, and edits your workspace; every write is a reviewed diff, never a silent change.
 - **Specialized agent team** — delegate to planner, researcher, coder, tester, reviewer, security, and documentation subagents, each limited to only the tools its role actually needs; delegated work shows as a live, collapsible group in the sidebar instead of interleaving with the main run.

@@ -1,3 +1,4 @@
+// Beginner guide: Handles e xt en si on to ol ca ta lo g responsibilities for Vectra.
 import { AgentAction } from '../types';
 import {
   EXTENSION_TOOL_DEFINITIONS,

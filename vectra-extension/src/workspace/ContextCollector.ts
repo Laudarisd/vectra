@@ -1,3 +1,4 @@
+// Beginner guide: Handles c on te xt co ll ec to r responsibilities for Vectra.
 import * as vscode from 'vscode';
 import { AgentMode, WorkspaceContext } from '../types';
 import { getConfig } from '../utils/config';

@@ -1,3 +1,4 @@
+// Beginner guide: Handles h ug gi ng fa ce s ea rc h responsibilities for Vectra.
 const SEARCH_TIMEOUT_MS = 15_000;
 const USER_AGENT = 'Mozilla/5.0 (compatible; Vectra/1.0; +https://github.com/Laudarisd/vectra)';
 

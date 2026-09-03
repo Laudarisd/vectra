@@ -142,12 +142,15 @@
       if (els.localApiAllowInsecureTls.checked && !confirm('Allowing a self-signed certificate disables TLS certificate verification for this Local API. Your API key could be intercepted. Continue?')) return;
     }
     const providerChanged = state.provider !== selectedSource;
+    const previousBaseUrl = state.baseUrl;
     state.provider = selectedSource;
     if (!['llamaCpp', 'localAuto'].includes(state.provider)) {
       state.apiKey = els.apiKey.value.trim();
       state.baseUrl = state.provider === 'openaiCompatible' ? els.localApiBaseUrl.value.trim().replace(/\/+$/, '') : '';
       state.allowInsecureTls = state.provider === 'openaiCompatible' && els.localApiAllowInsecureTls.checked;
-      if (providerChanged) state.model = '';
+      // A model ID belongs to its endpoint; never carry it into a different API.
+      const endpointChanged = state.provider === 'openaiCompatible' && previousBaseUrl !== state.baseUrl;
+      if (providerChanged || endpointChanged) state.model = '';
     } else if (state.provider === 'localAuto') {
       state.apiKey = '';
       state.model = state.pendingDetectedModel || state.model;
@@ -576,10 +579,13 @@
   }
 
   function populateModels(models) {
+    const uniqueModels = [...new Set(models.filter(Boolean))];
+    // Keep the selection only when the current endpoint actually advertises it.
+    if (uniqueModels.length) state.model = uniqueModels.includes(state.model) ? state.model : uniqueModels[0];
     els.model.replaceChildren(new Option('Select model', ''));
-    for (const id of models) els.model.appendChild(new Option(id, id));
-    if (state.model && ![...els.model.options].some((option) => option.value === state.model)) els.model.appendChild(new Option(state.model, state.model));
-    if (!state.model && models[0]) state.model = models[0];
+    for (const id of uniqueModels) els.model.appendChild(new Option(id, id));
+    // Some compatible APIs cannot list models; preserve manual input only then.
+    if (!uniqueModels.length && state.model) els.model.appendChild(new Option(state.model, state.model));
     els.model.value = state.model;
     persistSession();
   }
@@ -742,11 +748,12 @@
   }
 
   async function addFiles(files) {
-    const allowed = files.slice(0, Math.max(0, 8 - state.attachments.length));
+    const allowed = files.slice(0, Math.max(0, 12 - state.attachments.length));
     let currentBytes = state.attachments.reduce((sum, file) => sum + file.size, 0);
     for (const file of allowed) {
       if (file.size > 40 * 1024 * 1024) { alert(`${file.name} is larger than 40 MB and was skipped.`); continue; }
-      if (currentBytes + file.size > 90 * 1024 * 1024) { alert('Attachment total is limited to 90 MB per message.'); break; }
+      if (file.size > 64 * 1024 * 1024) { alert(`${file.name} is larger than the 64 MB per-file limit.`); continue; }
+      if (currentBytes + file.size > 180 * 1024 * 1024) { alert('Attachment total is limited to 180 MB per message.'); break; }
       const textLike = isTextLike(file);
       const mime = file.type || mimeFromName(file.name);
       const documentLike = /\.(doc|docx|pptx|xlsx|rtf)$/i.test(file.name) || /msword|wordprocessingml|spreadsheetml|presentationml|rtf/.test(mime);
@@ -760,9 +767,21 @@
           const parsed = await api('/api/attachments/inspect', { provider: state.provider, attachment: item });
           item.text = parsed.text || '';
           item.kind = parsed.kind || item.kind;
-          item.parseStatus = parsed.parsedCharacters > 0 ? `parsed ${parsed.parsedCharacters.toLocaleString()} chars` : (parsed.visualPages > 0 ? `${parsed.visualPages} visual page(s)` : 'no embedded text');
+          item.parseStatus = parsed.visualPages > 0
+            ? `${parsed.visualPages} page(s) need vision OCR`
+            : (parsed.parsedCharacters > 0 ? `native text ready · ${parsed.parsedCharacters.toLocaleString()} chars` : 'no readable content');
         } catch (error) { item.parseStatus = `parse error: ${error.message}`; }
-      } else if (kind === 'image') item.parseStatus = 'vision input';
+      } else if (kind === 'image') {
+        item.parseStatus = 'Parsing... spectacles on, facts only!'; renderAttachments();
+        try {
+          const prepared = await prepareDocumentImage(file);
+          item.width = prepared.width; item.height = prepared.height;
+          item.sourceWidth = prepared.sourceWidth; item.sourceHeight = prepared.sourceHeight;
+          item.mime = prepared.mime; item.base64 = prepared.base64; item.ocrRequired = true;
+          item.text = `Original image: ${prepared.sourceWidth} x ${prepared.sourceHeight} px. Whole-image vision input: ${prepared.width} x ${prepared.height} px.`;
+          item.parseStatus = prepared.resized ? 'Vision ready · whole image optimized' : 'Vision ready · original resolution';
+        } catch (error) { item.ocrRequired = true; item.parseStatus = `vision input ready: ${error.message}`; }
+      }
       else if (kind === 'binary') item.parseStatus = 'binary';
       currentBytes += file.size; renderAttachments();
     }
@@ -791,12 +810,9 @@
     els.prompt.placeholder = 'Message Vectra';
     state.busy = true;
     state.chatAbort = new AbortController();
-    // Toddler-speak on purpose (matches the VS Code extension's live step
-    // log): the words still name the real phase — analyzing, parsing,
-    // generating, producing — just dressed up as something fun to watch.
-    // The log itself is driven by real server progress/subagent events, not
-    // a canned timer, so it reflects what the agent is actually doing.
-    const initialStep = payloadAttachments.length ? "Lookin' at the file-friends…" : "Snoopy-snoopin' at errythin'…";
+    // Keep real progress visible instead of showing a speculative assistant reply.
+    // Server and tool events update this log while the requested work continues.
+    const initialStep = 'Loading... tiny gears go brrr!';
     const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [{ text: initialStep }], artifacts: [], createdAt: Date.now() };
     state.messages.push(placeholder); render();
     await persistChat().catch((error) => console.warn('Could not save chat history:', error));
@@ -1145,6 +1161,31 @@
   function isTextLike(file) { return file.type.startsWith('text/') || /\.(txt|md|json|jsonl|ya?ml|xml|csv|tsv|js|mjs|cjs|ts|tsx|jsx|py|java|c|cc|cpp|h|hpp|cs|go|rs|rb|php|swift|kt|kts|sql|sh|bash|zsh|ps1|html?|css|scss|less|vue|svelte|toml|ini|cfg|conf|log|tex)$/i.test(file.name); }
   function mimeFromName(name) { if (/\.docx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'; if (/\.pptx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'; if (/\.xlsx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; if (/\.rtf$/i.test(name)) return 'application/rtf'; if (/\.doc$/i.test(name)) return 'application/msword'; if (/\.pdf$/i.test(name)) return 'application/pdf'; if (/\.png$/i.test(name)) return 'image/png'; if (/\.jpe?g$/i.test(name)) return 'image/jpeg'; if (/\.webp$/i.test(name)) return 'image/webp'; if (/\.gif$/i.test(name)) return 'image/gif'; if (/\.bmp$/i.test(name)) return 'image/bmp'; if (/\.svg$/i.test(name)) return 'image/svg+xml'; return 'application/octet-stream'; }
   function toBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }); }
+  async function prepareDocumentImage(file) {
+    const image = await decodeImage(file);
+    const sourceWidth = image.width; const sourceHeight = image.height;
+    if (!sourceWidth || !sourceHeight) throw new Error('image dimensions could not be read');
+    // Preserve the complete image while bounding vision cost and browser memory.
+    const maxEdge = 3072; const maxPixels = 8_000_000;
+    const scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight), Math.sqrt(maxPixels / (sourceWidth * sourceHeight)));
+    const width = Math.max(1, Math.round(sourceWidth * scale)); const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new Error('canvas is unavailable');
+    context.fillStyle = '#fff'; context.fillRect(0, 0, width, height);
+    context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
+    context.drawImage(image, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
+    // Lossless PNG protects hard edges in drawings and document screenshots.
+    const mime = /png|gif|bmp|tiff|svg/i.test(file.type || file.name) ? 'image/png' : 'image/jpeg';
+    const blob = await canvasBlob(canvas, mime, .95);
+    image.close?.();
+    return { sourceWidth, sourceHeight, width, height, mime, base64: await toBase64(blob), resized: scale < 1 };
+  }
+  async function decodeImage(file) {
+    if ('createImageBitmap' in window) return createImageBitmap(file, { imageOrientation: 'from-image' });
+    return await new Promise((resolve, reject) => { const url = URL.createObjectURL(file); const image = new Image(); image.onload = () => { URL.revokeObjectURL(url); resolve(image); }; image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image decode failed')); }; image.src = url; });
+  }
+  function canvasBlob(canvas, type, quality) { return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('image encoding failed')), type, quality)); }
   function formatSize(size) { if (size < 1024) return `${size} B`; if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`; return `${(size / 1024 / 1024).toFixed(1)} MB`; }
   function fileName(path) { return String(path || '').split(/[\\/]/).pop() || ''; }
 
@@ -1296,6 +1337,15 @@
 
       if (!line.trim()) { closeList(); i++; continue; }
 
+      if (isMarkdownTable(lines, i)) {
+        closeList();
+        const tableLines = [line];
+        i += 2; // The divider controls alignment but has no visible row.
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { tableLines.push(lines[i]); i++; }
+        container.appendChild(buildMarkdownTable(tableLines));
+        continue;
+      }
+
       const heading = line.match(/^(#{1,6})\s+(.*)$/);
       if (heading) {
         closeList();
@@ -1326,7 +1376,7 @@
       i++;
       while (
         i < lines.length && lines[i].trim() &&
-        !/^```/.test(lines[i]) && !/^#{1,6}\s+/.test(lines[i]) && !/^\s*(\d+[.)]|[-*])\s+/.test(lines[i])
+        !/^```/.test(lines[i]) && !/^#{1,6}\s+/.test(lines[i]) && !/^\s*(\d+[.)]|[-*])\s+/.test(lines[i]) && !isMarkdownTable(lines, i)
       ) {
         paraLines.push(lines[i]); i++;
       }
@@ -1335,6 +1385,47 @@
       applyInline(p, paraLines.join('\n'));
       container.appendChild(p);
     }
+  }
+
+  function isMarkdownTable(lines, index) {
+    if (!/^\s*\|.*\|\s*$/.test(lines[index] || '')) return false;
+    const divider = splitMarkdownTableRow(lines[index + 1] || '');
+    return divider.length > 0 && divider.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  }
+
+  function buildMarkdownTable(lines) {
+    const scroll = document.createElement('div');
+    scroll.className = 'md-table-scroll';
+    const table = document.createElement('table');
+    table.className = 'md-table';
+    const head = document.createElement('thead');
+    const body = document.createElement('tbody');
+    lines.forEach((line, rowIndex) => {
+      const tr = document.createElement('tr');
+      splitMarkdownTableRow(line).forEach((value) => {
+        const cell = document.createElement(rowIndex === 0 ? 'th' : 'td');
+        applyInline(cell, value);
+        tr.appendChild(cell);
+      });
+      (rowIndex === 0 ? head : body).appendChild(tr);
+    });
+    table.append(head, body);
+    scroll.appendChild(table);
+    return scroll;
+  }
+
+  function splitMarkdownTableRow(line) {
+    const cells = [];
+    let current = '';
+    let escaped = false;
+    for (const character of String(line).trim().replace(/^\|/, '').replace(/\|$/, '')) {
+      if (escaped) { current += character; escaped = false; continue; }
+      if (character === '\\') { escaped = true; continue; }
+      if (character === '|') { cells.push(current.trim()); current = ''; continue; }
+      current += character;
+    }
+    cells.push(current.trim());
+    return cells;
   }
 
   function applyInline(el, raw) {

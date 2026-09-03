@@ -12,8 +12,10 @@
   },
   "dependencies": {
     "@langchain/core": "^1.2.9",
+    "@napi-rs/canvas": "^1.0.8",
     "deepagents": "1.13.1",
     "langchain": "^1.5.10",
+    "pdfjs-dist": "^6.3.289",
     "zod": "^4.4.3"
   },
   "devDependencies": {

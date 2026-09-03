@@ -7,9 +7,9 @@ import { createDeepAgent, StateBackend } from 'deepagents';
 import type { AnyBackendProtocol, AnySubAgent, FilesystemPermission, SubAgent } from 'deepagents';
 import { todoListMiddleware, tool } from 'langchain';
 import { z } from 'zod';
-import type { AgentEventStream } from './index';
-import { VectraDeepTool } from './tools/contracts';
-import { VectraSubagentSpec } from './tools/subagents';
+import type { AgentEventStream } from './session';
+import { VectraDeepTool } from '../tools/contracts';
+import { VectraSubagentSpec } from '../tools/subagents';
 
 export interface VectraModelRequest {
   systemPrompt: string;
@@ -36,6 +36,7 @@ export interface VectraNativeMessage {
 export interface VectraNativeToolResult {
   text: string;
   toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>;
+  finishReason?: string;
 }
 
 /** Structural subset implemented by every Vectra model provider. */
@@ -73,6 +74,8 @@ export interface VectraDeepAgentRunRequest {
   history?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
   threadId?: string;
   signal?: AbortSignal;
+  /** Optional read-through mirrors for hosts whose models mistakenly choose Deep scratch read_file for an attachment. */
+  scratchFiles?: Record<string, { content: string; mimeType: string; created_at: string; modified_at: string }>;
 }
 
 export interface VectraDeepAgentRunResult {
@@ -115,6 +118,7 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
         options.systemPrompt,
         'Use Vectra host tools for real workspace files, Git, commands, documents, and network access.',
         'When vectra_search_tools is available, search by your intent and then call vectra_invoke_tool with an exact returned capability name.',
+        'When vectra_list_attachments is available, uploaded PDFs/documents are attachments, not workspace or scratch files. Use vectra_list_attachments, vectra_search_attachments, vectra_read_attachment, or vectra_read_files.',
         'The built-in filesystem is scratch space only. Never claim a scratch-file write changed the user project.',
         'Host tools enforce plans, human review, and approvals; do not attempt to bypass them.'
       ].filter(Boolean).join('\n\n')
@@ -176,7 +180,7 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
     });
     try {
       const state = await this.agent.invoke(
-        { messages },
+        { messages, ...(request.scratchFiles ? { files: request.scratchFiles } : {}) },
         {
           configurable: { thread_id: request.threadId ?? deepId() },
           recursionLimit: Math.max(8, (this.options.maxSteps ?? 20) * 3),
@@ -202,6 +206,8 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
  */
 export class VectraLangChainChatModel extends BaseChatModel<BaseChatModelCallOptions> {
   private readonly boundTools: BindToolsInput[];
+  private lastToolSignature = '';
+  private repeatedToolCalls = 0;
 
   constructor(
     private readonly provider: VectraCompletionProvider,
@@ -228,11 +234,17 @@ export class VectraLangChainChatModel extends BaseChatModel<BaseChatModelCallOpt
           model: this.modelId,
           signal: options.signal
         });
+        // Some OpenAI-compatible Qwen servers serialize calls inside message
+        // content instead of returning message.tool_calls. Normalize both forms.
+        const compatibility = result.toolCalls.length
+          ? { text: stripInternalReasoning(result.text), calls: result.toolCalls }
+          : parseToolEnvelope(result.text, this.boundTools);
+        this.guardRepeatedToolLoop(compatibility.calls);
         const message = new AIMessage({
-          content: result.text,
-          tool_calls: result.toolCalls.map((call) => ({ ...call, type: 'tool_call' as const }))
+          content: compatibility.text,
+          tool_calls: compatibility.calls.map((call) => ({ ...call, type: 'tool_call' as const }))
         });
-        return { generations: [{ text: result.text, message }] };
+        return { generations: [{ text: compatibility.text, message }] };
       } catch (error) {
         if (!/NATIVE_TOOL_CALLING_UNSUPPORTED/.test(messageOf(error))) throw error;
         this.events?.emit({ type: 'deepagent.native_tools.fallback', error: messageOf(error) });
@@ -248,6 +260,7 @@ export class VectraLangChainChatModel extends BaseChatModel<BaseChatModelCallOpt
       onDelta: (delta) => this.events?.emit({ type: 'deepagent.delta', delta })
     });
     const parsed = parseToolEnvelope(raw, this.boundTools);
+    this.guardRepeatedToolLoop(parsed.calls);
     const message = new AIMessage({
       content: parsed.text,
       tool_calls: parsed.calls.map((call) => ({
@@ -258,6 +271,14 @@ export class VectraLangChainChatModel extends BaseChatModel<BaseChatModelCallOpt
       }))
     });
     return { generations: [{ text: parsed.text, message }] };
+  }
+
+  private guardRepeatedToolLoop(calls: Array<{ name: string; args: Record<string, unknown> }>): void {
+    if (!calls.length) { this.lastToolSignature = ''; this.repeatedToolCalls = 0; return; }
+    const signature = JSON.stringify(calls.map((call) => ({ name: call.name, args: call.args })));
+    this.repeatedToolCalls = signature === this.lastToolSignature ? this.repeatedToolCalls + 1 : 1;
+    this.lastToolSignature = signature;
+    if (this.repeatedToolCalls >= 3) throw new Error(`REPEATED_TOOL_LOOP: The model called the same tool with identical arguments ${this.repeatedToolCalls} times.`);
   }
 }
 
@@ -318,12 +339,16 @@ function serializeMessages(messages: BaseMessage[], tools: BindToolsInput[]): { 
 
 function parseToolEnvelope(raw: string, tools: BindToolsInput[]): { text: string; calls: ParsedToolCall[] } {
   const allowed = new Set(tools.map((value) => (value as { name?: string }).name).filter(Boolean));
-  const candidate = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? raw;
+  const qwen = parseQwenToolCalls(raw, allowed);
+  if (qwen.length) return { text: visibleModelText(raw), calls: qwen };
+
+  const cleaned = stripInternalReasoning(raw);
+  const candidate = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? cleaned;
   let value: Record<string, unknown> | undefined;
   try { value = JSON.parse(candidate.trim()) as Record<string, unknown>; } catch { /* natural final answer */ }
-  if (!value) return { text: raw.trim(), calls: [] };
+  if (!value) return { text: visibleModelText(cleaned), calls: [] };
 
-  const text = String(value.message ?? value.text ?? '');
+  const text = stripInternalReasoning(String(value.message ?? value.text ?? '')).trim();
   const inputCalls = Array.isArray(value.tool_calls) ? value.tool_calls : [];
   const actionCalls = Array.isArray(value.actions) ? value.actions : [];
   const calls: ParsedToolCall[] = [];
@@ -345,6 +370,70 @@ function parseToolEnvelope(raw: string, tools: BindToolsInput[]): { text: string
   addCalls(inputCalls, false);
   addCalls(actionCalls, true);
   return { text, calls };
+}
+
+/** Parse Qwen/ChatML tool syntax emitted inside assistant content. */
+function parseQwenToolCalls(raw: string, allowed: Set<string | undefined>): ParsedToolCall[] {
+  const calls: ParsedToolCall[] = [];
+  for (const match of raw.matchAll(/<tool_call\b[^>]*>([\s\S]*?)<\/tool_call>/gi)) {
+    const body = match[1].trim();
+
+    // Common Qwen form: <tool_call>{"name":"tool","arguments":{...}}</tool_call>
+    try {
+      const value = JSON.parse(body) as Record<string, unknown>;
+      const requested = String(value.name ?? value.function ?? '');
+      const name = resolveAllowedToolName(requested, allowed);
+      if (name) {
+        const supplied = value.arguments ?? value.args ?? {};
+        const args = typeof supplied === 'string' ? parseJsonValue(supplied) : supplied;
+        calls.push({ id: deepId(), name, args: isRecord(args) ? args : {} });
+        continue;
+      }
+    } catch { /* try the XML parameter form below */ }
+
+    // Alternate Qwen form: <function=name><parameter=key>value</parameter>...</function>
+    const functionMatch = body.match(/<function\s*=\s*["']?([^>"'\s]+)["']?\s*>([\s\S]*?)<\/function>/i);
+    if (!functionMatch) continue;
+    const name = resolveAllowedToolName(functionMatch[1], allowed);
+    if (!name) continue;
+    const args: Record<string, unknown> = {};
+    for (const parameter of functionMatch[2].matchAll(/<parameter\s*=\s*["']?([^>"'\s]+)["']?\s*>([\s\S]*?)<\/parameter>/gi)) {
+      args[parameter[1]] = parseJsonValue(parameter[2].trim());
+    }
+    calls.push({ id: deepId(), name, args });
+  }
+  return calls;
+}
+
+function resolveAllowedToolName(requested: string, allowed: Set<string | undefined>): string {
+  const plain = requested.trim();
+  if (allowed.has(plain)) return plain;
+  const vectra = `vectra_${plain}`;
+  return allowed.has(vectra) ? vectra : '';
+}
+
+function parseJsonValue(input: string): unknown {
+  try { return JSON.parse(input); } catch { return input; }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Never expose private reasoning or serialized tool markup as assistant prose. */
+function stripInternalReasoning(raw: string): string {
+  let text = String(raw ?? '');
+  text = text.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '');
+  if (/<\/think>/i.test(text)) text = text.replace(/^[\s\S]*?<\/think>/i, '');
+  text = text.replace(/<think\b[^>]*>[\s\S]*$/gi, '');
+  return text;
+}
+
+function visibleModelText(raw: string): string {
+  return stripInternalReasoning(raw)
+    .replace(/<tool_call\b[^>]*>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<tool_call\b[^>]*>[\s\S]*$/gi, '')
+    .trim();
 }
 
 function contentText(content: BaseMessage['content']): string {

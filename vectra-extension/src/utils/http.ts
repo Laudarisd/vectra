@@ -1,5 +1,6 @@
 import * as https from 'node:https';
 import { Readable } from 'node:stream';
+import { VisibleModelTextStream } from './modelText';
 
 async function fetchWithTls(url: string, init: RequestInit, allowInsecureTls = false): Promise<Response> {
   if (!allowInsecureTls || !url.toLowerCase().startsWith('https://')) return fetch(url, init);
@@ -150,8 +151,8 @@ async function consumeStream(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let full = '';
-    const collect = (delta: string) => { full += delta; onDelta?.(delta); };
+    const visible = new VisibleModelTextStream(onDelta);
+    const collect = (delta: string) => visible.push(delta);
 
     while (true) {
       const { done, value } = await reader.read();
@@ -163,7 +164,7 @@ async function consumeStream(
       for (const line of lines) handleLine(line, collect);
     }
     if (buffer.trim()) handleLine(buffer, collect);
-    return full;
+    return visible.finish();
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error(

@@ -3,11 +3,15 @@ import { VectraDeepTool, VectraHostToolExecutor } from '../contracts';
 import { ATTACHMENT_TOOL_DEFINITIONS, createAttachmentTools, VectraAttachmentRecord } from '../attachments';
 import { VECTRA_TOOL_DEFINITIONS } from '../catalog';
 import { toHostToolExecutor } from '../deepTools';
+import { DOCUMENT_EXTRACTION_TOOL_DEFINITION, createDocumentExtractionTool } from './documentExtractionTool';
+
+export * from './documentExtractionTool';
 
 export interface VectraWebArtifact { name: string; mime: string; base64: string }
 
 export const WEB_TOOL_DEFINITIONS = [
   ...ATTACHMENT_TOOL_DEFINITIONS,
+  DOCUMENT_EXTRACTION_TOOL_DEFINITION,
   ...VECTRA_TOOL_DEFINITIONS.filter((item) => item.surface === 'web' || item.surface === 'all')
 ];
 
@@ -21,13 +25,20 @@ export function createWebTools<TContext = unknown>(
   const filesSchema = z.array(z.object({ path: z.string().min(1), content: z.string() })).min(1).max(30);
   return [
     ...attachmentTools,
+    createDocumentExtractionTool<TContext>(),
     {
       name: 'vectra_read_files',
-      description: 'Parse/read multiple uploaded files by exact name in one call. Also discoverable as parse_files.',
-      schema: z.object({ paths: z.array(z.string().min(1)).min(1).max(20) }),
-      execute: ({ paths }) => (paths as string[]).map((name) => {
+      description: 'Read bounded previews from multiple uploaded files by exact attachment name. Use for PDFs/documents; never use scratch read_file. Also discoverable as parse_files.',
+      schema: z.object({
+        paths: z.array(z.string().min(1)).min(1).max(20),
+        maxCharsPerFile: z.number().int().min(1000).max(30000).optional()
+      }),
+      execute: ({ paths, maxCharsPerFile }) => (paths as string[]).map((name) => {
         const file = attachments.find((item) => item.name === name);
-        return file ? `FILE ${file.name}\n${file.text || '[No parsed text available]'}` : `FILE ${name}\n[Not found]`;
+        const limit = typeof maxCharsPerFile === 'number' ? maxCharsPerFile : 12000;
+        if (!file) return `FILE ${name}\n[Not found]`;
+        const text = file.text || '';
+        return `FILE ${file.name} (showing ${Math.min(text.length, limit)} of ${text.length} characters)\n${text.slice(0, limit) || '[No parsed text available; use vision inspection]'}`;
       }).join('\n\n')
     },
     {

@@ -87,6 +87,54 @@ test('Vectra model adapter turns JSON fallback actions into LangChain tool calls
   assert.deepEqual(response.tool_calls[0].args, { value: 'hello' });
 });
 
+test('Vectra model adapter executes Qwen XML tool calls without exposing reasoning', async () => {
+  const provider = {
+    async completeWithTools() {
+      return {
+        text: `<think>Private planning must stay hidden.</think>\n<tool_call>\n<function=document_extraction>\n<parameter=columns>\n[{"header":"Item Description","key":"description"},{"header":"QTY","key":"qty"}]\n</parameter>\n<parameter=rows>\n[{"description":"PLATE-A","qty":"2"}]\n</parameter>\n<parameter=sources>\n["drawing.pdf"]\n</parameter>\n</function>\n</tool_call>`,
+        toolCalls: []
+      };
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'qwen-test').bindTools([
+    tool(async (input) => input, {
+      name: 'document_extraction',
+      description: 'Format extracted records.',
+      schema: z.object({ columns: z.array(z.any()), rows: z.array(z.any()), sources: z.array(z.string()).optional() })
+    })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'Extract the table' }]);
+  assert.equal(response.content, '');
+  assert.equal(response.tool_calls.length, 1);
+  assert.equal(response.tool_calls[0].name, 'document_extraction');
+  assert.deepEqual(response.tool_calls[0].args.columns[0], { header: 'Item Description', key: 'description' });
+  assert.deepEqual(response.tool_calls[0].args.rows[0], { description: 'PLATE-A', qty: '2' });
+});
+
+test('Vectra model adapter accepts Qwen JSON-in-tool-call syntax and hides think text', async () => {
+  const provider = {
+    async completeWithTools() {
+      return { text: '<think>secret</think><tool_call>{"name":"echo","arguments":{"value":"visible"}}</tool_call>', toolCalls: [] };
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'qwen-test').bindTools([
+    tool(async ({ value }) => value, { name: 'echo', description: 'Echo text', schema: z.object({ value: z.string() }) })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'echo visible' }]);
+  assert.equal(response.content, '');
+  assert.equal(response.tool_calls[0].name, 'echo');
+  assert.deepEqual(response.tool_calls[0].args, { value: 'visible' });
+});
+
+test('Vectra model adapter removes Qwen think blocks from final prose', async () => {
+  const provider = {
+    async completeWithTools() { return { text: '<think>internal chain</think>Final table only.', toolCalls: [] }; }
+  };
+  const model = new VectraLangChainChatModel(provider, 'qwen-test').bindTools([]);
+  const response = await model.invoke([{ role: 'user', content: 'answer' }]);
+  assert.equal(response.content, 'Final table only.');
+});
+
 test('Vectra model adapter prefers native tool calls without serializing the fallback envelope', async () => {
   let fallbackCalls = 0;
   const provider = {
@@ -103,6 +151,20 @@ test('Vectra model adapter prefers native tool calls without serializing the fal
   const response = await model.invoke([{ role: 'user', content: 'echo hello' }]);
   assert.equal(response.tool_calls[0].id, 'native-1');
   assert.equal(fallbackCalls, 0);
+});
+
+test('Vectra model adapter stops identical tool-call loops before graph recursion', async () => {
+  const provider = {
+    async completeWithTools() {
+      return { text: 'Trying again', toolCalls: [{ id: 'same', name: 'echo', args: { value: 'stuck' } }] };
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'loop-test').bindTools([
+    tool(async ({ value }) => value, { name: 'echo', description: 'Echo', schema: z.object({ value: z.string() }) })
+  ]);
+  await model.invoke([{ role: 'user', content: 'test' }]);
+  await model.invoke([{ role: 'user', content: 'test' }]);
+  await assert.rejects(model.invoke([{ role: 'user', content: 'test' }]), /REPEATED_TOOL_LOOP/);
 });
 
 test('model-driven tool discovery exposes and gates canonical host capabilities', async () => {
@@ -140,6 +202,68 @@ test('web adapter uses shared portable definitions and creates downloadable file
   await create.execute({ files: [{ path: 'education/README.md', content: '# Echo state network' }] }, {});
   assert.equal(artifacts[0].name, 'education/README.md');
   assert.equal(Buffer.from(artifacts[0].base64, 'base64').toString(), '# Echo state network');
+});
+
+test('web-only document_extraction supports arbitrary schemas and cross-matching', async () => {
+  const tools = createWebTools([], []);
+  const extraction = tools.find((item) => item.name === 'document_extraction');
+  assert.ok(extraction);
+  assert.ok(WEB_TOOL_DEFINITIONS.some((item) => item.name === 'document_extraction' && item.surface === 'web'));
+  assert.ok(!VECTRA_TOOL_DEFINITIONS.some((item) => item.name === 'document_extraction'), 'Document extraction must remain web-only');
+  const output = await extraction.execute({ title: 'Invoice records', sources: ['invoice.png'], matchKeys: ['code'], columns: [
+    { key: 'code', header: 'Product code' }, { key: 'description', header: 'Description' }, { key: 'amount', header: 'Amount' }
+  ], rows: [
+    { code: 'P-100', description: 'Bracket', amount: 2 },
+    { code: 'P-100', description: '', amount: 3 }
+  ] }, {});
+  assert.match(output, /Invoice records/);
+  assert.match(output, /\| Product code \| Description \| Amount \|/);
+  assert.match(output, /\| P-100 \| Bracket \| 3 \|/);
+});
+
+test('document_extraction supports arbitrary multi-source columns', async () => {
+  const extraction = createWebTools([], []).find((item) => item.name === 'document_extraction');
+  const output = await extraction.execute({ sources: ['a.pdf', 'b.xlsx'], columns: [
+    { key: 'date', header: 'Inspection date' }, { key: 'result', header: 'Result' }, { key: 'source', header: 'Source page' }
+  ], rows: [{ date: '2026-09-02', result: 'Pass', source: 'a.pdf p.2' }] }, {});
+  assert.match(output, /2 sources/);
+  assert.match(output, /Inspection date/);
+  assert.match(output, /a\.pdf p\.2/);
+});
+
+test('web server uses universal document extraction without keyword gates', () => {
+  const source = require('node:fs').readFileSync('server/server.mjs', 'utf8');
+  const documents = require('node:fs').readFileSync('server/services/documents.mjs', 'utf8');
+  const preprocessing = require('node:fs').readFileSync('server/document-pipeline/preprocess.mjs', 'utf8');
+  const ocrOrchestrator = require('node:fs').readFileSync('server/document-pipeline/ocr-orchestrator.mjs', 'utf8');
+  assert.match(source, /looksLikeDeferredPromise\(deep\.text\)/);
+  assert.match(source, /Dynamically infer the user's goal/);
+  assert.match(source, /call document_extraction/);
+  assert.doesNotMatch(source, /looksLikeBomRequest|bomRequested/);
+  assert.match(source, /Loading\.\.\. tiny gears go brrr!/);
+  assert.match(ocrOrchestrator, /Parsing\.\.\. spectacles on, facts only!/);
+  assert.match(source, /Synchronizing\.\.\. pages, please form an orderly queue!/);
+  assert.doesNotMatch(source, /message:`OCR \$\{attachment\.name\}: region/);
+  assert.match(source, /visual OCR is used only where native extraction was insufficient/);
+  assert.match(source, /Never impose a generic title/);
+  assert.doesNotMatch(source, /Bill of Materials|Category\/Type|Item No\./i);
+  const client = require('node:fs').readFileSync('public/js/app.js', 'utf8');
+  assert.match(client, /const endpointChanged = state\.provider === 'openaiCompatible' && previousBaseUrl !== state\.baseUrl/);
+  assert.match(client, /uniqueModels\.includes\(state\.model\) \? state\.model : uniqueModels\[0\]/);
+  assert.doesNotMatch(client, /if \(state\.model && !\[\.\.\.els\.model\.options\]/, 'A stale model must not be reinserted after endpoint discovery');
+  assert.match(client, /prepareDocumentImage/);
+  assert.match(client, /const maxEdge = 3072; const maxPixels = 8_000_000/);
+  assert.match(preprocessing, /extractEmbeddedDocumentImages/);
+  assert.match(preprocessing, /renderPdfForVision/);
+  const pdfRenderer = require('node:fs').readFileSync('server/services/pdf-renderer.mjs', 'utf8');
+  assert.match(pdfRenderer, /if\(analysis\.needsVlm&&renderImages\)/);
+  assert.match(pdfRenderer, /page\.getTextContent\(\)/);
+  assert.match(pdfRenderer, /MAX_VISION_IMAGE_PIXELS/);
+  assert.match(preprocessing, /\[PDF DOCUMENT METADATA\]/);
+  assert.doesNotMatch(source, /function extractPdfText\(bytes\)/, 'The duplicate server-local PDF parser should stay removed');
+  assert.match(documents, /formatPdfPages/);
+  assert.match(documents, /spreadsheetColumnIndex/);
+  assert.match(documents, /officeXmlToLayout/);
 });
 
 test('Deep Agents built-in inventory is complete and records conditional availability', () => {
@@ -271,5 +395,9 @@ test('shared tool catalog and factories serve extension and web adapters', async
   });
 
   const attachments = createAttachmentTools([{ name: 'notes.txt', kind: 'text', text: 'shared text' }]);
-  assert.equal(await attachments[1].execute({ name: 'notes.txt' }, {}), 'shared text');
+  const chunk = await attachments.find((item) => item.name === 'vectra_read_attachment').execute({ name: 'notes.txt' }, {});
+  assert.equal(chunk.content, 'shared text');
+  assert.equal(chunk.hasMore, false);
+  const search = await attachments.find((item) => item.name === 'vectra_search_attachments').execute({ query: 'shared' }, {});
+  assert.equal(search.results[0].name, 'notes.txt');
 });

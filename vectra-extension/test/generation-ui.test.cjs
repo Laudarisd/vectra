@@ -5,6 +5,7 @@ const fs = require('node:fs');
 test('generation UI keeps playful progress, live deltas, and a working Stop control', () => {
   const provider = fs.readFileSync('src/ui/ChatViewProvider.ts', 'utf8');
   const webview = fs.readFileSync('media/main.js', 'utf8');
+  const streaming = fs.readFileSync('src/utils/http.ts', 'utf8');
 
   assert.match(provider, /Wakey-wakey, lookin' 'round/);
   assert.match(provider, /onDelta: \(delta\) => events\.emit\(\{ type: 'ui\.delta'/);
@@ -12,6 +13,7 @@ test('generation UI keeps playful progress, live deltas, and a working Stop cont
   assert.match(webview, /buildActivityLog\(\)/);
   assert.match(webview, /vscode\.postMessage\(\{ type: 'stop' \}\)/);
   assert.match(webview, /els\.stop\.classList\.toggle\('hidden', !state\.busy\)/);
+  assert.match(streaming, /VisibleModelTextStream/);
 });
 
 test('Deep Agents todos are mirrored and rendered while the extension is running', () => {

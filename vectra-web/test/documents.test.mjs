@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDocx, buildPdf, extractDocxText, extractPdfText, artifactForRequest } from '../server/services/documents.mjs';
+import { renderPdfForVision } from '../server/services/pdf-renderer.mjs';
 
 test('web document codec round-trips DOCX text', () => {
   const bytes=buildDocx('Hello Vectra DOCX\nSecond line','Demo');
@@ -12,6 +13,18 @@ test('web document codec extracts generated PDF text', async () => {
   const bytes=buildPdf('Hello Vectra PDF\nSecond line','Demo');
   assert.match(bytes.subarray(0,8).toString('latin1'),/^%PDF-/);
   assert.match(await extractPdfText(bytes),/Hello Vectra PDF/);
+});
+
+test('portable PDF inspector skips vision rendering when native text is usable', async () => {
+  const bytes=buildPdf('Table A\tTable B\nValue 1\tValue 2','Vision');
+  const rendered=await renderPdfForVision(bytes,{dpi:96,maxPages:2});
+  assert.equal(rendered.totalPages,1);
+  assert.equal(rendered.processedPages,1);
+  assert.equal(rendered.visualPages,0);
+  assert.equal(rendered.pages.length,0);
+  assert.equal(rendered.pageAnalysis[0].classification,'native-vector');
+  assert.equal(rendered.pageAnalysis[0].needsVlm,false);
+  assert.match(rendered.nativeText,/Table A/);
 });
 
 test('web can create downloadable requested documents', () => {

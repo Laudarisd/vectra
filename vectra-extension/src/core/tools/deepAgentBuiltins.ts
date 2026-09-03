@@ -46,6 +46,7 @@ export function deepAgentActionName(name: string): string {
 export const DEEP_AGENT_ACTION_TOOL_NAMES = DEEP_AGENT_BUILTIN_TOOL_NAMES.map(deepAgentActionName);
 
 export function describeDeepAgentTool(name: string): string {
+  if (name === 'document_extraction') return 'Matching and validating structured document data...';
   const definition = DEEP_AGENT_BUILTIN_TOOL_DEFINITIONS.find((tool) => tool.name === name);
   if (!definition) return `Using ${name}...`;
   switch (definition.family) {

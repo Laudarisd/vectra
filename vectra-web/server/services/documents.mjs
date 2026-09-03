@@ -7,11 +7,17 @@ import { inflateRawSync, inflateSync, deflateRawSync } from 'node:zlib';
 const execFileAsync=promisify(execFile);
 
 export async function extractPdfText(bytes){
-  const native=await withTemp('.pdf',bytes,async file=>{try{const {stdout}=await execFileAsync('pdftotext',['-layout','-enc','UTF-8',file,'-'],{timeout:45000,maxBuffer:20*1024*1024});return stdout||''}catch{return''}});
-  if(isMeaningful(native))return normalize(native);
+  const native=await withTemp('.pdf',bytes,async file=>{try{const {stdout}=await execFileAsync('pdftotext',['-layout','-enc','UTF-8',file,'-'],{timeout:120000,maxBuffer:64*1024*1024});return stdout||''}catch{return''}});
+  if(isMeaningful(native))return formatPdfPages(native);
   const latin=Buffer.from(bytes).toString('latin1'),chunks=[];collect(latin,chunks);const r=/<<(.*?)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g;let m;
   while((m=r.exec(latin))){if(/\/FlateDecode\b/.test(m[1])){try{collect(inflateSync(Buffer.from(m[2],'latin1')).toString('latin1'),chunks)}catch{}}else collect(m[2],chunks)}
   const fallback=normalize(chunks.join('\n'));return isMeaningful(fallback)?fallback:'';
+}
+
+// Preserve page boundaries so citations, tables, and drawing notes remain traceable.
+function formatPdfPages(text){
+  const pages=String(text||'').split('\f');
+  return pages.map((page,index)=>normalize(page)?`[PDF PAGE ${index+1}]\n${normalize(page)}`:'').filter(Boolean).join('\n\n');
 }
 
 export function extractPptxText(bytes){
@@ -19,8 +25,8 @@ export function extractPptxText(bytes){
     const entries=extractZipEntriesMatching(Buffer.from(bytes),/^ppt\/slides\/slide\d+\.xml$/i).sort((a,b)=>natural(a.name,b.name));
     const chunks=[];
     for(const entry of entries){
-      const texts=[...entry.data.toString('utf8').matchAll(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g)].map(m=>decodeXml(m[1]));
-      if(texts.length)chunks.push(`[${entry.name.split('/').pop()}]\n${texts.join(' ')}`);
+      const text=officeXmlToLayout(entry.data.toString('utf8'));
+      if(text)chunks.push(`[${entry.name.split('/').pop()}]\n${text}`);
     }
     return normalize(chunks.join('\n\n'));
   }catch{return''}
@@ -31,7 +37,25 @@ export function extractXlsxText(bytes){
     try{shared=[...extractZipEntry(zip,'xl/sharedStrings.xml').toString('utf8').matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(m=>decodeXml(m[1]))}catch{}
     const sheets=extractZipEntriesMatching(zip,/^xl\/worksheets\/sheet\d+\.xml$/i).sort((a,b)=>natural(a.name,b.name));
     const out=[];
-    for(const sheet of sheets){const xml=sheet.data.toString('utf8'),rows=[];for(const rm of xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)){const vals=[];for(const cm of rm[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)){const attrs=cm[1],body=cm[2];let value='';const inline=body.match(/<t[^>]*>([\s\S]*?)<\/t>/);const v=body.match(/<v[^>]*>([\s\S]*?)<\/v>/);if(inline)value=decodeXml(inline[1]);else if(v){value=decodeXml(v[1]);if(/\bt=["']s["']/.test(attrs)){const idx=Number(value);value=shared[idx]??value}}vals.push(value)}if(vals.some(Boolean))rows.push(vals.join('\t'))}if(rows.length)out.push(`[${sheet.name.split('/').pop()}]\n${rows.join('\n')}`)}return normalize(out.join('\n\n'));
+    for(const sheet of sheets){
+      const xml=sheet.data.toString('utf8'),rows=[];
+      for(const rowMatch of xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)){
+        const values=[];
+        for(const cellMatch of rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)){
+          const attrs=cellMatch[1],body=cellMatch[2],ref=attrs.match(/\br=["']([A-Z]+\d+)["']/i)?.[1]||'';
+          const column=spreadsheetColumnIndex(ref);
+          while(values.length<column)values.push('');
+          const inline=body.match(/<t[^>]*>([\s\S]*?)<\/t>/),raw=body.match(/<v[^>]*>([\s\S]*?)<\/v>/),formula=body.match(/<f[^>]*>([\s\S]*?)<\/f>/);
+          let value=inline?decodeXml(inline[1]):raw?decodeXml(raw[1]):'';
+          if(raw&&/\bt=["']s["']/.test(attrs))value=shared[Number(value)]??value;
+          if(formula)value=`=${decodeXml(formula[1])}${value?` => ${value}`:''}`;
+          values[column]=value;
+        }
+        if(values.some(Boolean))rows.push(values.join('\t'));
+      }
+      if(rows.length)out.push(`[${sheet.name.split('/').pop()}]\n${rows.join('\n')}`);
+    }
+    return normalize(out.join('\n\n'));
   }catch{return''}
 }
 export function extractRtfText(bytes){return normalize(Buffer.from(bytes).toString('utf8').replace(/\\par[d]?\b/g,'\n').replace(/\\'[0-9a-fA-F]{2}/g,m=>String.fromCharCode(parseInt(m.slice(2),16))).replace(/\\[a-zA-Z]+-?\d* ?/g,'').replace(/[{}]/g,''))}
@@ -48,7 +72,26 @@ export async function extractDocumentText(name,bytes){
   if(isMeaningful(native))return normalize(native);
   return extractLegacyDocFallback(bytes);
 }
-export function extractDocxText(bytes){try{const xml=extractZipEntry(Buffer.from(bytes),'word/document.xml').toString('utf8');return normalize(xml.replace(/<w:tab\b[^>]*\/>/g,'\t').replace(/<w:br\b[^>]*\/>/g,'\n').replace(/<\/w:p>/g,'\n').replace(/<\/w:tr>/g,'\n').replace(/<\/w:tc>/g,'\t').replace(/<[^>]+>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&apos;/g,"'"))}catch{return''}}
+
+// Expose embedded Office images as first-class vision inputs for the web parser.
+export function extractEmbeddedDocumentImages(name,bytes){
+  const lower=String(name||'').toLowerCase();
+  const pattern=lower.endsWith('.docx')?/^word\/media\//i:lower.endsWith('.pptx')?/^ppt\/media\//i:lower.endsWith('.xlsx')?/^xl\/media\//i:null;
+  if(!pattern)return[];
+  try{
+    return extractZipEntriesMatching(Buffer.from(bytes),pattern).flatMap((entry,index)=>{
+      const mime=imageMime(entry.name);if(!mime)return[];
+      const dimensions=imageDimensions(entry.data);
+      return[{name:`${name} · embedded image ${index+1} · ${entry.name.split('/').pop()}`,mime,kind:'image',size:entry.data.length,text:'',base64:entry.data.toString('base64'),...dimensions}];
+    });
+  }catch{return[]}
+}
+export function extractDocxText(bytes){
+  try{
+    const entries=extractZipEntriesMatching(Buffer.from(bytes),/^word\/(?:document|header\d+|footer\d+|footnotes|endnotes)\.xml$/i).sort((a,b)=>natural(a.name,b.name));
+    return normalize(entries.map(entry=>`[${entry.name}]\n${officeXmlToLayout(entry.data.toString('utf8'))}`).join('\n\n'));
+  }catch{return''}
+}
 export function buildDocx(content,title='Vectra Document'){const now=new Date().toISOString();const files=[['[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`],['_rels/.rels',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`],['word/_rels/document.xml.rels',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],['word/styles.xml',styles()],['word/document.xml',docXml(content,title)],['docProps/core.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xml(title)}</dc:title><dc:creator>Vectra</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`],['docProps/app.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Vectra</Application></Properties>`]];return buildZip(files.map(([name,text])=>({name,data:Buffer.from(text)})))}
 export function buildPdf(content,title='Vectra Document'){const lines=wrap(content.replace(/\r\n/g,'\n').split('\n'),92),pages=[];for(let i=0;i<lines.length;i+=52)pages.push(lines.slice(i,i+52));if(!pages.length)pages.push(['']);const objects=[];const add=b=>(objects.push(b),objects.length);const catalog=add(''),pagesObj=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),pageIds=[];for(const ls of pages){const stream=['BT','/F1 10 Tf','48 790 Td','12 TL',...ls.flatMap((l,i)=>i?[`T*`,`(${pdfText(l)}) Tj`]:[`(${pdfText(l)}) Tj`]),'ET'].join('\n');const c=add(`<< /Length ${Buffer.byteLength(stream,'latin1')} >>\nstream\n${stream}\nendstream`);pageIds.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${c} 0 R >>`))}objects[catalog-1]=`<< /Type /Catalog /Pages ${pagesObj} 0 R >>`;objects[pagesObj-1]=`<< /Type /Pages /Kids [${pageIds.map(i=>`${i} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;const info=add(`<< /Title (${pdfText(title)}) /Creator (Vectra) >>`);let out='%PDF-1.4\n%\xE2\xE3\xCF\xD3\n',offsets=[0];objects.forEach((b,i)=>{offsets[i+1]=Buffer.byteLength(out,'latin1');out+=`${i+1} 0 obj\n${b}\nendobj\n`});const xref=Buffer.byteLength(out,'latin1');out+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`;for(let i=1;i<=objects.length;i++)out+=`${String(offsets[i]).padStart(10,'0')} 00000 n \n`;out+=`trailer\n<< /Size ${objects.length+1} /Root ${catalog} 0 R /Info ${info} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;return Buffer.from(out,'latin1')}
 export function artifactForRequest(userText,responseText,attachments=[]){
@@ -84,6 +127,31 @@ function extractBestFileContent(text,ext){const blocks=[...String(text||'').matc
 function textMime(ext){return({txt:'text/plain',md:'text/markdown',json:'application/json',csv:'text/csv',html:'text/html',py:'text/x-python',js:'text/javascript',mjs:'text/javascript',cjs:'text/javascript',ts:'text/typescript',tsx:'text/typescript',jsx:'text/javascript',cs:'text/x-csharp',cpp:'text/x-c++src',cc:'text/x-c++src',cxx:'text/x-c++src',c:'text/x-csrc',h:'text/x-chdr',hpp:'text/x-c++hdr',java:'text/x-java-source',go:'text/x-go',rs:'text/x-rustsrc',rb:'text/x-ruby',php:'text/x-php',sh:'text/x-shellscript',sql:'application/sql',yaml:'application/yaml',yml:'application/yaml',xml:'application/xml'})[ext]||'text/plain'}
 function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'})}
 function decodeXml(v){return String(v||'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&apos;/g,"'")}
+
+// Convert Word/PowerPoint XML into readable lines while retaining table cells and rows.
+function officeXmlToLayout(xml){
+  return normalize(String(xml||'')
+    .replace(/<(?:w:tab|a:tab)\b[^>]*\/>/g,'\t')
+    .replace(/<(?:w:br|a:br)\b[^>]*\/>/g,'\n')
+    .replace(/<\/(?:w:tc|a:tc)>/g,'\t')
+    .replace(/<\/(?:w:tr|a:tr)>/g,'\n')
+    .replace(/<\/(?:w:p|a:p)>/g,'\n')
+    .replace(/<[^>]+>/g,'')
+    .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&apos;/g,"'"));
+}
+
+function spreadsheetColumnIndex(reference){const letters=String(reference).match(/^[A-Z]+/i)?.[0]?.toUpperCase()||'A';let value=0;for(const letter of letters)value=value*26+letter.charCodeAt(0)-64;return Math.max(0,value-1)}
+
+// Read common raster dimensions without decoding pixels or adding native dependencies.
+function imageDimensions(bytes){
+  const b=Buffer.from(bytes);
+  if(b.length>=24&&b.toString('ascii',1,4)==='PNG')return{width:b.readUInt32BE(16),height:b.readUInt32BE(20)};
+  if(b.length>=10&&(b.toString('ascii',0,3)==='GIF'))return{width:b.readUInt16LE(6),height:b.readUInt16LE(8)};
+  if(b.length>=4&&b[0]===0xff&&b[1]===0xd8){let offset=2;while(offset+9<b.length){if(b[offset]!==0xff){offset++;continue}const marker=b[offset+1],size=b.readUInt16BE(offset+2);if([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker))return{width:b.readUInt16BE(offset+7),height:b.readUInt16BE(offset+5)};if(size<2)break;offset+=2+size}}
+  return{};
+}
+
+function imageMime(name){const ext=String(name).split('.').pop()?.toLowerCase();return({png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',gif:'image/gif',bmp:'image/bmp',tif:'image/tiff',tiff:'image/tiff'})[ext]||''}
 function extractZipEntriesMatching(zip,pattern){let e=-1;for(let i=zip.length-22;i>=Math.max(0,zip.length-70000);i--)if(zip.readUInt32LE(i)===0x06054b50){e=i;break}if(e<0)throw new Error('Invalid ZIP');const total=zip.readUInt16LE(e+10);let off=zip.readUInt32LE(e+16),out=[];for(let i=0;i<total;i++){if(zip.readUInt32LE(off)!==0x02014b50)throw new Error('Invalid ZIP directory');const method=zip.readUInt16LE(off+10),size=zip.readUInt32LE(off+20),nl=zip.readUInt16LE(off+28),el=zip.readUInt16LE(off+30),cl=zip.readUInt16LE(off+32),lo=zip.readUInt32LE(off+42),name=zip.subarray(off+46,off+46+nl).toString('utf8');if(pattern.test(name)){const lnl=zip.readUInt16LE(lo+26),lel=zip.readUInt16LE(lo+28),begin=lo+30+lnl+lel,data=zip.subarray(begin,begin+size);out.push({name,data:method===0?Buffer.from(data):method===8?inflateRawSync(data):Buffer.alloc(0)})}off+=46+nl+el+cl}return out}
 function isMeaningful(text){const v=normalize(text||'');if(!v)return false;const s=v.slice(0,20000);let letters=0,suspicious=0;for(const ch of s){if(/\p{L}|\p{N}/u.test(ch))letters++;const c=ch.charCodeAt(0);if(ch==='\ufffd'||(c>=0x80&&c<=0x9f))suspicious++;}return letters/Math.max(1,s.length)>.08&&suspicious/Math.max(1,s.length)<.02}
 function extractLegacyDocFallback(bytes){const buffer=Buffer.from(bytes),parts=[];const ascii=buffer.toString('latin1').match(/[\x20-\x7e\r\n\t]{8,}/g)||[];parts.push(...ascii);if(buffer.length>1){const utf16=buffer.toString('utf16le').match(/[\p{L}\p{N}\p{P}\p{Zs}\r\n\t]{6,}/gu)||[];parts.push(...utf16)}const text=normalize(parts.join('\n'));return isMeaningful(text)?text:''}

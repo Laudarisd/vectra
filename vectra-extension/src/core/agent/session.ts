@@ -1,3 +1,4 @@
+// Shared state and lifecycle primitives for every Vectra agent session.
 export type AgentMessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 export interface AgentMessage {

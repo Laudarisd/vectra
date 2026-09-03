@@ -87,6 +87,24 @@ test('Vectra model adapter turns JSON fallback actions into LangChain tool calls
   assert.deepEqual(response.tool_calls[0].args, { value: 'hello' });
 });
 
+test('Vectra model adapter consumes Qwen XML tool calls without exposing think text', async () => {
+  const provider = {
+    async completeWithTools() {
+      return {
+        text: '<think>private plan</think><tool_call><function=echo><parameter=value>"hello"</parameter></function></tool_call>',
+        toolCalls: []
+      };
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'qwen-test').bindTools([
+    tool(async ({ value }) => value, { name: 'echo', description: 'Echo text', schema: z.object({ value: z.string() }) })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'echo hello' }]);
+  assert.equal(response.content, '');
+  assert.equal(response.tool_calls[0].name, 'echo');
+  assert.deepEqual(response.tool_calls[0].args, { value: 'hello' });
+});
+
 test('Vectra model adapter prefers native tool calls without serializing the fallback envelope', async () => {
   let fallbackCalls = 0;
   const provider = {
@@ -271,5 +289,7 @@ test('shared tool catalog and factories serve extension and web adapters', async
   });
 
   const attachments = createAttachmentTools([{ name: 'notes.txt', kind: 'text', text: 'shared text' }]);
-  assert.equal(await attachments[1].execute({ name: 'notes.txt' }, {}), 'shared text');
+  assert.deepEqual(await attachments[1].execute({ name: 'notes.txt' }, {}), {
+    name: 'notes.txt', start: 0, end: 11, totalCharacters: 11, hasMore: false, content: 'shared text'
+  });
 });

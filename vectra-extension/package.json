@@ -270,6 +270,13 @@
           "maximum": 30,
           "description": "Maximum read/reason cycles per Agent request."
         },
+        "vectra.deepAgentRecursionLimit": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Deep Agents only: hard ceiling on internal graph steps for one request. Leave at 0 to derive it from vectra.maxAgentSteps. Raise it if long research runs stop early with a step-budget message."
+        },
         "vectra.maxSubagentSteps": {
           "type": "number",
           "default": 6,

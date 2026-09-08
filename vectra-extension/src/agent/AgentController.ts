@@ -1,7 +1,7 @@
 // Beginner guide: Handles a ge nt co nt ro ll er responsibilities for Vectra.
 import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
-import { AgentMode, AgentRunRequest, AgentRunResult, Attachment, ChatMessage, Plan, SubagentEvent, TextProvider, TodoItem, WorkspaceContext } from '../types';
+import { AgentAction, AgentMode, AgentRunRequest, AgentRunResult, Attachment, ChatMessage, EditProposal, Plan, SubagentEvent, TextProvider, TodoItem, WorkspaceContext } from '../types';
 import { ProviderManager } from '../providers/ProviderManager';
 import { AgentConfiguration, getConfig } from '../utils/config';
 import { truncateMiddle, estimateContextCharBudget, safeJson } from '../utils/text';
@@ -35,6 +35,8 @@ interface RunLoopOptions {
   maxSteps: number;
   /** True for a delegated sub-run: read-only, no history, no plan/todo involvement, cannot delegate further. */
   subagent: boolean;
+  /** Human-readable log of path mutations already applied this run (folders created, renames, moves…), shown in the final summary. */
+  workspaceMutations: string[];
   preload: boolean;
   provider: TextProvider;
   config: AgentConfiguration;
@@ -113,6 +115,11 @@ export class AgentController {
       this.patches.list().filter((proposal) => proposal.status === 'pending').map((proposal) => proposal.id)
     );
 
+    // Folder/path operations apply immediately (no review step), so the only
+    // honest record of them is collected as they succeed and replayed in the
+    // final summary — the model's own prose is not trusted for this.
+    const workspaceMutations: string[] = [];
+
     if (config.agentHarness === 'deepagents') {
       const message = await this.runDeepAgent({
         task: request.userText,
@@ -124,6 +131,7 @@ export class AgentController {
         proposalIds,
         maxSteps: config.maxAgentSteps,
         subagent: false,
+        workspaceMutations,
         preload: request.mode !== 'selection',
         provider,
         config,
@@ -135,7 +143,7 @@ export class AgentController {
         onProposalsChanged: request.onProposalsChanged,
         onSubagentEvent: request.onSubagentEvent
       });
-      return this.finish(message, [...proposalIds]);
+      return this.finish(message, [...proposalIds], workspaceMutations);
     }
 
     const message = await this.runLoop({
@@ -148,6 +156,7 @@ export class AgentController {
       proposalIds,
       maxSteps: config.maxAgentSteps,
       subagent: false,
+      workspaceMutations,
       preload: request.mode !== 'selection',
       provider,
       config,
@@ -159,7 +168,7 @@ export class AgentController {
       onProposalsChanged: request.onProposalsChanged
     });
 
-    return this.finish(message, [...proposalIds]);
+    return this.finish(message, [...proposalIds], workspaceMutations);
   }
 
   /** Run LangChain Deep Agents while keeping every real capability behind Vectra's tool registry. */
@@ -174,6 +183,8 @@ export class AgentController {
         if (event.tool === 'write_todos') this.syncDeepTodos(event.input, opts.onTodosChanged);
       }
       if (event.type === 'deepagent.delta' && typeof event.delta === 'string') opts.onProgress?.('Generating response…');
+      if (event.type === 'deepagent.stalled_narration') opts.onProgress?.('That turn described an action without running it; asking again…');
+      if (event.type === 'deepagent.closing_answer.requested') opts.onProgress?.('Writing the final answer…');
       if (event.type === 'deepagent.subagent.started' && typeof event.role === 'string') {
         opts.onSubagentEvent?.({ event: 'started', role: event.role, description: typeof event.description === 'string' ? event.description : undefined });
       }
@@ -210,6 +221,7 @@ export class AgentController {
           const result = await this.toolRegistry.execute(action, context);
           if (result.effect === 'workspace' && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
             successfulWorkspaceMutations++;
+            opts.workspaceMutations.push(describeWorkspaceMutation(action));
           }
           for (const id of result.proposalIds) opts.proposalIds.add(id);
           if (result.proposalIds.length) opts.onProposalsChanged?.();
@@ -269,6 +281,7 @@ export class AgentController {
       context: executionContext,
       events,
       maxSteps: opts.maxSteps,
+      recursionLimit: opts.config.deepAgentRecursionLimit,
       systemPrompt: buildSystemPrompt(opts.mode),
       subagentSpecs
     });
@@ -281,6 +294,11 @@ export class AgentController {
         signal: opts.signal
       });
       this.syncDeepTodos(result.state, opts.onTodosChanged);
+      // A run ended by a harness guard (step budget, identical-tool-call loop)
+      // already carries its own explanation and, by definition, never reached a
+      // final answer. Running the fabricated-creation checks on it would only
+      // bury that behind a fallback plan the user never asked for.
+      if (result.stopReason) return result.text;
       if (
         successfulWorkspaceMutations === 0 &&
         this.resolveProposals([...opts.proposalIds]).length === 0 &&
@@ -320,7 +338,9 @@ export class AgentController {
           observations: ['PLAN APPROVED: use real workspace tools now; do not merely describe the requested changes.']
         });
       }
-      return result.text || 'Deep Agents completed the task without a final text response.';
+      return result.text ||
+        'I finished the run but the model returned no usable answer text. ' +
+        'Nothing was written to your workspace by this message. Ask me to continue, or rephrase the request.';
     } catch (error) {
       // If the harness/model fails before any capability ran, the compact
       // Vectra loop is a safe compatibility fallback. Never replay after a
@@ -497,6 +517,7 @@ export class AgentController {
             proposalIds: new Set<string>(),
             maxSteps: subBudget,
             subagent: true,
+            workspaceMutations: [],
             preload: false,
             provider: opts.provider,
             config: opts.config,
@@ -523,6 +544,8 @@ export class AgentController {
         if (result.proposalIds.length) opts.onProposalsChanged?.();
         if (result.effect !== 'workspace' || /\b(?:ERROR|Denied):/i.test(result.observation)) {
           allActionsChangedWorkspace = false;
+        } else {
+          opts.workspaceMutations.push(describeWorkspaceMutation(action));
         }
         if (action.type === 'todo_write') opts.onTodosChanged?.(this.todos.list());
       }
@@ -614,6 +637,10 @@ export class AgentController {
         ),
         model: config.model,
         structured: false,
+        // Small talk gets no extended thinking pass. Without this a
+        // thinking-capable local model answered "hello" with a long hidden
+        // deliberation followed by an essay.
+        reasoning: 'minimal',
         signal: request.signal,
         onDelta
       });
@@ -643,18 +670,24 @@ export class AgentController {
    * conversational answer (e.g. "I can't generate images, but I could write
    * a script for that") does not need a disk-write disclaimer bolted onto it.
    */
-  private finish(message: string, ids: string[]): AgentRunResult {
+  private finish(message: string, ids: string[], workspaceMutations: string[] = []): AgentRunResult {
     const proposals = this.resolveProposals(ids);
+    // The duplicate-action guard already suppresses most repeats, but a run
+    // that retried a path operation must still report it exactly once.
+    const applied = [...new Set(workspaceMutations)];
+    const appliedLog = applied.length
+      ? `\n\nModified in your workspace this run:\n${applied.map((entry) => `- ${entry}`).join('\n')}`
+      : '';
     if (proposals.length) {
       const noun = proposals.length === 1 ? 'change' : 'changes';
-      const paths = proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}`).join('\n');
+      const paths = proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}${describeProposalLines(proposal)}`).join('\n');
       return {
-        text: `Prepared ${proposals.length} proposed ${noun} for review. Nothing in this batch has been written to disk yet.\n\n${paths}\n\nUse Accept or Accept all below to apply ${proposals.length === 1 ? 'it' : 'them'}.`,
+        text: `Prepared ${proposals.length} proposed ${noun} for review. Nothing in this batch has been written to disk yet.\n\n${paths}\n\nUse Accept or Accept all below to apply ${proposals.length === 1 ? 'it' : 'them'}.${appliedLog}`,
         proposals
       };
     }
 
-    return { text: message, proposals };
+    return { text: `${message}${appliedLog}`, proposals };
   }
 
   private resolveProposals(ids: string[]): AgentRunResult['proposals'] {
@@ -731,6 +764,44 @@ function effectiveCharBudget(config: AgentConfiguration): number {
 
 function actionFingerprint(action: unknown): string {
   return JSON.stringify(action);
+}
+
+/** One final-summary line per already-applied path operation, from the validated action itself. */
+function describeWorkspaceMutation(action: AgentAction): string {
+  switch (action.type) {
+    case 'create_directory': return `created folder ${action.path}`;
+    case 'delete_directory': return `deleted folder ${action.path}`;
+    case 'rename_path': return `renamed ${action.path} to ${action.destinationPath}`;
+    case 'move_path': return `moved ${action.path} to ${action.destinationPath}`;
+    case 'copy_path': return `copied ${action.path} to ${action.destinationPath}`;
+    default: return `changed ${'path' in action && typeof action.path === 'string' ? action.path : action.type}`;
+  }
+}
+
+/**
+ * " (line 3 - line 42)" for a proposal, from the real base/proposed content
+ * rather than the model's narration. For a modify this is the smallest edited
+ * region (common prefix/suffix lines stripped); a create spans the whole file.
+ */
+function describeProposalLines(proposal: EditProposal): string {
+  if (proposal.kind === 'delete') return '';
+  const proposedLines = proposal.proposedContent.split(/\r?\n/);
+  if (proposal.kind === 'create' || !proposal.baseContent) {
+    return proposedLines.length <= 1 ? ' (line 1)' : ` (line 1 - line ${proposedLines.length})`;
+  }
+  const baseLines = proposal.baseContent.split(/\r?\n/);
+  const maxOverlap = Math.min(baseLines.length, proposedLines.length);
+  let prefix = 0;
+  while (prefix < maxOverlap && baseLines[prefix] === proposedLines[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < maxOverlap - prefix &&
+    baseLines[baseLines.length - 1 - suffix] === proposedLines[proposedLines.length - 1 - suffix]
+  ) suffix++;
+  const first = prefix + 1;
+  // A pure deletion leaves no new lines; anchor it to the edit position.
+  const last = Math.max(first, proposedLines.length - suffix);
+  return first === last ? ` (line ${first})` : ` (line ${first} - line ${last})`;
 }
 
 /**

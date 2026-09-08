@@ -30,7 +30,8 @@ export interface ModelInfo { id: string; label?: string; detail?: string }
  * `structured` defaults to true. Set it to false for conversational turns so
  * providers that can pin a JSON schema return natural prose instead.
  */
-export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; structured?: boolean; signal?: AbortSignal; onDelta?: (delta: string) => void }
+/** `reasoning: 'minimal'` marks a turn that must not cost an extended thinking pass (greetings, small talk). */
+export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; structured?: boolean; reasoning?: 'minimal'; signal?: AbortSignal; onDelta?: (delta: string) => void }
 export interface NativeToolMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string; toolCalls?: NativeToolCall[] }
 export interface NativeToolCall { id: string; name: string; args: Record<string, unknown> }
 export interface NativeToolDefinition { name: string; description?: string; parameters: unknown }

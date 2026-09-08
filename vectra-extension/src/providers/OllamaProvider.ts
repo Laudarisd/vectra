@@ -16,6 +16,9 @@ interface OllamaTagsResponse {
   }>;
 }
 
+/** Upper bound on a conversational reply, so a greeting cannot become an essay. */
+const BRIEF_REPLY_TOKENS = 512;
+
 export class OllamaProvider implements TextProvider {
   readonly id = 'ollama' as const;
 
@@ -32,7 +35,10 @@ export class OllamaProvider implements TextProvider {
       // unless told otherwise, which is a frequent cause of degraded answers
       // and mid-conversation "forgetting" on local models.
       num_ctx: this.contextSize,
-      ...(this.deviceMode === 'cpu' ? { num_gpu: 0 } : {})
+      ...(this.deviceMode === 'cpu' ? { num_gpu: 0 } : {}),
+      // Small talk gets a short leash so a thinking-capable model cannot turn
+      // "hello" into a page of prose.
+      ...(request.reasoning === 'minimal' ? { num_predict: BRIEF_REPLY_TOKENS } : {})
     };
     const body = {
       model: request.model,
@@ -44,6 +50,8 @@ export class OllamaProvider implements TextProvider {
       // which otherwise reloads the whole model from disk on the next turn.
       keep_alive: '30m',
       options,
+      // Ollama's own switch for models that support extended reasoning.
+      ...(request.reasoning === 'minimal' ? { think: false } : {}),
       // Conversational turns must not be forced into the tool envelope.
       ...(request.structured === false ? {} : { format: AGENT_ENVELOPE_SCHEMA })
     };

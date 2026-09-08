@@ -85037,6 +85037,7 @@ function getConfig() {
     anthropicBaseUrl: trim(c.get("anthropicBaseUrl", "https://api.anthropic.com/v1")),
     geminiBaseUrl: trim(c.get("geminiBaseUrl", "https://generativelanguage.googleapis.com/v1beta")),
     maxAgentSteps: c.get("maxAgentSteps", 12),
+    deepAgentRecursionLimit: c.get("deepAgentRecursionLimit", 0),
     maxSubagentSteps: c.get("maxSubagentSteps", 6),
     maxConcurrentSubagents: c.get("maxConcurrentSubagents", 2),
     maxFileBytes: c.get("maxFileBytes", 1e6),
@@ -101860,6 +101861,20 @@ var AgentMemoryStateSchema = external_exports2.object({
 var SUPPORTS_NOFOLLOW = import_node_fs2.default.constants.O_NOFOLLOW !== void 0;
 
 // src/core/agent/deepAgentRuntime.ts
+var GRAPH_STEPS_PER_AGENT_STEP = 8;
+var MIN_GRAPH_RECURSION_LIMIT = 120;
+function resolveRecursionLimit(options) {
+  const explicit = Math.floor(options.recursionLimit ?? 0);
+  if (explicit > 0) return Math.max(8, explicit);
+  return Math.max(MIN_GRAPH_RECURSION_LIMIT, (options.maxSteps ?? 20) * GRAPH_STEPS_PER_AGENT_STEP);
+}
+function isRepeatedToolLoopError(error51) {
+  return /REPEATED_TOOL_LOOP/.test(messageOf2(error51));
+}
+function isRecursionLimitError(error51) {
+  if (error51 instanceof Error && error51.name === "GraphRecursionError") return true;
+  return /recursion limit of \d+ reached/i.test(messageOf2(error51));
+}
 var VectraDeepAgentRuntime = class {
   constructor(options) {
     this.options = options;
@@ -101888,11 +101903,33 @@ var VectraDeepAgentRuntime = class {
         "When vectra_search_tools is available, search by your intent and then call vectra_invoke_tool with an exact returned capability name.",
         "When vectra_list_attachments is available, uploaded PDFs/documents are attachments, not workspace or scratch files. Use vectra_list_attachments, vectra_search_attachments, vectra_read_attachment, or vectra_read_files.",
         "The built-in filesystem is scratch space only. Never claim a scratch-file write changed the user project.",
-        "Host tools enforce plans, human review, and approvals; do not attempt to bypass them."
+        "Host tools enforce plans, human review, and approvals; do not attempt to bypass them.",
+        "Never end a turn with only a statement of what you are about to do. Either call the tool in that same turn, or give the complete answer."
       ].filter(Boolean).join("\n\n")
     });
   }
   agent;
+  /** One tool-free completion that turns a finished-but-silent run into a real answer. */
+  async closeOut(messages, signal) {
+    const transcript = runTranscript(messages);
+    if (!transcript) return "";
+    this.options.events?.emit({ type: "deepagent.closing_answer.requested" });
+    try {
+      const raw = await this.options.provider.complete({
+        systemPrompt: "You are Vectra. Write the final answer for the user, grounded only in the work recorded below. Plain prose: no JSON, no tool syntax, no private reasoning. Name the real files you looked at or changed. If a step did not finish, say so plainly instead of claiming it did.",
+        userPrompt: `WORK COMPLETED THIS RUN
+${transcript}
+
+Write the final answer now.`,
+        model: this.options.model,
+        structured: false,
+        signal
+      });
+      return visibleModelText2(raw);
+    } catch {
+      return "";
+    }
+  }
   async run(request2) {
     if (request2.signal?.aborted) throw abortError2();
     const messages = [
@@ -101902,7 +101939,12 @@ var VectraDeepAgentRuntime = class {
     this.options.events?.emit({ type: "deepagent.started", threadId: request2.threadId });
     const activeTools = /* @__PURE__ */ new Map();
     const activeSubagents = /* @__PURE__ */ new Map();
+    let latestModelText = "";
     const callbacks = BaseCallbackHandler.fromMethods({
+      handleLLMEnd: (output) => {
+        const text = generationText(output);
+        if (text) latestModelText = text;
+      },
       handleToolStart: (tool3, input, runId, _parentRunId, _tags, _metadata, runName) => {
         const name = runName || tool3.name || tool3.id?.[tool3.id.length - 1] || "tool";
         activeTools.set(runId, name);
@@ -101947,21 +101989,62 @@ var VectraDeepAgentRuntime = class {
         { messages, ...request2.scratchFiles ? { files: request2.scratchFiles } : {} },
         {
           configurable: { thread_id: request2.threadId ?? deepId() },
-          recursionLimit: Math.max(8, (this.options.maxSteps ?? 20) * 3),
+          recursionLimit: resolveRecursionLimit(this.options),
           signal: request2.signal,
           callbacks: [callbacks]
         }
       );
-      const text = lastAssistantText(state.messages ?? []);
+      const stateMessages = state.messages ?? [];
+      const text = finalAssistantText(stateMessages) || await this.closeOut(stateMessages, request2.signal);
       this.options.events?.emit({ type: "deepagent.state.changed", threadId: request2.threadId, state: summarizeState(state) });
       this.options.events?.emit({ type: "deepagent.completed", threadId: request2.threadId, text });
       return { text, state, harness: "deepagents" };
     } catch (error51) {
+      if (isRecursionLimitError(error51)) {
+        const text = recursionLimitSummary(latestModelText, resolveRecursionLimit(this.options));
+        this.options.events?.emit({ type: "deepagent.step_budget.reached", threadId: request2.threadId });
+        this.options.events?.emit({ type: "deepagent.completed", threadId: request2.threadId, text });
+        return { text, state: {}, harness: "deepagents", stopReason: "recursion-limit" };
+      }
+      if (isRepeatedToolLoopError(error51)) {
+        const text = toolLoopSummary(latestModelText);
+        this.options.events?.emit({ type: "deepagent.completed", threadId: request2.threadId, text });
+        return { text, state: {}, harness: "deepagents", stopReason: "tool-loop" };
+      }
       this.options.events?.emit({ type: "deepagent.failed", threadId: request2.threadId, error: messageOf2(error51) });
       throw error51;
     }
   }
 };
+function withProgress(latestModelText, explanation) {
+  const progress = latestModelText.trim();
+  return progress ? `${progress}
+
+${explanation}` : explanation;
+}
+function recursionLimitSummary(latestModelText, limit2) {
+  return withProgress(
+    latestModelText,
+    `I stopped here because this run hit its step budget (${limit2} internal steps), so I did not get to a final answer. Ask me to continue and I will pick up from this point, or narrow the request to one area so it fits. To allow longer runs, raise "vectra.maxAgentSteps" (or set "vectra.deepAgentRecursionLimit" directly) in Settings.`
+  );
+}
+function toolLoopSummary(latestModelText) {
+  return withProgress(
+    latestModelText,
+    "I stopped because I kept calling the same tool with the same arguments without making progress. Point me at the exact file or folder to work with, or narrow the request, and I will take it from there."
+  );
+}
+function generationText(output) {
+  const generations = output?.generations;
+  if (!Array.isArray(generations)) return "";
+  for (let index2 = generations.length - 1; index2 >= 0; index2--) {
+    for (const generation of generations[index2] ?? []) {
+      const text = String(generation?.text ?? "").trim();
+      if (text) return visibleModelText2(text);
+    }
+  }
+  return "";
+}
 var VectraLangChainChatModel = class _VectraLangChainChatModel extends BaseChatModel {
   constructor(provider, modelId, events, tools = []) {
     super({});
@@ -101980,6 +102063,16 @@ var VectraLangChainChatModel = class _VectraLangChainChatModel extends BaseChatM
     return new _VectraLangChainChatModel(this.provider, this.modelId, this.events, tools);
   }
   async _generate(messages, options) {
+    const turn = await this.respond(messages, options);
+    if (!turn.calls.length && this.boundTools.length && announcesPendingAction(turn.text)) {
+      this.events?.emit({ type: "deepagent.stalled_narration", text: turn.text });
+      const retried = await this.respond([...messages, new HumanMessage(ACT_OR_ANSWER_NUDGE)], options);
+      if (retried.calls.length || retried.text.trim()) return this.result(retried);
+    }
+    return this.result(turn);
+  }
+  /** One provider round trip, normalized to text plus tool calls. */
+  async respond(messages, options) {
     if (this.provider.completeWithTools) {
       try {
         const result = await this.provider.completeWithTools({
@@ -101988,13 +102081,13 @@ var VectraLangChainChatModel = class _VectraLangChainChatModel extends BaseChatM
           model: this.modelId,
           signal: options.signal
         });
-        const compatibility = result.toolCalls.length ? { text: stripInternalReasoning(result.text), calls: result.toolCalls } : parseToolEnvelope(result.text, this.boundTools);
-        this.guardRepeatedToolLoop(compatibility.calls);
-        const message2 = new AIMessage({
-          content: compatibility.text,
-          tool_calls: compatibility.calls.map((call3) => ({ ...call3, type: "tool_call" }))
-        });
-        return { generations: [{ text: compatibility.text, message: message2 }] };
+        if (result.toolCalls.length) {
+          return {
+            text: stripInternalReasoning(result.text),
+            calls: rerouteUnknownToolCalls(result.toolCalls.map(withCallId), boundToolNames(this.boundTools))
+          };
+        }
+        return parseToolEnvelope(result.text, this.boundTools);
       } catch (error51) {
         if (!/NATIVE_TOOL_CALLING_UNSUPPORTED/.test(messageOf2(error51))) throw error51;
         this.events?.emit({ type: "deepagent.native_tools.fallback", error: messageOf2(error51) });
@@ -102009,18 +102102,20 @@ var VectraLangChainChatModel = class _VectraLangChainChatModel extends BaseChatM
       signal: options.signal,
       onDelta: (delta) => this.events?.emit({ type: "deepagent.delta", delta })
     });
-    const parsed = parseToolEnvelope(raw, this.boundTools);
-    this.guardRepeatedToolLoop(parsed.calls);
+    return parseToolEnvelope(raw, this.boundTools);
+  }
+  result(turn) {
+    this.guardRepeatedToolLoop(turn.calls);
     const message = new AIMessage({
-      content: parsed.text,
-      tool_calls: parsed.calls.map((call3) => ({
+      content: turn.text,
+      tool_calls: turn.calls.map((call3) => ({
         id: call3.id,
         name: call3.name,
         args: call3.args,
         type: "tool_call"
       }))
     });
-    return { generations: [{ text: parsed.text, message }] };
+    return { generations: [{ text: turn.text, message }] };
   }
   guardRepeatedToolLoop(calls) {
     if (!calls.length) {
@@ -102054,6 +102149,29 @@ function nativeMessages(messages) {
       } : {}
     };
   });
+}
+function withCallId(call3) {
+  return { id: call3.id ?? deepId(), name: call3.name, args: call3.args };
+}
+function boundToolNames(tools) {
+  return new Set(tools.map((value) => value.name).filter((name) => Boolean(name)));
+}
+var CAPABILITY_NAME_PATTERN = /^[a-z][a-z0-9_]{2,64}$/i;
+function rerouteUnknownToolCalls(calls, bound) {
+  if (!bound.has("vectra_invoke_tool")) return calls;
+  return calls.map((call3) => {
+    if (bound.has(call3.name) || !CAPABILITY_NAME_PATTERN.test(call3.name)) return call3;
+    const capability = call3.name.startsWith("vectra_") ? call3.name.slice("vectra_".length) : call3.name;
+    return { id: call3.id, name: "vectra_invoke_tool", args: { name: capability, arguments: call3.args } };
+  });
+}
+var ACT_OR_ANSWER_NUDGE = "You described what you were about to do but called no tool, so nothing happened. Call the tool now, in this turn, to actually do it. If no tool is needed, give the complete answer instead. Never reply with only a statement of what you are about to do next.";
+var PENDING_ACTION_PATTERN = /\b(?:let(?:'s| us| me)|i(?:'ll| will| am going to| going to)|first,? i(?:'ll| will)|now i(?:'ll| will))\b[^.!?\n]{0,120}\b(?:read|check|look|inspect|examine|review|search|explore|scan|open|list|find|start|begin|create|add|write|update|modify|edit|implement|build|fix|run|analyz\w*|investigat\w*)\b/i;
+var MAX_STALL_NARRATION_CHARACTERS = 900;
+function announcesPendingAction(text) {
+  const value = String(text ?? "").trim();
+  if (!value || value.length > MAX_STALL_NARRATION_CHARACTERS) return false;
+  return PENDING_ACTION_PATTERN.test(value);
 }
 function serializeMessages(messages, tools) {
   const system = [];
@@ -102099,8 +102217,14 @@ function parseToolEnvelope(raw, tools) {
       const deepName = requestedName.startsWith("deep_") ? requestedName.slice("deep_".length) : "";
       const vectraName = `vectra_${requestedName}`;
       const name = actionFormat ? deepName && allowed.has(deepName) ? deepName : allowed.has(vectraName) ? vectraName : allowed.has(requestedName) ? requestedName : "" : allowed.has(requestedName) ? requestedName : allowed.has(vectraName) ? vectraName : "";
-      if (!name) continue;
       const supplied = record2.args && typeof record2.args === "object" && !Array.isArray(record2.args) ? record2.args : Object.fromEntries(Object.entries(record2).filter(([key]) => !["id", "name", "type"].includes(key)));
+      if (!name) {
+        if (allowed.has("vectra_invoke_tool") && CAPABILITY_NAME_PATTERN.test(requestedName)) {
+          const capability = deepName || requestedName.replace(/^vectra_/, "");
+          calls.push({ id: String(record2.id ?? deepId()), name: "vectra_invoke_tool", args: { name: capability, arguments: supplied } });
+        }
+        continue;
+      }
       calls.push({ id: String(record2.id ?? deepId()), name, args: supplied });
     }
   };
@@ -102174,14 +102298,29 @@ function schemaJson(schema) {
     return {};
   }
 }
-function lastAssistantText(messages) {
+function finalAssistantText(messages) {
+  const parts = [];
   for (let index2 = messages.length - 1; index2 >= 0; index2--) {
     const message = messages[index2];
-    if (message?.getType && message.getType() !== "ai") continue;
-    const text = contentText(message?.content ?? "").trim();
-    if (text) return text;
+    const type = message?.getType?.();
+    if (type && type !== "ai") break;
+    const text = visibleModelText2(contentText(message?.content ?? ""));
+    if (text) parts.unshift(text);
   }
-  return "";
+  return parts.join("\n\n").trim();
+}
+function runTranscript(messages) {
+  const lines = [];
+  for (const value of messages.slice(-24)) {
+    const message = value;
+    const type = message?.getType?.() ?? "ai";
+    if (type === "system") continue;
+    const text = visibleModelText2(contentText(message?.content ?? ""));
+    if (!text) continue;
+    const label = type === "tool" ? `TOOL ${message.name ?? ""}`.trim() : type === "human" ? "USER" : "ASSISTANT";
+    lines.push(`${label}: ${text.length > 1500 ? `${text.slice(0, 1500)}\u2026` : text}`);
+  }
+  return lines.join("\n\n");
 }
 function wrapVectraTool(definition, context2, events) {
   return tool$1(
@@ -102330,7 +102469,6 @@ function createVectraHostTools(definitions, execute, namespace = "vectra") {
 function createVectraDiscoveryTools(definitions, execute, namespace = "vectra") {
   const available = definitions.filter((item) => item.name !== "delegate_task");
   const byName = new Map(available.map((item) => [item.name, item]));
-  const discovered = /* @__PURE__ */ new Set();
   return [
     {
       name: `${namespace}_search_tools`,
@@ -102341,7 +102479,6 @@ function createVectraDiscoveryTools(definitions, execute, namespace = "vectra") 
       }),
       execute: ({ query, limit: limit2 }, _context) => {
         const matches = searchToolCatalog(available, String(query), typeof limit2 === "number" ? limit2 : 8);
-        for (const item of matches) discovered.add(item.name);
         return {
           tools: matches.map((item) => ({
             name: item.name,
@@ -102362,9 +102499,14 @@ function createVectraDiscoveryTools(definitions, execute, namespace = "vectra") 
         arguments: external_exports2.record(external_exports2.string(), external_exports2.unknown()).default({}).describe("Arguments for that capability, using workspace-relative paths.")
       }),
       execute: ({ name, arguments: input }, context2) => {
-        const toolName = String(name);
-        if (!byName.has(toolName)) throw new Error(`Unknown Vectra capability: ${toolName}`);
-        if (!discovered.has(toolName)) throw new Error(`Search for ${toolName} with vectra_search_tools before invoking it.`);
+        const requested = String(name);
+        const toolName = requested.startsWith(`${namespace}_`) ? requested.slice(namespace.length + 1) : requested;
+        if (!byName.has(toolName)) {
+          const closest = searchToolCatalog(available, toolName, 3).map((item) => item.name);
+          throw new Error(
+            `Unknown Vectra capability: ${toolName}.` + (closest.length ? ` Closest available capabilities: ${closest.join(", ")}.` : "") + " Call vectra_search_tools to list what exists."
+          );
+        }
         const args = input && typeof input === "object" && !Array.isArray(input) ? input : {};
         return execute(toolName, args, context2);
       }
@@ -103730,6 +103872,7 @@ var AgentController = class {
     const proposalIds = new Set(
       this.patches.list().filter((proposal) => proposal.status === "pending").map((proposal) => proposal.id)
     );
+    const workspaceMutations = [];
     if (config2.agentHarness === "deepagents") {
       const message2 = await this.runDeepAgent({
         task: request2.userText,
@@ -103741,6 +103884,7 @@ var AgentController = class {
         proposalIds,
         maxSteps: config2.maxAgentSteps,
         subagent: false,
+        workspaceMutations,
         preload: request2.mode !== "selection",
         provider,
         config: config2,
@@ -103752,7 +103896,7 @@ var AgentController = class {
         onProposalsChanged: request2.onProposalsChanged,
         onSubagentEvent: request2.onSubagentEvent
       });
-      return this.finish(message2, [...proposalIds]);
+      return this.finish(message2, [...proposalIds], workspaceMutations);
     }
     const message = await this.runLoop({
       task: request2.userText,
@@ -103764,6 +103908,7 @@ var AgentController = class {
       proposalIds,
       maxSteps: config2.maxAgentSteps,
       subagent: false,
+      workspaceMutations,
       preload: request2.mode !== "selection",
       provider,
       config: config2,
@@ -103774,7 +103919,7 @@ var AgentController = class {
       onPlanChanged: request2.onPlanChanged,
       onProposalsChanged: request2.onProposalsChanged
     });
-    return this.finish(message, [...proposalIds]);
+    return this.finish(message, [...proposalIds], workspaceMutations);
   }
   /** Run LangChain Deep Agents while keeping every real capability behind Vectra's tool registry. */
   async runDeepAgent(opts) {
@@ -103785,6 +103930,8 @@ var AgentController = class {
         if (event.tool === "write_todos") this.syncDeepTodos(event.input, opts.onTodosChanged);
       }
       if (event.type === "deepagent.delta" && typeof event.delta === "string") opts.onProgress?.("Generating response\u2026");
+      if (event.type === "deepagent.stalled_narration") opts.onProgress?.("That turn described an action without running it; asking again\u2026");
+      if (event.type === "deepagent.closing_answer.requested") opts.onProgress?.("Writing the final answer\u2026");
       if (event.type === "deepagent.subagent.started" && typeof event.role === "string") {
         opts.onSubagentEvent?.({ event: "started", role: event.role, description: typeof event.description === "string" ? event.description : void 0 });
       }
@@ -103819,6 +103966,7 @@ var AgentController = class {
       const result = await this.toolRegistry.execute(action, context2);
       if (result.effect === "workspace" && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
         successfulWorkspaceMutations++;
+        opts.workspaceMutations.push(describeWorkspaceMutation(action));
       }
       for (const id of result.proposalIds) opts.proposalIds.add(id);
       if (result.proposalIds.length) opts.onProposalsChanged?.();
@@ -103868,6 +104016,7 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
       context: executionContext,
       events,
       maxSteps: opts.maxSteps,
+      recursionLimit: opts.config.deepAgentRecursionLimit,
       systemPrompt: buildSystemPrompt(opts.mode),
       subagentSpecs
     });
@@ -103879,6 +104028,7 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
         signal: opts.signal
       });
       this.syncDeepTodos(result.state, opts.onTodosChanged);
+      if (result.stopReason) return result.text;
       if (successfulWorkspaceMutations === 0 && this.resolveProposals([...opts.proposalIds]).length === 0 && opts.mode === "agent" && (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))) {
         const existingPlan = this.plans.get();
         if (existingPlan?.status === "rejected") {
@@ -103913,7 +104063,7 @@ PLAN REJECTED: do not make workspace changes; ask what should be revised.`;
           observations: ["PLAN APPROVED: use real workspace tools now; do not merely describe the requested changes."]
         });
       }
-      return result.text || "Deep Agents completed the task without a final text response.";
+      return result.text || "I finished the run but the model returned no usable answer text. Nothing was written to your workspace by this message. Ask me to continue, or rephrase the request.";
     } catch (error51) {
       if (hostToolCalls === 0 && !opts.signal?.aborted) {
         opts.onProgress?.("Deep Agents unavailable for this model; using Vectra compatibility mode\u2026");
@@ -104044,6 +104194,7 @@ ERROR: delegate_task call limit (${MAX_DELEGATIONS_PER_RUN}) reached this run. P
             proposalIds: /* @__PURE__ */ new Set(),
             maxSteps: subBudget,
             subagent: true,
+            workspaceMutations: [],
             preload: false,
             provider: opts.provider,
             config: opts.config,
@@ -104069,6 +104220,8 @@ ${summary}`);
         if (result.proposalIds.length) opts.onProposalsChanged?.();
         if (result.effect !== "workspace" || /\b(?:ERROR|Denied):/i.test(result.observation)) {
           allActionsChangedWorkspace = false;
+        } else {
+          opts.workspaceMutations.push(describeWorkspaceMutation(action));
         }
         if (action.type === "todo_write") opts.onTodosChanged?.(this.todos.list());
       }
@@ -104140,6 +104293,10 @@ Reply to them directly and naturally.${nudge}`,
         ),
         model: config2.model,
         structured: false,
+        // Small talk gets no extended thinking pass. Without this a
+        // thinking-capable local model answered "hello" with a long hidden
+        // deliberation followed by an essay.
+        reasoning: "minimal",
         signal: request2.signal,
         onDelta
       });
@@ -104163,21 +104320,26 @@ Reply to them directly and naturally.${nudge}`,
    * conversational answer (e.g. "I can't generate images, but I could write
    * a script for that") does not need a disk-write disclaimer bolted onto it.
    */
-  finish(message, ids) {
+  finish(message, ids, workspaceMutations = []) {
     const proposals = this.resolveProposals(ids);
+    const applied = [...new Set(workspaceMutations)];
+    const appliedLog = applied.length ? `
+
+Modified in your workspace this run:
+${applied.map((entry) => `- ${entry}`).join("\n")}` : "";
     if (proposals.length) {
       const noun = proposals.length === 1 ? "change" : "changes";
-      const paths = proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}`).join("\n");
+      const paths = proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}${describeProposalLines(proposal)}`).join("\n");
       return {
         text: `Prepared ${proposals.length} proposed ${noun} for review. Nothing in this batch has been written to disk yet.
 
 ${paths}
 
-Use Accept or Accept all below to apply ${proposals.length === 1 ? "it" : "them"}.`,
+Use Accept or Accept all below to apply ${proposals.length === 1 ? "it" : "them"}.${appliedLog}`,
         proposals
       };
     }
-    return { text: message, proposals };
+    return { text: `${message}${appliedLog}`, proposals };
   }
   resolveProposals(ids) {
     return ids.map((id) => this.patches.get(id)).filter((proposal) => proposal?.status === "pending");
@@ -104236,6 +104398,38 @@ function effectiveCharBudget(config2) {
 }
 function actionFingerprint(action) {
   return JSON.stringify(action);
+}
+function describeWorkspaceMutation(action) {
+  switch (action.type) {
+    case "create_directory":
+      return `created folder ${action.path}`;
+    case "delete_directory":
+      return `deleted folder ${action.path}`;
+    case "rename_path":
+      return `renamed ${action.path} to ${action.destinationPath}`;
+    case "move_path":
+      return `moved ${action.path} to ${action.destinationPath}`;
+    case "copy_path":
+      return `copied ${action.path} to ${action.destinationPath}`;
+    default:
+      return `changed ${"path" in action && typeof action.path === "string" ? action.path : action.type}`;
+  }
+}
+function describeProposalLines(proposal) {
+  if (proposal.kind === "delete") return "";
+  const proposedLines = proposal.proposedContent.split(/\r?\n/);
+  if (proposal.kind === "create" || !proposal.baseContent) {
+    return proposedLines.length <= 1 ? " (line 1)" : ` (line 1 - line ${proposedLines.length})`;
+  }
+  const baseLines = proposal.baseContent.split(/\r?\n/);
+  const maxOverlap = Math.min(baseLines.length, proposedLines.length);
+  let prefix = 0;
+  while (prefix < maxOverlap && baseLines[prefix] === proposedLines[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < maxOverlap - prefix && baseLines[baseLines.length - 1 - suffix] === proposedLines[proposedLines.length - 1 - suffix]) suffix++;
+  const first = prefix + 1;
+  const last = Math.max(first, proposedLines.length - suffix);
+  return first === last ? ` (line ${first})` : ` (line ${first} - line ${last})`;
 }
 var CREATION_CLAIM_PATTERN = /\b(?:created|creating|generated|generating|built|building|wrote|written|writing|saved|saving|added|adding|implemented|implementing|set up|setting up|prepared|preparing|made|making)\b[\s\S]{0,80}\b(?:file|files|folder|folders|directory|directories|pipeline|pipelines|project|script|scripts|module|modules|component|components)\b/i;
 function claimsUnverifiedCreation(message) {
@@ -104323,7 +104517,7 @@ var AnthropicProvider = class {
   async complete(request2) {
     const content = [{ type: "text", text: request2.userPrompt }];
     for (const f3 of request2.attachments ?? []) append(content, f3);
-    const data = await fetchJson(`${this.baseUrl}/messages`, { method: "POST", headers: this.headers(), body: JSON.stringify({ model: request2.model, max_tokens: 8192, system: request2.systemPrompt, messages: [{ role: "user", content }] }), signal: request2.signal });
+    const data = await fetchJson(`${this.baseUrl}/messages`, { method: "POST", headers: this.headers(), body: JSON.stringify({ model: request2.model, max_tokens: request2.reasoning === "minimal" ? 1024 : 8192, system: request2.systemPrompt, messages: [{ role: "user", content }] }), signal: request2.signal });
     const text = (data.content ?? []).filter((p) => p.type === "text" && p.text).map((p) => p.text).join("\n").trim();
     if (!text) throw new Error("Anthropic returned no text output.");
     return text;
@@ -104362,7 +104556,7 @@ var GeminiProvider = class {
     const parts = [{ text: request2.userPrompt }];
     for (const f3 of request2.attachments ?? []) append2(parts, f3);
     const root = this.baseUrl.replace(/\/$/, "");
-    const data = await fetchJson(`${root}/models/${encodeURIComponent(request2.model)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": this.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ system_instruction: { parts: [{ text: request2.systemPrompt }] }, contents: [{ role: "user", parts }] }), signal: request2.signal });
+    const data = await fetchJson(`${root}/models/${encodeURIComponent(request2.model)}:generateContent`, { method: "POST", headers: { "x-goog-api-key": this.apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ system_instruction: { parts: [{ text: request2.systemPrompt }] }, contents: [{ role: "user", parts }], ...request2.reasoning === "minimal" ? { generationConfig: { maxOutputTokens: 1024, thinkingConfig: { thinkingBudget: 0 } } } : {} }), signal: request2.signal });
     const text = data.output_text?.trim() || (data.candidates ?? []).flatMap((c) => c.content?.parts ?? []).map((p) => p.text ?? "").join("\n").trim();
     if (!text) throw new Error("Gemini returned no text output.");
     return text;
@@ -104395,6 +104589,7 @@ ${f3.text}` });
 }
 
 // src/providers/OllamaProvider.ts
+var BRIEF_REPLY_TOKENS = 512;
 var OllamaProvider = class {
   constructor(baseUrl, deviceMode = "auto", contextSize = 8192, timeoutMs = 36e5) {
     this.baseUrl = baseUrl;
@@ -104409,7 +104604,10 @@ var OllamaProvider = class {
       // unless told otherwise, which is a frequent cause of degraded answers
       // and mid-conversation "forgetting" on local models.
       num_ctx: this.contextSize,
-      ...this.deviceMode === "cpu" ? { num_gpu: 0 } : {}
+      ...this.deviceMode === "cpu" ? { num_gpu: 0 } : {},
+      // Small talk gets a short leash so a thinking-capable model cannot turn
+      // "hello" into a page of prose.
+      ...request2.reasoning === "minimal" ? { num_predict: BRIEF_REPLY_TOKENS } : {}
     };
     const body = {
       model: request2.model,
@@ -104421,6 +104619,8 @@ var OllamaProvider = class {
       // which otherwise reloads the whole model from disk on the next turn.
       keep_alive: "30m",
       options,
+      // Ollama's own switch for models that support extended reasoning.
+      ...request2.reasoning === "minimal" ? { think: false } : {},
       // Conversational turns must not be forced into the tool envelope.
       ...request2.structured === false ? {} : { format: AGENT_ENVELOPE_SCHEMA }
     };
@@ -104482,25 +104682,26 @@ var OpenAICompatibleProvider = class {
     const userContent = [{ type: "text", text: request2.userPrompt }];
     for (const f3 of request2.attachments ?? []) append3(userContent, f3);
     const wantsEnvelope = this.structuredAgentJson && request2.structured !== false;
-    const body = { model: request2.model, messages: [{ role: "system", content: request2.systemPrompt }, { role: "user", content: userContent }], temperature: request2.structured === false ? 0.6 : 0.2, ...this.structuredAgentJson ? { cache_prompt: true } : {}, ...wantsEnvelope ? { response_format: { type: "json_object", schema: AGENT_ENVELOPE_SCHEMA } } : {} };
-    if (request2.structured === false && request2.onDelta) {
-      const text = await streamSse(`${this.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ ...body, stream: true }), signal: request2.signal }, { onDelta: request2.onDelta, idleTimeoutMs: this.timeoutMs, signal: request2.signal, allowInsecureTls: this.allowInsecureTls });
-      if (!text.trim()) throw new Error("OpenAI-compatible endpoint returned no text output.");
-      return text.trim();
-    }
-    try {
-      const data = await fetchJson(`${this.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(true), body: JSON.stringify(body), signal: request2.signal }, this.timeoutMs, this.allowInsecureTls);
+    const body = { model: request2.model, messages: [{ role: "system", content: request2.systemPrompt }, { role: "user", content: userContent }], temperature: request2.structured === false ? 0.6 : 0.2, ...this.structuredAgentJson ? { cache_prompt: true } : {}, ...wantsEnvelope ? { response_format: { type: "json_object", schema: AGENT_ENVELOPE_SCHEMA } } : {}, ...briefReplyOptions(request2) };
+    const send = async (payload) => {
+      if (request2.structured === false && request2.onDelta) {
+        const streamed = await streamSse(`${this.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ ...payload, stream: true }), signal: request2.signal }, { onDelta: request2.onDelta, idleTimeoutMs: this.timeoutMs, signal: request2.signal, allowInsecureTls: this.allowInsecureTls });
+        if (!streamed.trim()) throw new Error("OpenAI-compatible endpoint returned no text output.");
+        return streamed.trim();
+      }
+      const data = await fetchJson(`${this.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(true), body: JSON.stringify(payload), signal: request2.signal }, this.timeoutMs, this.allowInsecureTls);
       const text = data.choices?.[0]?.message?.content?.trim();
       if (!text) throw new Error("OpenAI-compatible endpoint returned no text output.");
       return text;
+    };
+    try {
+      return await send(body);
     } catch (error51) {
       if (wantsEnvelope && isGrammarInitError(error51)) {
         const { response_format: _dropped, ...unconstrained } = body;
-        const data = await fetchJson(`${this.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(true), body: JSON.stringify(unconstrained), signal: request2.signal }, this.timeoutMs, this.allowInsecureTls);
-        const text = data.choices?.[0]?.message?.content?.trim();
-        if (!text) throw new Error("OpenAI-compatible endpoint returned no text output.");
-        return text;
+        return send(unconstrained);
       }
+      if (hasBriefReplyHints(body) && isRejectedParameterError(error51)) return send(stripBriefReplyHints(body));
       throw error51;
     }
   }
@@ -104516,6 +104717,21 @@ var OpenAICompatibleProvider = class {
     return { ...ct ? { "Content-Type": "application/json" } : {}, ...this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {} };
   }
 };
+var BRIEF_REPLY_MAX_TOKENS = 512;
+function briefReplyOptions(request2) {
+  if (request2.reasoning !== "minimal") return {};
+  return { max_tokens: BRIEF_REPLY_MAX_TOKENS, reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false, thinking: false, reasoning_effort: "low" } };
+}
+function hasBriefReplyHints(body) {
+  return "chat_template_kwargs" in body || "reasoning_effort" in body;
+}
+function stripBriefReplyHints(body) {
+  const { chat_template_kwargs: _kwargs, reasoning_effort: _effort, ...rest } = body;
+  return rest;
+}
+function isRejectedParameterError(error51) {
+  return /HTTP (?:400|422)/.test(error51 instanceof Error ? error51.message : String(error51));
+}
 function isGrammarInitError(error51) {
   const message = error51 instanceof Error ? error51.message : String(error51);
   return /HTTP 400/.test(message) && /grammar|initialize samplers/i.test(message);

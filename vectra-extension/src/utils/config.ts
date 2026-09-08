@@ -38,6 +38,8 @@ export interface AgentConfiguration {
   anthropicBaseUrl: string;
   geminiBaseUrl: string;
   maxAgentSteps: number;
+  /** 0 keeps the harness default, derived from maxAgentSteps. */
+  deepAgentRecursionLimit: number;
   maxSubagentSteps: number;
   maxConcurrentSubagents: number;
   maxFileBytes: number;
@@ -80,6 +82,7 @@ export function getConfig(): AgentConfiguration {
     anthropicBaseUrl: trim(c.get<string>('anthropicBaseUrl', 'https://api.anthropic.com/v1')),
     geminiBaseUrl: trim(c.get<string>('geminiBaseUrl', 'https://generativelanguage.googleapis.com/v1beta')),
     maxAgentSteps: c.get<number>('maxAgentSteps', 12),
+    deepAgentRecursionLimit: c.get<number>('deepAgentRecursionLimit', 0),
     maxSubagentSteps: c.get<number>('maxSubagentSteps', 6),
     maxConcurrentSubagents: c.get<number>('maxConcurrentSubagents', 2),
     maxFileBytes: c.get<number>('maxFileBytes', 1_000_000),

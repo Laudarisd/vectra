@@ -9,7 +9,7 @@ export class GeminiProvider implements TextProvider{
   async complete(request:ProviderRequest):Promise<string>{
     const parts:Array<Record<string,unknown>>=[{text:request.userPrompt}]; for(const f of request.attachments??[])append(parts,f);
     const root=this.baseUrl.replace(/\/$/,'');
-    const data=await fetchJson<GeminiResponse>(`${root}/models/${encodeURIComponent(request.model)}:generateContent`,{method:'POST',headers:{'x-goog-api-key':this.apiKey,'Content-Type':'application/json'},body:JSON.stringify({system_instruction:{parts:[{text:request.systemPrompt}]},contents:[{role:'user',parts}]}),signal:request.signal});
+    const data=await fetchJson<GeminiResponse>(`${root}/models/${encodeURIComponent(request.model)}:generateContent`,{method:'POST',headers:{'x-goog-api-key':this.apiKey,'Content-Type':'application/json'},body:JSON.stringify({system_instruction:{parts:[{text:request.systemPrompt}]},contents:[{role:'user',parts}],...(request.reasoning==='minimal'?{generationConfig:{maxOutputTokens:1024,thinkingConfig:{thinkingBudget:0}}}:{})}),signal:request.signal});
     const text=data.output_text?.trim()||(data.candidates??[]).flatMap(c=>c.content?.parts??[]).map(p=>p.text??'').join('\n').trim(); if(!text)throw new Error('Gemini returned no text output.');return text;
   }
   async listModels(signal?:AbortSignal):Promise<ModelInfo[]>{try{return await this.listAt(`${this.baseUrl}/models`,signal)}catch(e){if(!this.baseUrl.endsWith('/v1'))throw e;return this.listAt(`${this.baseUrl.replace(/\/v1$/,'/v1beta')}/models`,signal)}}

@@ -9,7 +9,7 @@ export class AnthropicProvider implements TextProvider {
   async complete(request:ProviderRequest):Promise<string>{
     const content:Array<Record<string,unknown>>=[{type:'text',text:request.userPrompt}];
     for(const f of request.attachments??[]) append(content,f);
-    const data=await fetchJson<AnthropicMessageResponse>(`${this.baseUrl}/messages`,{method:'POST',headers:this.headers(),body:JSON.stringify({model:request.model,max_tokens:8192,system:request.systemPrompt,messages:[{role:'user',content}]}),signal:request.signal});
+    const data=await fetchJson<AnthropicMessageResponse>(`${this.baseUrl}/messages`,{method:'POST',headers:this.headers(),body:JSON.stringify({model:request.model,max_tokens:request.reasoning==='minimal'?1024:8192,system:request.systemPrompt,messages:[{role:'user',content}]}),signal:request.signal});
     const text=(data.content??[]).filter(p=>p.type==='text'&&p.text).map(p=>p.text).join('\n').trim(); if(!text)throw new Error('Anthropic returned no text output.'); return text;
   }
   async listModels(signal?:AbortSignal):Promise<ModelInfo[]>{const d=await fetchJson<AnthropicModelsResponse>(`${this.baseUrl}/models`,{headers:this.headers(false),signal});return(d.data??[]).map(m=>({id:m.id,label:m.display_name,detail:m.created_at}));}

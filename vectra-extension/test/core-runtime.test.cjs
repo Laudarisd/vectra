@@ -133,11 +133,24 @@ test('model-driven tool discovery exposes and gates canonical host capabilities'
   const discovery = createVectraDiscoveryTools(definitions, async (name, input) => { calls.push({ name, input }); return 'ok'; });
   const search = discovery.find((item) => item.name === 'vectra_search_tools');
   const invoke = discovery.find((item) => item.name === 'vectra_invoke_tool');
-  assert.throws(() => invoke.execute({ name: 'create_directory', arguments: { path: 'education' } }, {}), /Search/);
   const found = await search.execute({ query: 'create a folder' }, {});
   assert.ok(found.tools.some((item) => item.name === 'create_directory'));
   assert.equal(await invoke.execute({ name: 'create_directory', arguments: { path: 'education' } }, {}), 'ok');
-  assert.deepEqual(calls, [{ name: 'create_directory', input: { path: 'education' } }]);
+  // An exact catalog name works without a prior search: the catalog subset is
+  // the allowlist, and forcing a search first only produced error loops.
+  assert.equal(await invoke.execute({ name: 'read_file', arguments: { path: 'a.txt' } }, {}), 'ok');
+  // The vectra_ prefix a model habitually adds resolves to the same capability.
+  assert.equal(await invoke.execute({ name: 'vectra_read_file', arguments: { path: 'a.txt' } }, {}), 'ok');
+  assert.deepEqual(calls, [
+    { name: 'create_directory', input: { path: 'education' } },
+    { name: 'read_file', input: { path: 'a.txt' } },
+    { name: 'read_file', input: { path: 'a.txt' } }
+  ]);
+  // A wrong name fails with real alternatives, not a dead end.
+  assert.throws(
+    () => invoke.execute({ name: 'read_files_from_disk', arguments: {} }, {}),
+    /Unknown Vectra capability: read_files_from_disk\..*read_file/s
+  );
 });
 
 test('tool discovery understands common capability aliases without duplicating tools', () => {
@@ -293,4 +306,323 @@ test('shared tool catalog and factories serve extension and web adapters', async
   assert.deepEqual(await attachments[1].execute({ name: 'notes.txt' }, {}), {
     name: 'notes.txt', start: 0, end: 11, totalCharacters: 11, hasMore: false, content: 'shared text'
   });
+});
+
+// Regression: the default 12-step budget produced a LangGraph recursion limit
+// of 36, and a "go deeper" follow-up tripped it with a raw GraphRecursionError.
+test('the Deep Agents recursion limit leaves real room for a deep run', () => {
+  const { resolveRecursionLimit, isRecursionLimitError } = require('../build/core');
+
+  assert.ok(resolveRecursionLimit({ maxSteps: 12 }) >= 96, 'the default agent budget must not trip on a normal deep run');
+  assert.ok(resolveRecursionLimit({ maxSteps: 1 }) >= 96, 'a tiny step budget still needs a workable graph floor');
+  assert.ok(resolveRecursionLimit({ maxSteps: 30 }) > resolveRecursionLimit({ maxSteps: 12 }), 'a larger budget must scale up');
+
+  // An explicit setting wins over the derived value, in both directions.
+  assert.equal(resolveRecursionLimit({ maxSteps: 12, recursionLimit: 400 }), 400);
+  assert.equal(resolveRecursionLimit({ maxSteps: 12, recursionLimit: 50 }), 50);
+  assert.ok(resolveRecursionLimit({ maxSteps: 12, recursionLimit: 0 }) >= 96, '0 means "derive it"');
+
+  const raw = new Error('Recursion limit of 36 reached without hitting a stop condition.');
+  assert.ok(isRecursionLimitError(raw), 'LangGraph\'s message must be recognized even when the error class is lost');
+  const typed = new Error('boom');
+  typed.name = 'GraphRecursionError';
+  assert.ok(isRecursionLimitError(typed));
+  assert.equal(isRecursionLimitError(new Error('connection refused')), false);
+});
+
+test('a run that exhausts its step budget ends as an answer, not a raw graph error', async () => {
+  const { VectraDeepAgentRuntime } = require('../build/core');
+  const events = new AgentEventStream();
+  const seen = [];
+  events.subscribe((event) => seen.push(event.type));
+
+  const runtime = new VectraDeepAgentRuntime({
+    provider: { complete: async () => 'unused' },
+    model: 'local',
+    tools: [],
+    context: {},
+    events,
+    // Two graph steps is far below what any real turn needs, so the harness
+    // guard is guaranteed to fire.
+    recursionLimit: 8
+  });
+  // Replace the compiled graph with one that only ever raises LangGraph's guard.
+  const failure = new Error('Recursion limit of 8 reached without hitting a stop condition.');
+  failure.name = 'GraphRecursionError';
+  runtime.agent = { invoke: async () => { throw failure; } };
+
+  const result = await runtime.run({ task: 'go deeper' });
+  assert.equal(result.stopReason, 'recursion-limit');
+  assert.doesNotMatch(result.text, /reached without hitting a stop condition|Troubleshooting URL|langchain\.com/i);
+  assert.match(result.text, /step budget/i);
+  assert.ok(seen.includes('deepagent.completed'), 'the turn must complete rather than fail');
+  assert.ok(!seen.includes('deepagent.failed'));
+});
+
+// Regression: a model that narrates its next move and calls nothing used to end
+// the whole request, handing the user "Let me first read ChatViewProvider…" as
+// the final answer. Two prompts in a row produced the same stalled sentence.
+test('a narrated-but-uncalled tool is retried instead of ending the request', async () => {
+  const { announcesPendingAction } = require('../build/core');
+  const sent = [];
+  const provider = {
+    async completeWithTools(request) {
+      sent.push(request.messages.at(-1));
+      return sent.length === 1
+        ? { text: "I'll help you add the feature. Let me first read ChatViewProvider to understand the layout.", toolCalls: [] }
+        : { text: 'Reading it now.', toolCalls: [{ id: 'native-1', name: 'echo', args: { value: 'ChatViewProvider.ts' } }] };
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([
+    tool(async ({ value }) => value, { name: 'echo', description: 'Echo text', schema: z.object({ value: z.string() }) })
+  ]);
+
+  const response = await model.invoke([{ role: 'user', content: 'add a line suggestion feature' }]);
+  assert.equal(sent.length, 2, 'the stalled turn must be re-asked, not accepted as the answer');
+  assert.match(sent[1].content, /called no tool/i);
+  assert.equal(response.tool_calls[0].name, 'echo');
+
+  assert.ok(announcesPendingAction("Let me first read ChatViewProvider to understand the current UI."));
+  assert.ok(announcesPendingAction("I'll start by checking the button layout."));
+  assert.equal(announcesPendingAction('The suggestion provider lives in ChatViewProvider.ts and registers on activation.'), false);
+  assert.equal(announcesPendingAction(''), false);
+});
+
+test('a genuine final answer is never re-asked into an unnecessary tool call', async () => {
+  let calls = 0;
+  const provider = {
+    async completeWithTools() {
+      calls++;
+      return { text: 'ChatViewProvider.ts registers the webview and owns the button row.', toolCalls: [] };
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([
+    tool(async ({ value }) => value, { name: 'echo', description: 'Echo text', schema: z.object({ value: z.string() }) })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'where is the button row?' }]);
+  assert.equal(calls, 1);
+  assert.match(response.content, /ChatViewProvider\.ts/);
+});
+
+// Regression: when the closing turn came back empty (a local model whose whole
+// reply was internal reasoning, or one cut off mid-<think>), the final answer
+// used to be scavenged from a mid-run narration written before the tool ran.
+test('an empty closing turn is answered from the run, not from a stale narration', async () => {
+  const { VectraDeepAgentRuntime } = require('../build/core');
+  const events = new AgentEventStream();
+  const seen = [];
+  events.subscribe((event) => seen.push(event.type));
+
+  let closingPrompt = '';
+  const runtime = new VectraDeepAgentRuntime({
+    provider: {
+      async complete(request) {
+        closingPrompt = request.userPrompt;
+        return 'ChatViewProvider.ts holds the button row; the suggestion provider would register beside it.';
+      }
+    },
+    model: 'local',
+    tools: [],
+    context: {},
+    events
+  });
+  const message = (type, content, name) => ({ content, name, getType: () => type });
+  runtime.agent = {
+    invoke: async () => ({
+      messages: [
+        message('human', 'add a line suggestion feature'),
+        message('ai', 'Reading ChatViewProvider to understand current button layout'),
+        message('tool', 'export class ChatViewProvider { /* button row */ }', 'vectra_read_file'),
+        message('ai', '')
+      ]
+    })
+  };
+
+  const result = await runtime.run({ task: 'add a line suggestion feature' });
+  assert.doesNotMatch(result.text, /^Reading ChatViewProvider/, 'a mid-run narration is not an answer');
+  assert.match(result.text, /button row/);
+  assert.match(closingPrompt, /vectra_read_file/, 'the closing answer must be grounded in the real tool output');
+  assert.ok(seen.includes('deepagent.closing_answer.requested'));
+});
+
+test('a real closing answer is used as-is, with no extra model call', async () => {
+  const { VectraDeepAgentRuntime } = require('../build/core');
+  let completions = 0;
+  const runtime = new VectraDeepAgentRuntime({
+    provider: { async complete() { completions++; return 'unused'; } },
+    model: 'local',
+    tools: [],
+    context: {}
+  });
+  const message = (type, content) => ({ content, getType: () => type });
+  runtime.agent = {
+    invoke: async () => ({
+      messages: [
+        message('human', 'add a line suggestion feature'),
+        message('ai', 'Reading ChatViewProvider'),
+        message('tool', 'file contents'),
+        message('ai', 'I registered an InlineCompletionItemProvider in extension.ts.')
+      ]
+    })
+  };
+  const result = await runtime.run({ task: 'add a line suggestion feature' });
+  assert.equal(result.text, 'I registered an InlineCompletionItemProvider in extension.ts.');
+  assert.equal(completions, 0);
+});
+
+// Regression suite for the "announce and stop" failure: the model narrated its
+// next action ("Let me first read the ChatViewProvider…"), called no tool,
+// LangGraph ended the run, and the user received the narration as the answer.
+test('a narrated-but-uncalled action is re-asked once and turns into a real tool call', async () => {
+  const prompts = [];
+  const provider = {
+    async complete(request) {
+      prompts.push(request.userPrompt);
+      // First turn stalls; the nudged retry actually calls the tool.
+      if (prompts.length === 1) {
+        return JSON.stringify({ message: "I'll help you add that. Let me first read the ChatViewProvider to understand the current UI structure.", actions: [] });
+      }
+      return JSON.stringify({ message: 'Reading it now.', actions: [{ type: 'echo', value: 'ChatViewProvider.ts' }] });
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([
+    tool(async ({ value }) => value, { name: 'echo', description: 'Echo text', schema: z.object({ value: z.string() }) })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'add a line suggestion feature' }]);
+  assert.equal(prompts.length, 2, 'the stalled turn must be retried exactly once');
+  assert.match(prompts[1], /called no tool, so nothing happened/i, 'the retry must carry the act-or-answer instruction');
+  assert.equal(response.tool_calls[0].name, 'echo');
+});
+
+test('a complete answer with no pending-action narration is never re-asked', async () => {
+  let calls = 0;
+  const provider = {
+    async complete() {
+      calls++;
+      return JSON.stringify({ message: 'The button lives in media/main.js; add a new .mode control beside Ask and Agent.', actions: [] });
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([
+    tool(async ({ value }) => value, { name: 'echo', description: 'Echo text', schema: z.object({ value: z.string() }) })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'where is the button defined?' }]);
+  assert.equal(calls, 1, 'a real answer must not trigger the stall retry');
+  assert.equal(response.tool_calls.length, 0);
+});
+
+test('an empty closing turn is answered from the run transcript, never from a stale narration', async () => {
+  const { HumanMessage, AIMessage, ToolMessage } = require('@langchain/core/messages');
+  const completions = [];
+  const runtime = new VectraDeepAgentRuntime({
+    provider: {
+      async complete(request) {
+        completions.push(request);
+        return 'I inspected ChatViewProvider.ts; the mode buttons are declared in media/main.js.';
+      }
+    },
+    model: 'local-test',
+    tools: [],
+    context: {}
+  });
+  // The graph finished, but its closing AI turn is empty (the model's whole
+  // reply was internal reasoning). The mid-run narration must not be reused.
+  runtime.agent = {
+    invoke: async () => ({
+      messages: [
+        new HumanMessage('how do the buttons work?'),
+        new AIMessage({ content: 'Reading ChatViewProvider to understand current button layout and UI structure', tool_calls: [{ id: 't1', name: 'vectra_read_file', args: {}, type: 'tool_call' }] }),
+        new ToolMessage({ content: 'file contents…', tool_call_id: 't1', name: 'vectra_read_file' }),
+        new AIMessage('')
+      ]
+    })
+  };
+  const result = await runtime.run({ task: 'how do the buttons work?' });
+  assert.equal(completions.length, 1, 'the runtime must request one closing answer');
+  assert.match(completions[0].userPrompt, /WORK COMPLETED THIS RUN/);
+  assert.equal(result.text, 'I inspected ChatViewProvider.ts; the mode buttons are declared in media/main.js.');
+  assert.notEqual(result.text, 'Reading ChatViewProvider to understand current button layout and UI structure');
+});
+
+test('assistant prose written after the last tool result is the answer, with no extra model call', async () => {
+  const { HumanMessage, AIMessage, ToolMessage } = require('@langchain/core/messages');
+  let extraCalls = 0;
+  const runtime = new VectraDeepAgentRuntime({
+    provider: { async complete() { extraCalls++; return 'unused'; } },
+    model: 'local-test',
+    tools: [],
+    context: {}
+  });
+  runtime.agent = {
+    invoke: async () => ({
+      messages: [
+        new HumanMessage('how do the buttons work?'),
+        new AIMessage({ content: 'Reading the file', tool_calls: [{ id: 't1', name: 'vectra_read_file', args: {}, type: 'tool_call' }] }),
+        new ToolMessage({ content: 'file contents…', tool_call_id: 't1', name: 'vectra_read_file' }),
+        new AIMessage('The mode buttons are plain .mode controls wired in media/main.js.')
+      ]
+    })
+  };
+  const result = await runtime.run({ task: 'how do the buttons work?' });
+  assert.equal(result.text, 'The mode buttons are plain .mode controls wired in media/main.js.');
+  assert.equal(extraCalls, 0, 'a normal run must not pay for a closing-answer completion');
+});
+
+// Regression suite for "I'm encountering tool errors when trying to read
+// files": in discovery mode a model that guessed a direct capability name
+// (vectra_read_file) hit LangGraph's unknown-tool error and spiralled until a
+// guard killed the run with a raw error string.
+test('a guessed direct capability name is rerouted through vectra_invoke_tool (native tool calling)', async () => {
+  const provider = {
+    async complete() { throw new Error('fallback path must not be used'); },
+    async completeWithTools() {
+      return { text: 'Reading the file.', toolCalls: [{ id: 'n1', name: 'vectra_read_file', args: { path: 'package.json' } }] };
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([
+    tool(async () => 'ok', { name: 'vectra_search_tools', description: 'search', schema: z.object({ query: z.string() }) }),
+    tool(async () => 'ok', { name: 'vectra_invoke_tool', description: 'invoke', schema: z.object({ name: z.string() }) })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'analyze package.json' }]);
+  assert.equal(response.tool_calls[0].name, 'vectra_invoke_tool');
+  assert.deepEqual(response.tool_calls[0].args, { name: 'read_file', arguments: { path: 'package.json' } });
+});
+
+test('a guessed capability in a JSON action envelope is rerouted instead of silently dropped', async () => {
+  const provider = {
+    async complete() {
+      return JSON.stringify({ message: 'Reading it.', actions: [{ type: 'read_file', path: 'package.json' }] });
+    }
+  };
+  const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([
+    tool(async () => 'ok', { name: 'vectra_search_tools', description: 'search', schema: z.object({ query: z.string() }) }),
+    tool(async () => 'ok', { name: 'vectra_invoke_tool', description: 'invoke', schema: z.object({ name: z.string() }) })
+  ]);
+  const response = await model.invoke([{ role: 'user', content: 'analyze package.json' }]);
+  assert.equal(response.tool_calls.length, 1, 'the guessed action must not be dropped');
+  assert.equal(response.tool_calls[0].name, 'vectra_invoke_tool');
+  assert.deepEqual(response.tool_calls[0].args, { name: 'read_file', arguments: { path: 'package.json' } });
+});
+
+test('the identical-tool-call guard ends the run as an explanation, not a raw error', async () => {
+  const events = new AgentEventStream();
+  const seen = [];
+  events.subscribe((event) => seen.push(event.type));
+  const runtime = new VectraDeepAgentRuntime({
+    provider: { async complete() { return 'unused'; } },
+    model: 'local-test',
+    tools: [],
+    context: {},
+    events
+  });
+  runtime.agent = {
+    invoke: async () => {
+      throw new Error('REPEATED_TOOL_LOOP: The model called the same tool with identical arguments 3 times.');
+    }
+  };
+  const result = await runtime.run({ task: 'analyze the project' });
+  assert.equal(result.stopReason, 'tool-loop');
+  assert.doesNotMatch(result.text, /REPEATED_TOOL_LOOP/);
+  assert.match(result.text, /same tool with the same arguments/i);
+  assert.ok(seen.includes('deepagent.completed'));
+  assert.ok(!seen.includes('deepagent.failed'));
 });

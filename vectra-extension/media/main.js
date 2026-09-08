@@ -19,6 +19,10 @@
   let resolvedPlans = [];
   const collapsedPlanIds = new Set();
   const dismissedPlanIds = new Set();
+  // Signature of the checklist the user closed. The panel stays hidden until
+  // the agent actually changes the list, so dismissing it once does not hide
+  // real progress on the next step.
+  let dismissedTodoSignature = '';
   let state = {
     messages: [], history: [], proposals: [], todos: [], plan: null, attachments: [], busy: false,
     provider: 'llamaCpp', model: '', localModelName: '', localModelRunning: false,
@@ -92,6 +96,13 @@
         collapsedPlanIds.clear();
         dismissedPlanIds.clear();
       }
+      // Only a brand-new request re-opens a closed checklist. Clearing this on
+      // every idle state message made the panel pop back the moment the run
+      // finished, which is precisely what the close button is for.
+      if (state.busy && !wasBusy) dismissedTodoSignature = '';
+      // A finished run auto-hides its checklist: the final summary message now
+      // carries what was done, so the panel would only repeat completed items.
+      if (wasBusy && !state.busy) dismissedTodoSignature = todoSignature(state.todos);
       streamId = '';
       streamText = '';
       if (editingMessageId && !state.messages.some((item) => item.id === editingMessageId)) {
@@ -427,15 +438,36 @@
     renderMessages();
   }
 
-  /** A live checklist for multi-step tasks. Shown whenever the agent has set one, independent of busy/idle. */
+  /** Identity of a checklist: closing it must only hide that exact list. */
+  function todoSignature(todos) {
+    return (todos || []).map((item) => `${item.id}:${item.status}:${item.content}`).join('|');
+  }
+
+  /**
+   * A live checklist for multi-step tasks. Shown whenever the agent has set
+   * one, independent of busy/idle. The close button hides the current list
+   * only — the panel comes back as soon as the agent updates it.
+   */
   function renderTodos(container) {
     if (!state.todos || !state.todos.length) return;
+    const signature = todoSignature(state.todos);
+    if (signature === dismissedTodoSignature) return;
     const wrap = document.createElement('div');
     wrap.className = 'todo-panel';
+    const header = document.createElement('div');
+    header.className = 'todo-header';
     const title = document.createElement('div');
     title.className = 'todo-title';
     title.textContent = 'Update Todos';
-    wrap.appendChild(title);
+    const close = button('Close', 'plan-icon-button plan-cancel-button', () => {
+      dismissedTodoSignature = signature;
+      renderMessages();
+    });
+    close.textContent = '×';
+    close.title = 'Hide this checklist';
+    close.setAttribute('aria-label', close.title);
+    header.append(title, close);
+    wrap.appendChild(header);
     for (const item of state.todos) {
       const row = document.createElement('div');
       row.className = `todo-item ${item.status}`;

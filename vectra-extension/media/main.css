@@ -93,7 +93,10 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .activity-group>.activity-step{margin-left:4px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .todo-panel{display:flex;flex-direction:column;gap:6px;margin:9px 0;padding:9px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;background:var(--vscode-editorWidget-background)}
-.todo-title{font-size:.8em;font-weight:700;letter-spacing:.04em;text-transform:uppercase;opacity:.72;margin-bottom:2px}
+.todo-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
+.todo-title{font-size:.8em;font-weight:700;letter-spacing:.04em;text-transform:uppercase;opacity:.72}
+.todo-header .plan-icon-button{width:20px;height:20px;font-size:13px;margin:-3px -3px -3px 0;opacity:.7}
+.todo-header .plan-icon-button:hover{opacity:1}
 .todo-item{display:flex;align-items:center;gap:8px;font-size:.92em}
 .todo-item.completed{opacity:.55;text-decoration:line-through}
 .todo-bullet{width:12px;height:12px;flex:0 0 12px;border:1.5px solid var(--vscode-widget-border,currentColor);border-radius:50%;opacity:.7}

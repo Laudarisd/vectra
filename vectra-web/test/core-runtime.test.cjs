@@ -177,11 +177,18 @@ test('model-driven tool discovery exposes and gates canonical host capabilities'
   const discovery = createVectraDiscoveryTools(definitions, async (name, input) => { calls.push({ name, input }); return 'ok'; });
   const search = discovery.find((item) => item.name === 'vectra_search_tools');
   const invoke = discovery.find((item) => item.name === 'vectra_invoke_tool');
-  assert.throws(() => invoke.execute({ name: 'create_directory', arguments: { path: 'education' } }, {}), /Search/);
   const found = await search.execute({ query: 'create a folder' }, {});
   assert.ok(found.tools.some((item) => item.name === 'create_directory'));
   assert.equal(await invoke.execute({ name: 'create_directory', arguments: { path: 'education' } }, {}), 'ok');
-  assert.deepEqual(calls, [{ name: 'create_directory', input: { path: 'education' } }]);
+  // An exact catalog name works without a prior search: the catalog subset is
+  // the allowlist, and forcing a search first only produced error loops.
+  assert.equal(await invoke.execute({ name: 'vectra_read_file', arguments: { path: 'a.txt' } }, {}), 'ok');
+  assert.deepEqual(calls, [
+    { name: 'create_directory', input: { path: 'education' } },
+    { name: 'read_file', input: { path: 'a.txt' } }
+  ]);
+  // A wrong name fails with real alternatives, not a dead end.
+  assert.throws(() => invoke.execute({ name: 'read_files_from_disk', arguments: {} }, {}), /Unknown Vectra capability.*read_file/s);
 });
 
 test('tool discovery understands common capability aliases without duplicating tools', () => {

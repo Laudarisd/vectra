@@ -42,3 +42,72 @@ test('llama.cpp provider sends native functions and parses tool calls', async ()
     assert.deepEqual(result.toolCalls[0], { id: 'call-1', name: 'create_directory', args: { path: 'education' } });
   });
 });
+
+test('a conversational turn asks local providers to skip extended thinking', async () => {
+  await withServer((req, body) => {
+    if (req.url === '/v1/chat/completions') {
+      assert.equal(body.chat_template_kwargs.enable_thinking, false);
+      assert.equal(body.reasoning_effort, 'low');
+      assert.ok(body.max_tokens > 0 && body.max_tokens <= 1024);
+      return { body: { choices: [{ message: { content: 'hi there' } }] } };
+    }
+    return { body: { data: [] } };
+  }, async (base) => {
+    const provider = new OpenAICompatibleProvider(`${base}/v1`, undefined, true);
+    assert.equal(
+      await provider.complete({ systemPrompt: 's', userPrompt: 'hello', model: 'm', structured: false, reasoning: 'minimal' }),
+      'hi there'
+    );
+  });
+});
+
+test('a working turn keeps full reasoning and no output cap', async () => {
+  await withServer((req, body) => {
+    if (req.url === '/v1/chat/completions') {
+      assert.equal(body.chat_template_kwargs, undefined);
+      assert.equal(body.reasoning_effort, undefined);
+      assert.equal(body.max_tokens, undefined);
+      return { body: { choices: [{ message: { content: '{"message":"ok","actions":[],"done":true}' } }] } };
+    }
+    return { body: { data: [] } };
+  }, async (base) => {
+    const provider = new OpenAICompatibleProvider(`${base}/v1`, undefined, true);
+    assert.match(await provider.complete({ systemPrompt: 's', userPrompt: 'u', model: 'm' }), /"done":true/);
+  });
+});
+
+// A gateway that rejects unknown fields must still answer a greeting: the
+// thinking hints are an optimization, never a hard requirement.
+test('thinking-suppression hints are dropped when the endpoint rejects them', async () => {
+  let attempts = 0;
+  await withServer((req, body) => {
+    if (req.url !== '/v1/chat/completions') return { body: { data: [] } };
+    attempts++;
+    if (body.chat_template_kwargs) return { status: 400, body: { error: 'unknown field chat_template_kwargs' } };
+    return { body: { choices: [{ message: { content: 'hi there' } }] } };
+  }, async (base) => {
+    const provider = new OpenAICompatibleProvider(`${base}/v1`, undefined, true);
+    assert.equal(
+      await provider.complete({ systemPrompt: 's', userPrompt: 'hello', model: 'm', structured: false, reasoning: 'minimal' }),
+      'hi there'
+    );
+    assert.equal(attempts, 2);
+  });
+});
+
+test('Ollama turns its own thinking switch off for small talk', async () => {
+  await withServer((req, body) => {
+    if (req.url === '/api/chat') {
+      assert.equal(body.think, false);
+      assert.ok(body.options.num_predict > 0);
+      return { body: { message: { content: 'ollama-ok' } } };
+    }
+    return { status: 404, body: {} };
+  }, async (base) => {
+    const provider = new OllamaProvider(base);
+    assert.equal(
+      await provider.complete({ systemPrompt: 's', userPrompt: 'hello', model: 'm', structured: false, reasoning: 'minimal' }),
+      'ollama-ok'
+    );
+  });
+});

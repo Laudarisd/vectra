@@ -17,9 +17,9 @@ export function createVectraHostTools<TContext>(
 
 /**
  * Keep the native tool prompt small while leaving routing decisions with the
- * model. The model searches the canonical catalog, then invokes only a tool it
- * discovered during this run. Host approval and permission checks remain in
- * the original executor.
+ * model: it searches the canonical catalog by intent, then invokes a capability
+ * by exact name. The catalog subset passed in is the allowlist; host approval
+ * and permission checks remain in the original executor.
  */
 export function createVectraDiscoveryTools<TContext>(
   definitions: readonly VectraToolDefinition[],
@@ -28,7 +28,6 @@ export function createVectraDiscoveryTools<TContext>(
 ): VectraDeepTool<TContext>[] {
   const available = definitions.filter((item) => item.name !== 'delegate_task');
   const byName = new Map(available.map((item) => [item.name, item]));
-  const discovered = new Set<string>();
   return [
     {
       name: `${namespace}_search_tools`,
@@ -39,7 +38,6 @@ export function createVectraDiscoveryTools<TContext>(
       }),
       execute: ({ query, limit }, _context) => {
         const matches = searchToolCatalog(available, String(query), typeof limit === 'number' ? limit : 8);
-        for (const item of matches) discovered.add(item.name);
         return {
           tools: matches.map((item) => ({
             name: item.name,
@@ -60,9 +58,21 @@ export function createVectraDiscoveryTools<TContext>(
         arguments: z.record(z.string(), z.unknown()).default({}).describe('Arguments for that capability, using workspace-relative paths.')
       }),
       execute: ({ name, arguments: input }, context) => {
-        const toolName = String(name);
-        if (!byName.has(toolName)) throw new Error(`Unknown Vectra capability: ${toolName}`);
-        if (!discovered.has(toolName)) throw new Error(`Search for ${toolName} with vectra_search_tools before invoking it.`);
+        // Models guess plausible spellings under pressure ("vectra_read_file"
+        // for read_file), and an exact catalog name needs no search ceremony:
+        // byName is the per-agent allowlist and the host executor still applies
+        // every permission, plan, and review check. Forcing a search first only
+        // manufactured "Search for X before invoking it" error loops.
+        const requested = String(name);
+        const toolName = requested.startsWith(`${namespace}_`) ? requested.slice(namespace.length + 1) : requested;
+        if (!byName.has(toolName)) {
+          const closest = searchToolCatalog(available, toolName, 3).map((item) => item.name);
+          throw new Error(
+            `Unknown Vectra capability: ${toolName}.` +
+            (closest.length ? ` Closest available capabilities: ${closest.join(', ')}.` : '') +
+            ' Call vectra_search_tools to list what exists.'
+          );
+        }
         const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
         return execute(toolName, args, context);
       }

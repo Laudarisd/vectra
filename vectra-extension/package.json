@@ -2,7 +2,7 @@
   "name": "vectra-ai",
   "displayName": "Vectra AI",
   "description": "A fast local AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
-  "version": "1.1.5",
+  "version": "1.1.7",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -275,7 +275,7 @@
           "default": 0,
           "minimum": 0,
           "maximum": 1000,
-          "description": "Deep Agents only: hard ceiling on internal graph steps for one request. Leave at 0 to derive it from vectra.maxAgentSteps. Raise it if long research runs stop early with a step-budget message."
+          "description": "Deep Agents only: optional hard ceiling on internal graph steps for one request. 0 (the default) means unlimited — runs continue until the agent finishes or you cancel. Set a positive number only if you want runs cut off at a fixed budget."
         },
         "vectra.maxSubagentSteps": {
           "type": "number",

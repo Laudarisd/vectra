@@ -89,6 +89,10 @@ const WORK_SIGNALS: readonly RegExp[] = [
   /```/,
   /[/\\]/,
   /\w\.[a-z0-9]{1,6}\b/i,
+  // Real-world, real-time questions (weather, time, news, prices) are work:
+  // only the agent path has web_search/web_fetch, so the chat path could
+  // otherwise answer "I can't know that" while the tools sit unused.
+  /\b(?:weather|forecast|temperature|news|headlines?|stock\s+price|exchange\s+rate|price\s+of|what\s+time|current\s+time|time\s+now|date\s+today|today'?s\s+date|latest\s+version)\b/,
   /\b(?:continue|proceed|go\s+ahead|carry\s+on|keep\s+going|do\s+it|next\s+step|resume|retry|again)\b/,
   /\b(?:create|make|build|write|generate|add|implement|fix|refactor|update|edit|modify|change|delete|remove|rename|move|copy|run|execute|test|install|debug|explain|describe|review|analyz\w*|summar\w*|list|find|search|show|open|read|check|convert|export|import|translate|document|count|compare|deploy|commit)\b/,
   /\b(?:file|files|folder|folders|directory|directories|repo|repository|project|codebase|workspace|code|function|class|method|module|script|package|component|library|api|endpoint|bug|error|exception|warning|test|tests|readme|config|dependency|dependencies)\b/

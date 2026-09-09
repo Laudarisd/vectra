@@ -34,8 +34,8 @@ export const VECTRA_TOOL_DEFINITIONS = [
   tool('run_tests', 'Run Tests', 'Request approval to run tests.', 'execute'),
   tool('todo_write', 'Update Task Checklist', 'Create or update a live checklist.', 'coordination'),
   tool('propose_plan', 'Propose Plan', 'Propose a plan for user approval before writes or execution.', 'coordination'),
-  tool('web_search', 'Search the Web', 'Search the public web through Vectra network policy.', 'network'),
-  tool('web_fetch', 'Fetch Web Page', 'Fetch readable text from a public URL through Vectra network policy.', 'network'),
+  tool('web_search', 'Search the Web', 'Search the public web for current, real-world information (docs, news, weather, prices) through Vectra network policy.', 'network', 'all'),
+  tool('web_fetch', 'Fetch Web Page', 'Fetch readable text from a public URL, for live data and documentation, through Vectra network policy.', 'network', 'all'),
   tool('delegate_task', 'Delegate Task', 'Delegate an isolated exploration task.', 'coordination')
 ] as const;
 

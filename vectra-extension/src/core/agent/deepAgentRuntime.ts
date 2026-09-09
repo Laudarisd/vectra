@@ -92,20 +92,18 @@ export interface VectraDeepAgentRunResult {
 }
 
 /**
- * LangGraph counts every node transition, not every agent turn. One Vectra step
- * is really a model node, a tool node, and the planning/subagent middleware
- * around them, so the old `maxSteps * 3` under-counted by roughly half: the
- * default 12-step budget produced a limit of 36 and any "go deeper" follow-up
- * tripped `GraphRecursionError` mid-run. These give a normal deep run headroom
- * while still bounding a runaway graph.
+ * Deep runs are unbounded by default: LangGraph counts every node transition,
+ * so any derived budget (the old maxSteps-based formula included) ended real
+ * work mid-run. A run is still protected from a genuinely stuck model by the
+ * repeated-tool-loop guard and user cancellation; an explicit recursionLimit
+ * remains available as an opt-in cap.
  */
-const GRAPH_STEPS_PER_AGENT_STEP = 8;
-const MIN_GRAPH_RECURSION_LIMIT = 120;
+const UNBOUNDED_GRAPH_RECURSION_LIMIT = Number.MAX_SAFE_INTEGER;
 
 export function resolveRecursionLimit(options: { maxSteps?: number; recursionLimit?: number }): number {
   const explicit = Math.floor(options.recursionLimit ?? 0);
   if (explicit > 0) return Math.max(8, explicit);
-  return Math.max(MIN_GRAPH_RECURSION_LIMIT, (options.maxSteps ?? 20) * GRAPH_STEPS_PER_AGENT_STEP);
+  return UNBOUNDED_GRAPH_RECURSION_LIMIT;
 }
 
 /** The adapter's own guard against a model re-issuing one identical tool call forever. */
@@ -154,7 +152,7 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
         'Use Vectra host tools for real workspace files, Git, commands, documents, and network access.',
         'When vectra_search_tools is available, search by your intent and then call vectra_invoke_tool with an exact returned capability name.',
         'When vectra_list_attachments is available, uploaded PDFs/documents are attachments, not workspace or scratch files. Use vectra_list_attachments, vectra_search_attachments, vectra_read_attachment, or vectra_read_files.',
-        'The built-in filesystem is scratch space only. Never claim a scratch-file write changed the user project.',
+        'The built-in filesystem is scratch space only. Never claim a scratch-file write changed the user project. To create or change a real project file, call the Vectra host file tools (propose_file, create_file, propose_files — directly or through vectra_invoke_tool), never the scratch write_file.',
         'Host tools enforce plans, human review, and approvals; do not attempt to bypass them.',
         'Never end a turn with only a statement of what you are about to do. Either call the tool in that same turn, or give the complete answer.'
       ].filter(Boolean).join('\n\n')
@@ -298,7 +296,7 @@ function recursionLimitSummary(latestModelText: string, limit: number): string {
     latestModelText,
     `I stopped here because this run hit its step budget (${limit} internal steps), so I did not get to a final answer. ` +
     'Ask me to continue and I will pick up from this point, or narrow the request to one area so it fits. ' +
-    'To allow longer runs, raise "vectra.maxAgentSteps" (or set "vectra.deepAgentRecursionLimit" directly) in Settings.'
+    'To allow longer runs, raise "vectra.deepAgentRecursionLimit" in Settings, or set it to 0 to remove the cap entirely.'
   );
 }
 
@@ -351,7 +349,20 @@ export class VectraLangChainChatModel extends BaseChatModel<BaseChatModelCallOpt
   }
 
   async _generate(messages: BaseMessage[], options: BaseChatModelCallOptions): Promise<ChatResult> {
-    const turn = await this.respond(messages, options);
+    let turn = await this.respond(messages, options);
+
+    // A JSON tool envelope that failed to parse is a formatting accident, not
+    // an answer. Ending the run here used to hand the user the raw blob and
+    // silently drop the requested tool call (typically a large file write).
+    // Re-ask once with explicit escaping rules; if that also fails, end with
+    // an honest sentence instead of the blob.
+    if (turn.malformed) {
+      this.events?.emit({ type: 'deepagent.malformed_envelope' });
+      const retried = await this.respond([...messages, new HumanMessage(RESEND_VALID_JSON_NUDGE)], options);
+      turn = retried.malformed
+        ? { text: turn.text || retried.text || MALFORMED_ENVELOPE_APOLOGY, calls: [] }
+        : retried;
+    }
 
     // LangGraph ends the run as soon as a turn carries no tool call, so a model
     // that narrates its next move ("Let me first read ChatViewProvider…") and
@@ -460,6 +471,8 @@ interface ParsedToolCall {
 interface ParsedTurn {
   text: string;
   calls: ParsedToolCall[];
+  /** True when the turn was a JSON tool envelope that could not be parsed even after repair — the caller must retry, never show it. */
+  malformed?: boolean;
 }
 
 function withCallId(call: { id?: string; name: string; args: Record<string, unknown> }): ParsedToolCall {
@@ -490,6 +503,49 @@ function rerouteUnknownToolCalls(calls: ParsedToolCall[], bound: ReadonlySet<str
   });
 }
 
+const RESEND_VALID_JSON_NUDGE =
+  'Your last reply was a JSON tool envelope that could not be parsed, so the tool did NOT run and nothing was written. ' +
+  'Resend it now as exactly one strictly valid JSON object: {"message":"...","tool_calls":[{"name":"tool_name","args":{...}}]}. ' +
+  'Inside every string value escape newlines as \\n, tabs as \\t, and double quotes as \\". ' +
+  'Output nothing outside the JSON object.';
+
+const MALFORMED_ENVELOPE_APOLOGY =
+  'I prepared a tool call but produced invalid JSON twice, so that step did not run and nothing was written by it. ' +
+  'Ask me to retry that step and I will redo it.';
+
+/**
+ * Rewrites literal control characters that appear inside JSON string literals
+ * into their escaped forms so JSON.parse can accept the envelope. Characters
+ * outside strings are left untouched, so already-valid JSON passes unchanged.
+ */
+function escapeControlCharactersInJsonStrings(candidate: string): string {
+  let repaired = '';
+  let inString = false;
+  let escaped = false;
+  for (const character of candidate) {
+    if (!inString) {
+      if (character === '"') inString = true;
+      repaired += character;
+      continue;
+    }
+    if (escaped) { repaired += character; escaped = false; continue; }
+    if (character === '\\') { repaired += character; escaped = true; continue; }
+    if (character === '"') { inString = false; repaired += character; continue; }
+    if (character === '\n') { repaired += '\\n'; continue; }
+    if (character === '\r') { repaired += '\\r'; continue; }
+    if (character === '\t') { repaired += '\\t'; continue; }
+    repaired += character;
+  }
+  return repaired;
+}
+
+/** Best-effort "message" field of a broken envelope, for progress display only. */
+function extractEnvelopeMessageField(candidate: string): string {
+  const match = candidate.match(/"message"\s*:\s*"((?:\\.|[^"\\])*)"/i);
+  if (!match) return '';
+  try { return JSON.parse(`"${match[1]}"`) as string; } catch { return ''; }
+}
+
 const ACT_OR_ANSWER_NUDGE =
   'You described what you were about to do but called no tool, so nothing happened. ' +
   'Call the tool now, in this turn, to actually do it. ' +
@@ -510,10 +566,19 @@ const PENDING_ACTION_PATTERN =
 
 const MAX_STALL_NARRATION_CHARACTERS = 900;
 
+/**
+ * A turn that opens with a bare gerund is the same stall in different
+ * clothing: "Creating README.md with CNN information..." announces the work
+ * as if it were happening, calls nothing, and used to end the run with that
+ * sentence as the final answer.
+ */
+const GERUND_OPENER_PATTERN =
+  /^(?:okay[,.!]?\s+|sure[,.!]?\s+|now\s+|next\s+)?(?:creating|generating|writing|building|adding|updating|modifying|editing|implementing|fixing|making|preparing|setting up)\b/i;
+
 export function announcesPendingAction(text: string): boolean {
   const value = String(text ?? '').trim();
   if (!value || value.length > MAX_STALL_NARRATION_CHARACTERS) return false;
-  return PENDING_ACTION_PATTERN.test(value);
+  return PENDING_ACTION_PATTERN.test(value) || GERUND_OPENER_PATTERN.test(value);
 }
 
 function serializeMessages(messages: BaseMessage[], tools: BindToolsInput[]): { systemPrompt: string; userPrompt: string } {
@@ -539,16 +604,29 @@ function serializeMessages(messages: BaseMessage[], tools: BindToolsInput[]): { 
   return { systemPrompt: system.join('\n\n'), userPrompt: transcript.join('\n\n') };
 }
 
-function parseToolEnvelope(raw: string, tools: BindToolsInput[]): { text: string; calls: ParsedToolCall[] } {
+function parseToolEnvelope(raw: string, tools: BindToolsInput[]): ParsedTurn {
   const allowed = new Set(tools.map((value) => (value as { name?: string }).name).filter(Boolean));
   const qwen = parseQwenToolCalls(raw, allowed);
   if (qwen.length) return { text: visibleModelText(raw), calls: qwen };
 
   const cleaned = stripInternalReasoning(raw);
-  const candidate = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? cleaned;
+  const candidate = (cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? cleaned).trim();
   let value: Record<string, unknown> | undefined;
-  try { value = JSON.parse(candidate.trim()) as Record<string, unknown>; } catch { /* natural final answer */ }
-  if (!value) return { text: visibleModelText(cleaned), calls: [] };
+  // Long file content regularly breaks a local model's JSON with literal
+  // newlines/tabs inside string values; the repaired variant rescues exactly
+  // that, so the requested write still runs instead of being dropped.
+  for (const attempt of [candidate, escapeControlCharactersInJsonStrings(candidate)]) {
+    try { value = JSON.parse(attempt) as Record<string, unknown>; break; } catch { /* try the repaired form, else natural final answer */ }
+  }
+  if (!value) {
+    // A broken tool envelope must never reach the user as prose (it used to
+    // end the run with the raw blob as the final answer). Flag it so the chat
+    // model re-asks; only genuinely natural prose passes through as text.
+    if (/^\{/.test(candidate) && /"(?:tool_calls|actions|message)"\s*:/.test(candidate)) {
+      return { text: extractEnvelopeMessageField(candidate), calls: [], malformed: true };
+    }
+    return { text: visibleModelText(cleaned), calls: [] };
+  }
 
   const text = stripInternalReasoning(String(value.message ?? value.text ?? '')).trim();
   const inputCalls = Array.isArray(value.tool_calls) ? value.tool_calls : [];

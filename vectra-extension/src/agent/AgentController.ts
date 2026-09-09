@@ -5,6 +5,7 @@ import { AgentAction, AgentMode, AgentRunRequest, AgentRunResult, Attachment, Ch
 import { ProviderManager } from '../providers/ProviderManager';
 import { AgentConfiguration, getConfig } from '../utils/config';
 import { truncateMiddle, estimateContextCharBudget, safeJson } from '../utils/text';
+import { normalizeAgentPath } from '../utils/path';
 import { ContextCollector } from '../workspace/ContextCollector';
 import { EditProposalManager } from '../workspace/EditProposalManager';
 import { PlanManager } from '../state/PlanManager';
@@ -294,6 +295,13 @@ export class AgentController {
         signal: opts.signal
       });
       this.syncDeepTodos(result.state, opts.onTodosChanged);
+      // Deep Agents' built-in write_file targets an ephemeral scratch backend,
+      // and a small model regularly puts the actual deliverable there — the
+      // folder gets created through a real host tool, but the README dies in
+      // scratch and never reaches disk. Re-propose those files for review.
+      if (opts.mode === 'agent' && (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))) {
+        await this.rescueScratchFiles(result.state, opts);
+      }
       // A run ended by a harness guard (step budget, identical-tool-call loop)
       // already carries its own explanation and, by definition, never reached a
       // final answer. Running the fabricated-creation checks on it would only
@@ -350,6 +358,38 @@ export class AgentController {
         return this.runLoop(opts);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Turns files left in Deep Agents' scratch state into real reviewed
+   * proposals. Only runs when the model produced no real file proposal itself:
+   * a model that used the real tools was using scratch deliberately for notes,
+   * and those must not be pushed at the user as project files.
+   */
+  private async rescueScratchFiles(state: unknown, opts: RunLoopOptions): Promise<void> {
+    if (this.resolveProposals([...opts.proposalIds]).length > 0) return;
+    const files = (state as { files?: Record<string, unknown> } | undefined)?.files;
+    if (!files || typeof files !== 'object' || Array.isArray(files)) return;
+    let rescued = 0;
+    for (const [scratchPath, entry] of Object.entries(files).slice(0, 20)) {
+      const content = scratchFileContent(entry);
+      if (!content?.trim()) continue;
+      try {
+        const proposal = await this.patches.proposeFile(
+          scratchWorkspacePath(scratchPath),
+          content,
+          'Recovered from agent scratch space: the model wrote this file internally instead of proposing it to the real workspace.'
+        );
+        opts.proposalIds.add(proposal.id);
+        rescued++;
+      } catch {
+        // Outside the workspace, sensitive, or otherwise unproposable — skip it.
+      }
+    }
+    if (rescued) {
+      opts.onProposalsChanged?.();
+      opts.onProgress?.(`Rescued ${rescued} file${rescued === 1 ? '' : 's'} the agent left in scratch — added to the review batch…`);
     }
   }
 
@@ -823,6 +863,25 @@ const WORKSPACE_MUTATION_REQUEST_PATTERN =
 
 function requestsWorkspaceMutation(task: string): boolean {
   return WORKSPACE_MUTATION_REQUEST_PATTERN.test(task);
+}
+
+/** Content of one Deep scratch file entry across deepagents versions (plain string, {content}, or line array). */
+function scratchFileContent(entry: unknown): string | undefined {
+  if (typeof entry === 'string') return entry;
+  if (Array.isArray(entry)) {
+    return entry.every((line) => typeof line === 'string') ? entry.join('\n') : undefined;
+  }
+  if (entry && typeof entry === 'object') {
+    const content = (entry as { content?: unknown }).content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content) && content.every((line) => typeof line === 'string')) return content.join('\n');
+  }
+  return undefined;
+}
+
+/** Models address scratch with container-style absolute paths ("/workspace/…"); map them onto the real workspace. */
+function scratchWorkspacePath(scratchPath: string): string {
+  return normalizeAgentPath(scratchPath).replace(/^\/+/, '').replace(/^workspace\//i, '');
 }
 
 /** Framing prepended to a delegated task: the sub-agent has no memory of the parent conversation and a hard-restricted tool set. */

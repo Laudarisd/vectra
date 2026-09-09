@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.7
+
+- Deep Agents runs are no longer cut off by a derived step budget: they now run until the agent finishes or you cancel. Long research runs no longer stop early with a "step budget (120 internal steps)" message. `vectra.deepAgentRecursionLimit` remains available as an opt-in cap (0 = unlimited).
+- The activity log now reads as a timeline: a rail connects the steps, finished steps show how long they took, and the current step ticks a live timer.
+- Live web access now works in both products: `web_search` and `web_fetch` moved into the shared core, Vectra Web gained working implementations of both (it previously only advertised them), and real-time questions (weather, time, news, prices) now route to the agent so those tools are actually used instead of a "I can't know that" chat reply.
+
+## 1.1.6
+
+- Fixed file creation with local models: JSON tool envelopes broken by unescaped newlines in long file content are now repaired and executed, and OpenAI-style `tool_calls` (`write_file`, `file_path`, container-style `/workspace/…` paths) are accepted and mapped to Vectra's real tools instead of being dropped.
+- A tool envelope that still cannot be parsed is retried once with explicit escaping instructions and never shown to the user as raw JSON; turns that only narrate an action ("Creating README.md…") without calling a tool are re-asked to act.
+- Files a Deep Agents run leaves in its internal scratch space are now recovered as real reviewed proposals instead of silently vanishing.
+- The final answer now lists what changed: proposed file changes with their edited line ranges, plus folder/path operations applied during the run.
+- The todo checklist renders inline inside the active assistant message (with its close button) and disappears automatically when the run finishes, instead of lingering as a separate panel.
+
 ## 1.1.5
 
 - Added remote/self-hosted OpenAI-compatible API configuration with optional self-signed TLS support.

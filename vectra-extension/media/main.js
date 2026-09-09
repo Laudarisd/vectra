@@ -141,7 +141,8 @@
     const role = activeSubagentRoles[activeSubagentRoles.length - 1];
     const last = activitySteps[activitySteps.length - 1];
     if (last && last.text === text && last.role === role) return;
-    activitySteps.push({ text, role });
+    if (last) last.until = Date.now();
+    activitySteps.push({ text, role, at: Date.now() });
   }
 
   /** Tracks which role subagent (if any) is currently active so subsequent
@@ -150,7 +151,9 @@
     const role = subagent.role || 'general-purpose';
     if (subagent.event === 'started') {
       activeSubagentRoles.push(role);
-      activitySteps.push({ text: `${roleLabel(role)}…`, role });
+      const last = activitySteps[activitySteps.length - 1];
+      if (last) last.until = Date.now();
+      activitySteps.push({ text: `${roleLabel(role)}…`, role, at: Date.now() });
     } else {
       const index = activeSubagentRoles.lastIndexOf(role);
       if (index !== -1) activeSubagentRoles.splice(index, 1);
@@ -304,6 +307,10 @@
       } else {
         card.append(meta, buildActivityLog());
       }
+      // The checklist is part of Vectra's in-progress turn, not a separate
+      // floating panel: it renders inside this message card, under the step
+      // log, exactly like the plan approval cards below it.
+      renderTodos(card);
       renderPlans(card);
       els.messages.appendChild(card);
     }
@@ -311,7 +318,6 @@
     // A pending plan normally lives inside the active assistant message. Keep
     // this fallback for restored/host state where no active run is visible.
     if (!state.busy) renderPlans(els.messages);
-    renderTodos(els.messages);
     renderProposals(els.messages);
     requestAnimationFrame(() => { els.messages.scrollTop = els.messages.scrollHeight; });
   }
@@ -444,9 +450,11 @@
   }
 
   /**
-   * A live checklist for multi-step tasks. Shown whenever the agent has set
-   * one, independent of busy/idle. The close button hides the current list
-   * only — the panel comes back as soon as the agent updates it.
+   * A live checklist for multi-step tasks, rendered inline inside the active
+   * assistant message so it reads as part of the chat output rather than a
+   * separate box. It only exists while a run is busy; a finished run's final
+   * summary replaces it. The close button hides the current list only — it
+   * comes back as soon as the agent updates the checklist.
    */
   function renderTodos(container) {
     if (!state.todos || !state.todos.length) return;
@@ -501,7 +509,7 @@
     const steps = activitySteps.length ? activitySteps : [{ text: "Wakin' up…" }];
     const overflow = Math.max(0, steps.length - MAX_VISIBLE_STEPS);
     if (overflow > 0) {
-      log.appendChild(activityStepRow(`${overflow} more step${overflow === 1 ? '' : 's'} done`, 'done', '…'));
+      log.appendChild(activityStepRow({ text: `${overflow} more step${overflow === 1 ? '' : 's'} done` }, 'done', '…'));
     }
     const visible = steps.slice(-MAX_VISIBLE_STEPS);
     // Consecutive steps sharing the same subagent role collapse into one
@@ -519,7 +527,7 @@
       } else {
         group.forEach((step, i) => {
           const isLast = isLastGroup && i === group.length - 1;
-          log.appendChild(activityStepRow(step.text, isLast ? 'active' : 'done', isLast ? null : '✓'));
+          log.appendChild(activityStepRow(step, isLast ? 'active' : 'done', isLast ? null : '✓'));
         });
       }
       index = end;
@@ -536,12 +544,12 @@
     details.appendChild(summary);
     steps.forEach((step, i) => {
       const isLast = isLastGroup && i === steps.length - 1;
-      details.appendChild(activityStepRow(step.text, isLast ? 'active' : 'done', isLast ? null : '✓'));
+      details.appendChild(activityStepRow(step, isLast ? 'active' : 'done', isLast ? null : '✓'));
     });
     return details;
   }
 
-  function activityStepRow(text, status, checkGlyph) {
+  function activityStepRow(step, status, checkGlyph) {
     const row = document.createElement('div');
     row.className = `activity-step ${status}`;
     const icon = document.createElement('span');
@@ -552,10 +560,37 @@
       icon.className = 'activity-spinner';
     }
     const label = document.createElement('span');
-    label.textContent = text;
+    label.textContent = step.text;
     row.append(icon, label);
+    // Timed like a timeline: finished steps show how long they took, the
+    // active step ticks live (updated by the shared 1s interval below).
+    if (step.at) {
+      const time = document.createElement('span');
+      if (status === 'active') {
+        time.className = 'activity-time live';
+        time.dataset.start = String(step.at);
+        time.textContent = formatElapsed(Date.now() - step.at);
+      } else {
+        time.className = 'activity-time';
+        time.textContent = formatElapsed((step.until ?? Date.now()) - step.at);
+      }
+      row.appendChild(time);
+    }
     return row;
   }
+
+  /** Sub-second steps show no time at all; the badge only appears once a step has taken a while. */
+  function formatElapsed(ms) {
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 1) return '';
+    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  }
+
+  setInterval(() => {
+    for (const el of document.querySelectorAll('.activity-time.live')) {
+      el.textContent = formatElapsed(Date.now() - Number(el.dataset.start));
+    }
+  }, 1000);
 
   function renderAttachments() {
     els.attachments.replaceChildren();

@@ -5,8 +5,10 @@ import { ATTACHMENT_TOOL_DEFINITIONS, createAttachmentTools, VectraAttachmentRec
 import { VECTRA_TOOL_DEFINITIONS } from '../catalog';
 import { toHostToolExecutor } from '../deepTools';
 import { DOCUMENT_EXTRACTION_TOOL_DEFINITION, createDocumentExtractionTool } from './documentExtractionTool';
+import { searchWeb, fetchWebPage } from './liveWeb';
 
 export * from './documentExtractionTool';
+export * from './liveWeb';
 
 export interface VectraWebArtifact { name: string; mime: string; base64: string }
 
@@ -53,6 +55,23 @@ export function createWebTools<TContext = unknown>(
       description: 'Generate multiple complete text/code files, including nested folder paths, as downloadable web artifacts. Also covers create_files and generate_folder_files.',
       schema: z.object({ files: filesSchema }),
       execute: ({ files }) => (files as Array<{ path: string; content: string }>).map((file) => addArtifact(artifacts, file.path, file.content)).join('\n')
+    },
+    // Live internet access (shared with the extension via ./liveWeb): lets the
+    // agent answer real-world questions - weather, time, news, prices, docs.
+    {
+      name: 'web_search',
+      description: 'Search the public web for current, real-world information: documentation, news, weather, prices, or anything not in the workspace.',
+      schema: z.object({
+        query: z.string().min(1).describe('Plain search query, e.g. "weather in Seoul today".'),
+        maxResults: z.number().int().min(1).max(10).optional()
+      }),
+      execute: ({ query, maxResults }) => searchWeb(String(query), maxResults as number | undefined)
+    },
+    {
+      name: 'web_fetch',
+      description: 'Fetch readable text from one public http(s) URL, e.g. a search result or a live-data page.',
+      schema: z.object({ url: z.string().min(1).describe('Full public URL, starting with http:// or https://.') }),
+      execute: ({ url }) => fetchWebPage(String(url))
     }
   ];
 }

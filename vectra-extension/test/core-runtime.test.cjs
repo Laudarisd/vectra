@@ -308,19 +308,18 @@ test('shared tool catalog and factories serve extension and web adapters', async
   });
 });
 
-// Regression: the default 12-step budget produced a LangGraph recursion limit
-// of 36, and a "go deeper" follow-up tripped it with a raw GraphRecursionError.
-test('the Deep Agents recursion limit leaves real room for a deep run', () => {
+// Deep runs are unbounded unless the user opts into an explicit cap; every
+// derived budget (12-step default included) ended real work mid-run.
+test('the Deep Agents recursion limit is unbounded unless explicitly capped', () => {
   const { resolveRecursionLimit, isRecursionLimitError } = require('../build/core');
 
-  assert.ok(resolveRecursionLimit({ maxSteps: 12 }) >= 96, 'the default agent budget must not trip on a normal deep run');
-  assert.ok(resolveRecursionLimit({ maxSteps: 1 }) >= 96, 'a tiny step budget still needs a workable graph floor');
-  assert.ok(resolveRecursionLimit({ maxSteps: 30 }) > resolveRecursionLimit({ maxSteps: 12 }), 'a larger budget must scale up');
+  assert.equal(resolveRecursionLimit({ maxSteps: 12 }), Number.MAX_SAFE_INTEGER, 'no explicit cap means unlimited');
+  assert.equal(resolveRecursionLimit({ maxSteps: 1 }), Number.MAX_SAFE_INTEGER, 'maxSteps no longer derives a graph budget');
 
-  // An explicit setting wins over the derived value, in both directions.
+  // An explicit setting is the only thing that caps a run; 0 clears the cap.
   assert.equal(resolveRecursionLimit({ maxSteps: 12, recursionLimit: 400 }), 400);
   assert.equal(resolveRecursionLimit({ maxSteps: 12, recursionLimit: 50 }), 50);
-  assert.ok(resolveRecursionLimit({ maxSteps: 12, recursionLimit: 0 }) >= 96, '0 means "derive it"');
+  assert.equal(resolveRecursionLimit({ maxSteps: 12, recursionLimit: 0 }), Number.MAX_SAFE_INTEGER, '0 means unlimited');
 
   const raw = new Error('Recursion limit of 36 reached without hitting a stop condition.');
   assert.ok(isRecursionLimitError(raw), 'LangGraph\'s message must be recognized even when the error class is lost');

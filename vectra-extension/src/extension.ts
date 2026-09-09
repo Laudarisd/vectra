@@ -280,11 +280,11 @@ async function configureCloudProvider(
       const choice = await vscode.window.showWarningMessage(
         'Does this Local API use a self-signed or otherwise untrusted certificate? Disabling certificate verification makes interception possible.',
         { modal: true },
-        'Keep verification (recommended)',
-        'Allow self-signed certificate'
+        'Keep verification',
+        'Allow certificate (Shows model)'
       );
       if (!choice) return;
-      allowInsecureTls = choice === 'Allow self-signed certificate';
+      allowInsecureTls = choice === 'Allow certificate (Shows model)';
     }
     await updateOpenAICompatibleBaseUrl(baseUrl.trim());
     await updateOpenAICompatibleAllowInsecureTls(allowInsecureTls);

@@ -81,7 +81,9 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .empty-title{font-weight:700;margin-bottom:5px}
 .activity-message{border-style:dashed}
 .activity-log{display:flex;flex-direction:column;gap:6px}
-.activity-step{display:flex;align-items:center;gap:8px;font-size:.92em;opacity:.86;transition:opacity .2s}
+.activity-step{position:relative;display:flex;align-items:center;gap:8px;font-size:.92em;opacity:.86;transition:opacity .2s}
+.activity-step:not(:last-child)::before{content:'';position:absolute;left:5px;top:17px;bottom:-8px;width:2px;border-radius:1px;background:var(--vscode-widget-border,var(--vscode-input-border));opacity:.55}
+.activity-time{margin-left:auto;padding-left:8px;font-size:.88em;opacity:.6;font-variant-numeric:tabular-nums;white-space:nowrap}
 .activity-step.done{opacity:.5}
 .activity-spinner{width:12px;height:12px;flex:0 0 12px;border:2px solid var(--vscode-widget-border,currentColor);border-top-color:var(--vscode-progressBar-background,currentColor);border-radius:50%;animation:spin .8s linear infinite}
 .activity-check{width:12px;height:12px;flex:0 0 12px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:var(--vscode-charts-green,var(--vscode-progressBar-background,currentColor))}
@@ -93,6 +95,7 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .activity-group>.activity-step{margin-left:4px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .todo-panel{display:flex;flex-direction:column;gap:6px;margin:9px 0;padding:9px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;background:var(--vscode-editorWidget-background)}
+.message .todo-panel{margin:7px 0 0;padding:6px 0 0;border:0;border-top:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:0;background:transparent}
 .todo-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
 .todo-title{font-size:.8em;font-weight:700;letter-spacing:.04em;text-transform:uppercase;opacity:.72}
 .todo-header .plan-icon-button{width:20px;height:20px;font-size:13px;margin:-3px -3px -3px 0;opacity:.7}

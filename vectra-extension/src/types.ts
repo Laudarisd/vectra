@@ -31,7 +31,7 @@ export interface ModelInfo { id: string; label?: string; detail?: string }
  * providers that can pin a JSON schema return natural prose instead.
  */
 /** `reasoning: 'minimal'` marks a turn that must not cost an extended thinking pass (greetings, small talk). */
-export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; structured?: boolean; reasoning?: 'minimal'; signal?: AbortSignal; onDelta?: (delta: string) => void }
+export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; structured?: boolean; reasoning?: 'minimal'; signal?: AbortSignal; onDelta?: (delta: string) => void; onThinking?: (delta: string) => void }
 export interface NativeToolMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string; toolCalls?: NativeToolCall[] }
 export interface NativeToolCall { id: string; name: string; args: Record<string, unknown> }
 export interface NativeToolDefinition { name: string; description?: string; parameters: unknown }
@@ -130,6 +130,6 @@ export interface EditProposal {
 }
 
 export interface SubagentEvent { event: 'started' | 'finished' | 'failed'; role: string; description?: string; error?: string }
-export interface AgentRunRequest { mode: AgentMode; userText: string; history: ChatMessage[]; attachments?: Attachment[]; onProgress?: (message: string) => void; onDelta?: (delta: string) => void; onTodosChanged?: (todos: TodoItem[]) => void; onPlanChanged?: (plan: Plan) => void; onProposalsChanged?: () => void; onSubagentEvent?: (event: SubagentEvent) => void; signal?: AbortSignal }
+export interface AgentRunRequest { mode: AgentMode; userText: string; history: ChatMessage[]; attachments?: Attachment[]; onProgress?: (message: string) => void; onDelta?: (delta: string) => void; onThinking?: (delta: string) => void; onTodosChanged?: (todos: TodoItem[]) => void; onPlanChanged?: (plan: Plan) => void; onProposalsChanged?: () => void; onSubagentEvent?: (event: SubagentEvent) => void; signal?: AbortSignal }
 export interface AgentRunResult { text: string; proposals: EditProposal[] }
 export interface WorkspaceContext { workspaceFolders: string[]; workspaceOverview?: string; activeFile?: string; activeLanguage?: string; activeFileContent?: string; selectionText?: string; selectionStartLine?: number; selectionEndLine?: number; openFiles: string[]; diagnostics: string[]; projectInstructions?: string }

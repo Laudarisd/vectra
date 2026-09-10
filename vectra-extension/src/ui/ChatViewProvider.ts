@@ -346,6 +346,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           signal,
           onProgress: (progress) => events.emit({ type: 'ui.progress', message: progress }),
           onDelta: (delta) => events.emit({ type: 'ui.delta', id: streamId, delta }),
+          onThinking: (delta) => events.emit({ type: 'ui.thinking', delta }),
           onTodosChanged: (todos) => events.emit({ type: 'ui.todos', todos }),
           onPlanChanged: (plan) => events.emit({ type: 'ui.plan', plan }),
           onProposalsChanged: () => void this.postState(),
@@ -470,6 +471,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         break;
       case 'ui.delta':
         void this.post({ type: 'chatDelta', id: event.id, delta: event.delta });
+        break;
+      case 'ui.thinking':
+        void this.post({ type: 'thinking', delta: event.delta });
         break;
       case 'ui.todos':
         void this.post({ type: 'todoUpdate', todos: event.todos });

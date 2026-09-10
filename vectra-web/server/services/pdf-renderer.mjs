@@ -44,6 +44,21 @@ export async function renderPdfForVision(bytes,{dpi=200,maxPages=60,renderImages
   }finally{await task.destroy()}
 }
 
+/** Render one specific page (1-based) on demand, regardless of its native-text classification.
+ * Used by the show_image tool so any PDF page can appear in the split viewer. */
+export async function renderPdfPageImage(bytes,{pageNumber=1,dpi=200}={}){
+  const task=getDocument({data:new Uint8Array(bytes),disableWorker:true,useSystemFonts:true,verbosity:0});
+  const document=await task.promise;
+  try{
+    if(pageNumber<1||pageNumber>document.numPages)throw new Error(`Page ${pageNumber} is out of range; this PDF has ${document.numPages} page(s).`);
+    const page=await document.getPage(pageNumber);
+    try{
+      const analysis=await inspectPage(page,pageNumber);
+      return await renderPage(page,analysis,dpi);
+    }finally{page.cleanup()}
+  }finally{await task.destroy()}
+}
+
 // Determine whether a page contains usable PDF text, raster scans, or vector outlines.
 async function inspectPage(page,pageNumber){
   const [textContent,operatorList]=await Promise.all([page.getTextContent(),page.getOperatorList()]);

@@ -16,6 +16,9 @@
   let activeSubagentRoles = [];
   let streamId = '';
   let streamText = '';
+  // Live model reasoning (<think> text) for the current request, plus when it started.
+  let thinkingText = '';
+  let thinkingStartedAt = 0;
   let resolvedPlans = [];
   const collapsedPlanIds = new Set();
   const dismissedPlanIds = new Set();
@@ -105,6 +108,7 @@
       if (wasBusy && !state.busy) dismissedTodoSignature = todoSignature(state.todos);
       streamId = '';
       streamText = '';
+      if (!state.busy) { thinkingText = ''; thinkingStartedAt = 0; }
       if (editingMessageId && !state.messages.some((item) => item.id === editingMessageId)) {
         editingMessageId = '';
         persistComposerState();
@@ -112,6 +116,10 @@
       renderAll();
     } else if (message.type === 'progress') {
       pushActivityStep(cleanActivity(message.message));
+      renderMessages();
+    } else if (message.type === 'thinking') {
+      if (!thinkingText) thinkingStartedAt = Date.now();
+      thinkingText += message.delta || '';
       renderMessages();
     } else if (message.type === 'chatDelta') {
       if (message.id !== streamId) {
@@ -136,6 +144,31 @@
       renderMessages();
     }
   });
+
+  // Collapsible live "Thinking..." block: streams the model's <think> reasoning
+  // with the same ticking timer the activity steps use.
+  let thinkingCollapsed = false;
+  function buildThinkingBlock() {
+    const details = document.createElement('details');
+    details.className = 'thinking-block';
+    details.open = !thinkingCollapsed;
+    details.addEventListener('toggle', () => { thinkingCollapsed = !details.open; });
+    const summary = document.createElement('summary');
+    const label = document.createElement('span');
+    label.textContent = 'Thinking';
+    const time = document.createElement('span');
+    time.className = 'activity-time live';
+    time.dataset.start = String(thinkingStartedAt);
+    time.textContent = formatElapsed(Date.now() - thinkingStartedAt);
+    summary.append(label, time);
+    const body = document.createElement('div');
+    body.className = 'thinking-text';
+    body.textContent = thinkingText;
+    details.append(summary, body);
+    // Keep the newest reasoning in view as it streams.
+    requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+    return details;
+  }
 
   function pushActivityStep(text) {
     const role = activeSubagentRoles[activeSubagentRoles.length - 1];
@@ -293,6 +326,9 @@
       const meta = document.createElement('div');
       meta.className = 'message-meta';
       meta.textContent = 'Vectra';
+      card.appendChild(meta);
+      // Live model reasoning renders above the answer/steps, Claude-style.
+      if (thinkingText) card.appendChild(buildThinkingBlock());
       if (streamText) {
         // A conversational (Ask) reply streams live; tool/agent steps still
         // only report progress text, since partial tool-call JSON isn't
@@ -303,9 +339,9 @@
         const cursor = document.createElement('span');
         cursor.className = 'stream-cursor';
         content.appendChild(cursor);
-        card.append(meta, content);
+        card.appendChild(content);
       } else {
-        card.append(meta, buildActivityLog());
+        card.appendChild(buildActivityLog());
       }
       // The checklist is part of Vectra's in-progress turn, not a separate
       // floating panel: it renders inside this message card, under the step
@@ -667,7 +703,7 @@
   }
 
   function renderComposer() {
-    els.prompt.disabled = state.busy || !state.workspaceTrusted;
+    els.prompt.disabled = !state.workspaceTrusted;
     els.attach.disabled = state.busy || !state.workspaceTrusted;
     els.send.classList.toggle('hidden', state.busy);
     els.send.disabled = !state.workspaceTrusted;

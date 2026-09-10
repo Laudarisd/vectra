@@ -174,6 +174,62 @@ test('web adapter uses shared portable definitions and creates downloadable file
   assert.equal(Buffer.from(artifacts[0].base64, 'base64').toString(), '# Echo state network');
 });
 
+test('image tools show uploaded images with bounding boxes and draw new SVG figures', async () => {
+  const artifacts = [];
+  const image = { name: 'photo.png', kind: 'image', mime: 'image/png', base64: Buffer.from('png-bytes').toString('base64') };
+  const tools = createWebTools([image, { name: 'notes.txt', text: 'hello' }], artifacts);
+
+  const show = tools.find((item) => item.name === 'show_image');
+  assert.match(await show.execute({ name: 'photo.png', title: 'Detected part', boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.4, label: 'bolt' }] }, {}), /1 highlighted region/);
+  assert.deepEqual(artifacts[0], { name: 'photo.png', mime: 'image/png', base64: image.base64, view: 'image', title: 'Detected part', boxes: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.4, label: 'bolt' }] });
+  await assert.rejects(async () => show.execute({ name: 'notes.txt' }, {}), /image bytes/i);
+
+  const draw = tools.find((item) => item.name === 'draw_image');
+  await draw.execute({ title: 'Sales by month', svg: '<svg viewBox="0 0 10 10"><rect width="5" height="5"/></svg>' }, {});
+  const figure = artifacts.find((item) => item.name === 'Sales_by_month.svg');
+  assert.equal(figure.view, 'image');
+  assert.match(Buffer.from(figure.base64, 'base64').toString(), /<rect/);
+  await assert.rejects(async () => draw.execute({ title: 'evil', svg: '<svg onload="x()"></svg>' }, {}), /scripts or event handlers/i);
+});
+
+// Regression: "show this PDF as an image" used to fail with '"x.pdf" is not an
+// image attachment', and images whose bytes were released after OCR could
+// never be re-displayed.
+test('show_image renders PDF pages on demand and keeps post-OCR display bytes usable', async () => {
+  const artifacts = [];
+  const attachments = [
+    { name: 'drawing.pdf', kind: 'pdf', mime: 'application/pdf', text: 'native text', base64: Buffer.from('pdf-bytes').toString('base64') },
+    { name: 'scan.png', kind: 'image', mime: 'image/png', base64: '', viewBase64: Buffer.from('scan-bytes').toString('base64') }
+  ];
+  const rendered = [];
+  const tools = createWebTools(attachments, artifacts, {
+    renderPdfPage: async (record, pageNumber) => {
+      rendered.push([record.name, pageNumber]);
+      return { mime: 'image/png', base64: Buffer.from(`page-${pageNumber}`).toString('base64'), width: 100, height: 50 };
+    }
+  });
+  const show = tools.find((item) => item.name === 'show_image');
+
+  // A PDF name plus page rasterizes that page from the original document.
+  assert.match(await show.execute({ name: 'drawing.pdf', page: 3 }, {}), /drawing\.pdf · page 3/);
+  assert.deepEqual(rendered, [['drawing.pdf', 3]]);
+  assert.equal(artifacts[0].name, 'drawing.pdf · page 3');
+  assert.equal(artifacts[0].view, 'image');
+
+  // Display-only bytes retained after OCR release still show.
+  await show.execute({ name: 'scan.png' }, {});
+  assert.ok(artifacts.some((item) => item.name === 'scan.png' && item.base64 === attachments[1].viewBase64));
+
+  // Without a host page renderer the PDF error is actionable, not "not an image".
+  const bare = createWebTools(attachments, []).find((item) => item.name === 'show_image');
+  await assert.rejects(async () => bare.execute({ name: 'drawing.pdf', page: 2 }, {}), /No rendered image is available/);
+
+  // fetch_image is registered and its URLs pass the SSRF guard before any request.
+  const fetchImage = tools.find((item) => item.name === 'fetch_image');
+  assert.ok(fetchImage);
+  await assert.rejects(async () => fetchImage.execute({ url: 'http://localhost/logo.png' }, {}), /local\/private address/);
+});
+
 test('Deep Agents built-in inventory is complete and records conditional availability', () => {
   assert.deepEqual(DEEP_AGENT_FILESYSTEM_TOOL_NAMES, [
     'ls', 'read_file', 'write_file', 'edit_file', 'delete', 'glob', 'grep', 'execute'
@@ -383,6 +439,10 @@ test('a narrated-but-uncalled tool is retried instead of ending the request', as
 
   assert.ok(announcesPendingAction("Let me first read ChatViewProvider to understand the current UI."));
   assert.ok(announcesPendingAction("I'll start by checking the button layout."));
+  // Real stalls seen in the field: "I need to", a bare "Reading..." opener, and "let me try...".
+  assert.ok(announcesPendingAction('I need to read the remaining lines of vlm.py to complete the analysis.'));
+  assert.ok(announcesPendingAction('Reading the remaining lines of vlm.py to complete the analysis'));
+  assert.ok(announcesPendingAction('Let me try a different approach to access it.'));
   assert.equal(announcesPendingAction('The suggestion provider lives in ChatViewProvider.ts and registers on activation.'), false);
   assert.equal(announcesPendingAction(''), false);
 });

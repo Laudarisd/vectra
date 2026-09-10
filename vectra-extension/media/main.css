@@ -84,6 +84,14 @@ button:focus-visible,textarea:focus-visible{outline:1px solid var(--vscode-focus
 .activity-step{position:relative;display:flex;align-items:center;gap:8px;font-size:.92em;opacity:.86;transition:opacity .2s}
 .activity-step:not(:last-child)::before{content:'';position:absolute;left:5px;top:17px;bottom:-8px;width:2px;border-radius:1px;background:var(--vscode-widget-border,var(--vscode-input-border));opacity:.55}
 .activity-time{margin-left:auto;padding-left:8px;font-size:.88em;opacity:.6;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Live "Thinking..." block: collapsible, streams the model's private reasoning */
+.thinking-block{margin:2px 0 8px;border:1px solid var(--vscode-widget-border,var(--vscode-input-border));border-radius:8px;background:var(--vscode-editorWidget-background)}
+.thinking-block>summary{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:.9em;font-weight:600;opacity:.8;list-style:none}
+.thinking-block>summary::-webkit-details-marker{display:none}
+.thinking-block>summary::before{content:'▸';transition:transform .15s}
+.thinking-block[open]>summary::before{transform:rotate(90deg)}
+.thinking-block .activity-time{margin-left:auto}
+.thinking-text{max-height:180px;overflow-y:auto;padding:0 10px 8px;font-size:.86em;line-height:1.45;opacity:.62;white-space:pre-wrap;word-break:break-word;font-style:italic}
 .activity-step.done{opacity:.5}
 .activity-spinner{width:12px;height:12px;flex:0 0 12px;border:2px solid var(--vscode-widget-border,currentColor);border-top-color:var(--vscode-progressBar-background,currentColor);border-radius:50%;animation:spin .8s linear infinite}
 .activity-check{width:12px;height:12px;flex:0 0 12px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:var(--vscode-charts-green,var(--vscode-progressBar-background,currentColor))}

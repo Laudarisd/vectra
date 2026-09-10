@@ -26,6 +26,7 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     messages: $('messages'), prompt: $('prompt'), send: $('send'), attach: $('attach'), fileInput: $('fileInput'), attachments: $('attachments'),
+    viewerPanel: $('viewerPanel'), viewerTitle: $('viewerTitle'), viewerClose: $('viewerClose'), viewerStage: $('viewerStage'),
     model: $('model'), testConnection: $('testConnection'), localStatusPill: $('localStatusPill'),
     settings: $('settings'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
     autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
@@ -306,7 +307,7 @@
   }
 
   async function persistChat() {
-    const cleanMessages = state.messages.filter((message) => !message.pending).map(({ role, content, artifacts, createdAt }) => ({ role, content, artifacts: artifacts || [], createdAt }));
+    const cleanMessages = state.messages.filter((message) => !message.pending).map(({ role, content, artifacts, files, createdAt }) => ({ role, content, artifacts: artifacts || [], ...(files?.length ? { files } : {}), createdAt }));
     const payload = { provider: state.provider, model: state.model, messages: cleanMessages };
     const saved = state.currentChatId
       ? await request(`/api/chats/${encodeURIComponent(state.currentChatId)}`, { method: 'PUT', body: payload })
@@ -804,7 +805,9 @@
 
     if (state.editingIndex >= 0) state.messages.splice(state.editingIndex);
     state.editingIndex = -1;
-    state.messages.push({ role: 'user', content: text || 'Please analyze the attached files.', createdAt: Date.now() });
+    // The user message remembers its uploads so the chat always shows which files were sent.
+    state.messages.push({ role: 'user', content: text || 'Please analyze the attached files.', createdAt: Date.now(),
+      ...(state.attachments.length ? { files: state.attachments.map((file) => ({ name: file.name, kind: file.kind, size: file.size })) } : {}) });
     const payloadAttachments = state.attachments;
     state.attachments = [];
     els.prompt.value = ''; autoGrow(); renderAttachments();
@@ -840,11 +843,18 @@
         if (!placeholder.pending) return;
         if (event.type === 'progress') pushWebActivityStep(placeholder, activeSubagentRoles, event.message);
         else if (event.type === 'subagent') handleWebSubagentEvent(placeholder, activeSubagentRoles, event.subagent || {});
+        else if (event.type === 'thinking') { // live <think> reasoning for the collapsible block
+          if (!placeholder.thinking) placeholder.thinkingStartedAt = Date.now();
+          placeholder.thinking = (placeholder.thinking || '') + event.delta;
+        }
         render();
       });
       placeholder.content = data.text;
       placeholder.artifacts = data.artifacts || [];
       placeholder.pending = false;
+      // A show_image/draw_image result opens the split viewer with the newest visual.
+      const viewable = placeholder.artifacts.filter((artifact) => artifact.view === 'image');
+      if (viewable.length) openImageViewer(viewable[viewable.length - 1]);
     } catch (error) {
       placeholder.content = error.name === 'AbortError' ? 'Generation stopped. Edit or resend your message whenever you are ready.' : `Error: ${error.message}`;
       placeholder.pending = false;
@@ -852,6 +862,49 @@
       state.busy = false; state.chatAbort = null; render();
       await persistChat().catch((error) => console.warn('Could not save chat history:', error));
     }
+  }
+
+  // --- Split image viewer: renders an image/SVG artifact with optional bounding-box overlays ---
+  function openImageViewer(artifact) {
+    els.viewerTitle.textContent = artifact.title || artifact.name;
+    els.viewerStage.replaceChildren();
+    const frame = document.createElement('div'); frame.className = 'viewer-frame';
+    const img = document.createElement('img');
+    img.alt = artifact.title || artifact.name;
+    img.src = `data:${artifact.mime};base64,${artifact.base64}`;
+    frame.appendChild(img);
+    // Box coordinates are fractions of the image (0..1), so plain % positioning scales with it.
+    for (const box of artifact.boxes || []) {
+      const overlay = document.createElement('div'); overlay.className = 'viewer-box';
+      overlay.style.left = `${box.x * 100}%`; overlay.style.top = `${box.y * 100}%`;
+      overlay.style.width = `${box.w * 100}%`; overlay.style.height = `${box.h * 100}%`;
+      if (box.label) { const tag = document.createElement('span'); tag.className = 'viewer-box-label'; tag.textContent = box.label; overlay.appendChild(tag); }
+      frame.appendChild(overlay);
+    }
+    els.viewerStage.appendChild(frame);
+    els.viewerPanel.hidden = false;
+    document.querySelector('.app-shell').classList.add('viewer-open');
+  }
+
+  function closeImageViewer() {
+    els.viewerPanel.hidden = true;
+    document.querySelector('.app-shell').classList.remove('viewer-open');
+  }
+  els.viewerClose.addEventListener('click', closeImageViewer);
+
+  // Rasterize an SVG artifact to PNG in the browser and trigger the download.
+  function downloadSvgAsPng(artifact) {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || 1200; canvas.height = img.naturalHeight || 800;
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const a = document.createElement('a');
+      a.download = artifact.name.replace(/\.svg$/i, '') + '.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    };
+    img.src = `data:${artifact.mime};base64,${artifact.base64}`;
   }
 
   function pushWebActivityStep(placeholder, activeRoles, text) {
@@ -1075,12 +1128,24 @@
         const name = document.createElement('div'); name.className = 'web-message-name'; name.textContent = message.role === 'assistant' ? 'Vectra' : 'You';
         const content = document.createElement('div'); content.className = 'web-message-content';
         if (message.pending && !message.content) {
+          if (message.thinking) content.appendChild(buildWebThinkingBlock(message));
           content.appendChild(buildWebActivityLog(message.activityLog));
         } else if (message.role === 'assistant') {
+          if (message.pending && message.thinking) content.appendChild(buildWebThinkingBlock(message));
           renderMarkdownInto(content, message.content);
           if (message.pending) { const cursor = document.createElement('span'); cursor.className = 'stream-cursor'; content.appendChild(cursor); }
         } else {
           content.textContent = message.content;
+          // Uploaded files stay visible on the user's message for the whole chat.
+          if (message.files?.length) {
+            const filesRow = document.createElement('div'); filesRow.className = 'message-files';
+            for (const file of message.files) {
+              const chip = document.createElement('span'); chip.className = 'attachment-chip';
+              chip.textContent = `📎 ${file.name} · ${formatSize(file.size)}`;
+              filesRow.appendChild(chip);
+            }
+            content.appendChild(filesRow);
+          }
         }
         body.append(name, content);
         if (message.role === 'user' && !message.pending) {
@@ -1089,7 +1154,11 @@
           const resend = document.createElement('button'); resend.textContent = 'Resend'; resend.disabled = state.busy; resend.addEventListener('click', () => void resendMessage(index));
           actions.append(edit, resend); body.appendChild(actions);
         }
-        if (message.artifacts?.length) { const row=document.createElement('div'); row.className='artifact-row'; for (const artifact of message.artifacts) { const a=document.createElement('a'); a.className='artifact-download'; a.download=artifact.name; a.href=`data:${artifact.mime};base64,${artifact.base64}`; a.textContent=`Download ${artifact.name}`; row.appendChild(a); } body.appendChild(row); }
+        if (message.artifacts?.length) { const row=document.createElement('div'); row.className='artifact-row'; for (const artifact of message.artifacts) {
+          // Visuals open in the viewer automatically; the message keeps only download links.
+          const a=document.createElement('a'); a.className='artifact-download'; a.download=artifact.name; a.href=`data:${artifact.mime};base64,${artifact.base64}`; a.textContent=`Download ${artifact.name}`; row.appendChild(a);
+          // Drawn SVG figures also download as PNG, rasterized in the browser.
+          if (artifact.mime === 'image/svg+xml') { const png=document.createElement('button'); png.className='artifact-view'; png.textContent='Download PNG'; png.addEventListener('click', () => downloadSvgAsPng(artifact)); row.appendChild(png); } } body.appendChild(row); }
         wrap.append(avatar, body); els.messages.appendChild(wrap);
       });
       requestAnimationFrame(() => { els.messages.scrollTop = els.messages.scrollHeight; });
@@ -1107,6 +1176,35 @@
    * documentation) collapse into one collapsible group instead of flat
    * lines, same idiom as the extension's activity log.
    */
+  // Collapsible live "Thinking..." block streaming the model's <think> reasoning.
+  let webThinkingCollapsed = false;
+  function buildWebThinkingBlock(message) {
+    const details = document.createElement('details');
+    details.className = 'thinking-block';
+    details.open = !webThinkingCollapsed;
+    details.addEventListener('toggle', () => { webThinkingCollapsed = !details.open; });
+    const summary = document.createElement('summary');
+    const label = document.createElement('span'); label.textContent = 'Thinking';
+    const time = document.createElement('span');
+    time.className = 'thinking-time live';
+    time.dataset.start = String(message.thinkingStartedAt || Date.now());
+    summary.append(label, time);
+    const body = document.createElement('div');
+    body.className = 'thinking-text';
+    body.textContent = message.thinking;
+    details.append(summary, body);
+    requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+    return details;
+  }
+
+  // One shared ticker keeps every live thinking timer counting between renders.
+  setInterval(() => {
+    for (const el of document.querySelectorAll('.thinking-time.live')) {
+      const seconds = Math.round((Date.now() - Number(el.dataset.start)) / 1000);
+      el.textContent = seconds < 1 ? '' : seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    }
+  }, 1000);
+
   function buildWebActivityLog(steps) {
     const log = document.createElement('div'); log.className = 'web-activity-log';
     const list = steps && steps.length ? steps : [{ text: "Wakin' up…" }];
@@ -1253,6 +1351,7 @@
         if (event.error) throw new Error(event.error);
         if (typeof event.progress === 'string') onProgress?.({ type: 'progress', message: event.progress });
         if (event.subagent) onProgress?.({ type: 'subagent', subagent: event.subagent });
+        if (typeof event.thinking === 'string') onProgress?.({ type: 'thinking', delta: event.thinking });
         if (typeof event.delta === 'string') { result.text += event.delta; onDelta?.(result.text); }
         if (typeof event.replace === 'string') { result.text = event.replace; onDelta?.(result.text); }
         if (event.done) { result.artifacts = event.artifacts || []; result.attachments = event.attachments || []; }

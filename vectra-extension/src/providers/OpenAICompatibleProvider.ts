@@ -21,7 +21,7 @@ export class OpenAICompatibleProvider implements TextProvider{
     // not useful to render and cannot be parsed until it is complete.
     const send=async(payload:Record<string,unknown>):Promise<string>=>{
       if(request.structured===false&&request.onDelta){
-        const streamed=await streamSse(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify({...payload,stream:true}),signal:request.signal},{onDelta:request.onDelta,idleTimeoutMs:this.timeoutMs,signal:request.signal,allowInsecureTls:this.allowInsecureTls});
+        const streamed=await streamSse(`${this.baseUrl}/chat/completions`,{method:'POST',headers:this.headers(true),body:JSON.stringify({...payload,stream:true}),signal:request.signal},{onDelta:request.onDelta,onThinking:request.onThinking,idleTimeoutMs:this.timeoutMs,signal:request.signal,allowInsecureTls:this.allowInsecureTls});
         if(!streamed.trim())throw new Error('OpenAI-compatible endpoint returned no text output.');
         return streamed.trim();
       }

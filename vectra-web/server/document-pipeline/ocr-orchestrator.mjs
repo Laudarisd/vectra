@@ -38,8 +38,9 @@ export async function prepareVisualOcrEvidence({attachments,readImage,onProgress
     grouped.set(root,items);
   }
 
-  // Release visual bytes after transcription so the reasoning call does not encode them again.
-  const output=attachments.map(file=>file.ocrRequired?{...file,ocrRequired:false,base64:''}:file);
+  // Release visual bytes from the prompt path after transcription so the reasoning
+  // call does not encode them again; keep them as viewBase64 so show_image still works.
+  const output=attachments.map(file=>file.ocrRequired?{...file,ocrRequired:false,base64:'',viewBase64:file.base64}:file);
   for(const[root,items]of grouped){
     const text=items.map(({source,text})=>[
       `[VISUAL SOURCE: ${source.name}]`,

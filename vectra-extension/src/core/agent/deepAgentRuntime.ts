@@ -21,6 +21,8 @@ export interface VectraModelRequest {
   reasoning?: 'minimal';
   signal?: AbortSignal;
   onDelta?: (delta: string) => void;
+  /** Receives the model's private <think> reasoning as it streams, for a live "Thinking..." UI. */
+  onThinking?: (delta: string) => void;
 }
 
 export interface VectraNativeToolDefinition {
@@ -412,7 +414,8 @@ export class VectraLangChainChatModel extends BaseChatModel<BaseChatModelCallOpt
       model: this.modelId,
       structured: true,
       signal: options.signal,
-      onDelta: (delta) => this.events?.emit({ type: 'deepagent.delta', delta })
+      onDelta: (delta) => this.events?.emit({ type: 'deepagent.delta', delta }),
+      onThinking: (delta) => this.events?.emit({ type: 'deepagent.thinking', delta })
     });
     return parseToolEnvelope(raw, this.boundTools);
   }
@@ -567,7 +570,7 @@ const ACT_OR_ANSWER_NUDGE =
  * content with it, a stall is a single sentence of intent.
  */
 const PENDING_ACTION_PATTERN =
-  /\b(?:let(?:'s| us| me)|i(?:'ll| will| am going to| going to)|first,? i(?:'ll| will)|now i(?:'ll| will))\b[^.!?\n]{0,120}\b(?:read|check|look|inspect|examine|review|search|explore|scan|open|list|find|start|begin|create|add|write|update|modify|edit|implement|build|fix|run|analyz\w*|investigat\w*)\b/i;
+  /\b(?:let(?:'s| us| me)|i(?:'ll| will| am going to| going to| need to| should| must| have to)|we (?:need to|should|must)|first,? i(?:'ll| will)|now i(?:'ll| will))\b[^.!?\n]{0,120}\b(?:read|check|look|inspect|examine|review|search|explore|scan|open|list|find|start|begin|create|add|write|update|modify|edit|implement|build|fix|run|try|attempt|access|load|fetch|retrieve|continue|proceed|analyz\w*|investigat\w*)\b/i;
 
 const MAX_STALL_NARRATION_CHARACTERS = 900;
 
@@ -578,7 +581,7 @@ const MAX_STALL_NARRATION_CHARACTERS = 900;
  * sentence as the final answer.
  */
 const GERUND_OPENER_PATTERN =
-  /^(?:okay[,.!]?\s+|sure[,.!]?\s+|now\s+|next\s+)?(?:creating|generating|writing|building|adding|updating|modifying|editing|implementing|fixing|making|preparing|setting up)\b/i;
+  /^(?:okay[,.!]?\s+|sure[,.!]?\s+|now\s+|next\s+)?(?:creating|generating|writing|building|adding|updating|modifying|editing|implementing|fixing|making|preparing|setting up|reading|checking|inspecting|examining|reviewing|searching|scanning|opening|listing|looking|analyzing|investigating|exploring|loading|fetching|accessing|trying|continuing)\b/i;
 
 export function announcesPendingAction(text: string): boolean {
   const value = String(text ?? '').trim();

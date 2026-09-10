@@ -70,6 +70,70 @@ async function httpGetText(url: string, signal?: AbortSignal): Promise<string> {
   return response.text();
 }
 
+const MAX_IMAGE_BYTES = 15_000_000;
+
+export interface FetchedWebImage { mime: string; base64: string; bytes: number }
+export interface WebImagePageResult { imageUrls: string[] }
+
+/** Download one public image URL as bytes. If the URL turns out to be an HTML
+ * page (a search result or article that merely references the image), return
+ * the image URLs found on it instead so the caller can fetch the right one. */
+export async function fetchWebImage(rawUrl: string, signal?: AbortSignal): Promise<FetchedWebImage | WebImagePageResult> {
+  const url = assertPublicHttpUrl(rawUrl);
+  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const response = await fetch(url.toString(), {
+    headers: { 'User-Agent': USER_AGENT, Accept: 'image/*,text/html;q=0.8,*/*;q=0.5' },
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+  });
+  if (!response.ok) throw new Error(`Request failed with HTTP ${response.status} for ${url}`);
+  const declared = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (declared.includes('html')) return { imageUrls: extractImageUrls(await response.text(), response.url || url.toString()) };
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > MAX_IMAGE_BYTES) throw new Error(`Image is too large (${buffer.length} bytes; limit ${MAX_IMAGE_BYTES}).`);
+  const sniffed = sniffImageMime(buffer);
+  const mime = sniffed || (declared.startsWith('image/') ? declared : '');
+  if (!mime) {
+    // Some servers mislabel pages as octet-stream; if the body is HTML, still extract references.
+    const head = buffer.subarray(0, 512).toString('utf8').toLowerCase();
+    if (head.includes('<html') || head.includes('<!doctype')) return { imageUrls: extractImageUrls(buffer.toString('utf8'), response.url || url.toString()) };
+    throw new Error(`"${rawUrl}" did not return a recognizable image (content-type ${declared || 'unknown'}).`);
+  }
+  return { mime, base64: buffer.toString('base64'), bytes: buffer.length };
+}
+
+/** Identify common raster/vector formats from magic bytes, ignoring the server's label. */
+function sniffImageMime(buffer: Buffer): string {
+  if (buffer.length < 12) return '';
+  if (buffer[0] === 0x89 && buffer.toString('ascii', 1, 4) === 'PNG') return 'image/png';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer.toString('ascii', 0, 4) === 'GIF8') return 'image/gif';
+  if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) return 'image/bmp';
+  if (buffer.toString('ascii', 4, 12) === 'ftypavif') return 'image/avif';
+  const head = buffer.subarray(0, 512).toString('utf8').trimStart().toLowerCase();
+  if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) return 'image/svg+xml';
+  return '';
+}
+
+/** Pull likely image URLs out of an HTML page: og:image first, then <img> sources, absolute and deduplicated. */
+function extractImageUrls(html: string, pageUrl: string, limit = 12): string[] {
+  const found: string[] = [];
+  const push = (raw: string) => {
+    const candidate = String(raw || '').trim();
+    if (!candidate || candidate.startsWith('data:')) return;
+    try {
+      const absolute = new URL(candidate, pageUrl).toString();
+      if (/^https?:/i.test(absolute) && !found.includes(absolute)) found.push(absolute);
+    } catch { /* skip malformed URLs */ }
+  };
+  let match: RegExpExecArray | null;
+  const metaRe = /<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/gi;
+  while ((match = metaRe.exec(html))) push(match[1]);
+  const imgRe = /<img[^>]+src=["']([^"']+)["']/gi;
+  while ((match = imgRe.exec(html)) && found.length < limit * 3) push(match[1]);
+  return found.slice(0, limit);
+}
+
 /** Only public http(s) hosts are reachable - no loopback, link-local, or RFC1918 targets. */
 export function assertPublicHttpUrl(rawUrl: string): URL {
   let url: URL;

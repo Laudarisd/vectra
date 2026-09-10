@@ -6,29 +6,36 @@ import { VECTRA_TOOL_DEFINITIONS } from '../catalog';
 import { toHostToolExecutor } from '../deepTools';
 import { DOCUMENT_EXTRACTION_TOOL_DEFINITION, createDocumentExtractionTool } from './documentExtractionTool';
 import { searchWeb, fetchWebPage } from './liveWeb';
+import { IMAGE_TOOL_DEFINITIONS, createImageTools, VectraImageBox, VectraImageToolOptions } from './imageTools';
 
 export * from './documentExtractionTool';
 export * from './liveWeb';
+export * from './imageTools';
 
-export interface VectraWebArtifact { name: string; mime: string; base64: string }
+// view/title/boxes are display hints for the browser's split image viewer.
+export interface VectraWebArtifact { name: string; mime: string; base64: string; view?: 'image'; title?: string; boxes?: VectraImageBox[] }
 
 export const WEB_TOOL_DEFINITIONS = [
   ...ATTACHMENT_TOOL_DEFINITIONS,
   DOCUMENT_EXTRACTION_TOOL_DEFINITION,
+  ...IMAGE_TOOL_DEFINITIONS,
   ...VECTRA_TOOL_DEFINITIONS.filter((item) => item.surface === 'web' || item.surface === 'all')
 ];
 
 /** Portable web tools operate on uploaded files and downloadable artifacts.
- * They never gain arbitrary server filesystem or shell access. */
+ * They never gain arbitrary server filesystem or shell access. The attachment
+ * list is mutable so fetch_image can register downloaded web images on it. */
 export function createWebTools<TContext = unknown>(
-  attachments: readonly VectraAttachmentRecord[],
-  artifacts: VectraWebArtifact[]
+  attachments: VectraAttachmentRecord[],
+  artifacts: VectraWebArtifact[],
+  imageOptions?: VectraImageToolOptions
 ): VectraDeepTool<TContext>[] {
   const attachmentTools = createAttachmentTools<TContext>(attachments);
   const filesSchema = z.array(z.object({ path: z.string().min(1), content: z.string() })).min(1).max(30);
   return [
     ...attachmentTools,
     createDocumentExtractionTool<TContext>(),
+    ...createImageTools<TContext>(attachments, artifacts, imageOptions),
     {
       name: 'vectra_read_files',
       description: 'Read bounded previews from multiple uploaded files by exact attachment name. Use for PDFs/documents; never use scratch read_file. Also discoverable as parse_files.',
@@ -80,10 +87,11 @@ export function createWebTools<TContext = unknown>(
  * subsets can be rebuilt from WEB_TOOL_DEFINITIONS the same way the extension
  * host does it, instead of every subagent sharing one unrestricted tool set. */
 export function createWebToolExecutor<TContext = unknown>(
-  attachments: readonly VectraAttachmentRecord[],
-  artifacts: VectraWebArtifact[]
+  attachments: VectraAttachmentRecord[],
+  artifacts: VectraWebArtifact[],
+  imageOptions?: VectraImageToolOptions
 ): VectraHostToolExecutor<TContext> {
-  return toHostToolExecutor(createWebTools<TContext>(attachments, artifacts));
+  return toHostToolExecutor(createWebTools<TContext>(attachments, artifacts, imageOptions));
 }
 
 function addArtifact(artifacts: VectraWebArtifact[], requestedPath: string, content: string): string {

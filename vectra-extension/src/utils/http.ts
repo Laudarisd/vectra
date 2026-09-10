@@ -73,6 +73,8 @@ export async function fetchJson<T>(
 
 export interface StreamOptions {
   onDelta?: (delta: string) => void;
+  /** Receives text inside <think> tags, streamed live for the "Thinking..." UI. */
+  onThinking?: (delta: string) => void;
   /** Reset on every received chunk, so a long-but-still-producing local generation is never killed by a total-duration cap. */
   idleTimeoutMs?: number;
   signal?: AbortSignal;
@@ -152,7 +154,7 @@ async function consumeStream(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    const visible = new VisibleModelTextStream(onDelta);
+    const visible = new VisibleModelTextStream(onDelta, options.onThinking);
     const collect = (delta: string) => visible.push(delta);
 
     while (true) {

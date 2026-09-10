@@ -62,7 +62,7 @@ export class OllamaProvider implements TextProvider {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...body, stream: true }),
         signal: request.signal
-      }, { onDelta: request.onDelta, idleTimeoutMs: this.timeoutMs, signal: request.signal });
+      }, { onDelta: request.onDelta, onThinking: request.onThinking, idleTimeoutMs: this.timeoutMs, signal: request.signal });
       if (!text.trim()) throw new Error('Ollama returned no text output.');
       return text.trim();
     }

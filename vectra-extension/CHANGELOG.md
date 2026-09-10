@@ -2,9 +2,16 @@
 
 ## 1.1.7
 
+- Vectra Web: `show_image` now displays uploaded PDFs — pass the PDF name plus a 1-based `page` and the server rasterizes that page on demand from the original document (native-text pages included, which were never pre-rendered before). "x.pdf is not an image attachment" errors are gone, and OCR + image-view requests show the page with highlighted text regions.
+- Vectra Web: new `fetch_image` agent tool downloads a public web image (SSRF-guarded, size-capped, format-sniffed) and opens it in the split viewer; given a web page URL instead of an image file, it returns the page's referenced image URLs (og:image and `<img>` sources) so the agent can fetch the right one instead of just citing a link. Fetched images become attachments reusable with `show_image`.
+- Vectra Web: images transcribed by visual OCR keep display-only bytes, so an uploaded image or rendered PDF page can still be re-displayed and highlighted after OCR instead of failing with "No image bytes found".
+
 - Deep Agents runs are no longer cut off by a derived step budget: they now run until the agent finishes or you cancel. Long research runs no longer stop early with a "step budget (120 internal steps)" message. `vectra.deepAgentRecursionLimit` remains available as an opt-in cap (0 = unlimited).
 - The activity log now reads as a timeline: a rail connects the steps, finished steps show how long they took, and the current step ticks a live timer.
 - Live web access now works in both products: `web_search` and `web_fetch` moved into the shared core, Vectra Web gained working implementations of both (it previously only advertised them), and real-time questions (weather, time, news, prices) now route to the agent so those tools are actually used instead of a "I can't know that" chat reply.
+- The agent now knows the current date and time on every request and answers date questions directly instead of claiming no real-time access.
+- Vectra Web: new split image viewer with two agent tools — `show_image` re-displays an uploaded image with optional labeled bounding boxes (fractions of the image, so any resolution works), and `draw_image` renders a model-generated SVG figure (plot, chart, diagram). The viewer opens as a third panel automatically and every visual stays re-openable and downloadable from its message.
+- Live "Thinking…" display in both products: a reasoning model's `<think>` stream now renders in a collapsible block with a ticking timer instead of being discarded, so long analyses show what the model is working through. Also fixes Vectra Web briefly flashing raw think markup in streamed replies.
 
 ## 1.1.6
 

@@ -23,11 +23,12 @@ import { Semaphore } from './services/concurrency.mjs';
 import { preprocessAttachments } from './document-pipeline/preprocess.mjs';
 import { prepareVisualOcrEvidence } from './document-pipeline/ocr-orchestrator.mjs';
 import { attachmentContextForPrompt, attachmentManifest, attachmentRootName, attachmentScratchFiles, mergeAttachmentSets } from './document-pipeline/evidence.mjs';
-import { MAX_DOCUMENT_TEXT_CHARS, OCR_RETRY_COUNT } from './document-pipeline/config.mjs';
+import { MAX_DOCUMENT_TEXT_CHARS, OCR_RETRY_COUNT, PDF_RENDER_DPI } from './document-pipeline/config.mjs';
+import { renderPdfPageImage } from './services/pdf-renderer.mjs';
 const require=createRequire(import.meta.url);
 let agentCore;
 agentCore=require('../core')
-const{AgentSession,VectraDeepAgentRuntime,createWebTools,createWebToolExecutor,WEB_TOOL_DEFINITIONS,buildVectraSubagentSpecs,describeDeepAgentTool}=agentCore;
+const{AgentSession,VectraDeepAgentRuntime,VisibleModelTextStream,createWebTools,createWebToolExecutor,WEB_TOOL_DEFINITIONS,buildVectraSubagentSpecs,describeDeepAgentTool}=agentCore;
 // Throttles tool calls made by Deep Agents role subagents (planner/researcher/
 // coder/tester/reviewer/security/documentation) so several of them can't hammer
 // one local llama.cpp process or a rate-limited cloud endpoint at once. Not a
@@ -112,6 +113,7 @@ async function handleChat(req,res){
   req.on('close',()=>{closed=true;requestAbort.abort()});
   const unsubscribe=session.events.subscribe((event)=>{
     if(event.type==='ui.delta'&&!closed)send({delta:event.delta});
+    if(event.type==='deepagent.thinking'&&!closed)send({thinking:event.delta});
     if(event.type==='ui.progress'&&!closed)send({progress:event.message});
     if(event.type==='deepagent.tool.started'&&!closed&&typeof event.tool==='string')send({progress:describeDeepAgentTool(event.tool)});
     if(event.type==='deepagent.subagent.started'&&!closed)send({subagent:{event:'started',runId:event.runId,role:event.role,description:event.description}});
@@ -164,14 +166,23 @@ async function handleChat(req,res){
           try{const result=await compatibleToolChat({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,timeoutMs:idleTimeoutMs,attachments:attachmentContextForPrompt(request.messages?.filter(message=>message.role==='user').at(-1)?.content||'',safeAttachments,attachmentTextBudget,12),...request});lastFinishReason=result.finishReason||'';return result}
           catch(error){const detail=error instanceof Error?error.message:String(error);if(/HTTP (400|404|422)|tool.?call|chat template|jinja/i.test(detail)){nativeToolsAvailable=false;throw new Error(`NATIVE_TOOL_CALLING_UNSUPPORTED: ${detail}`)}throw error}
         }}:{})};
-        const tools=createWebTools(safeAttachments,toolArtifacts);
+        // show_image can rasterize any page of an uploaded PDF on demand from the
+        // original bytes, so even native-text pages (never pre-rendered) display.
+        const imageToolOptions={renderPdfPage:async(record,pageNumber)=>{
+          const root=attachmentRootName(record.name);
+          const source=safeAttachments.find(file=>file.name===root&&file.base64&&(file.mime==='application/pdf'||/\.pdf$/i.test(file.name)));
+          if(!source)return null;
+          const rendered=await renderPdfPageImage(Buffer.from(source.base64,'base64'),{pageNumber,dpi:PDF_RENDER_DPI});
+          return{mime:rendered.mime,base64:rendered.base64,width:rendered.width,height:rendered.height};
+        }};
+        const tools=createWebTools(safeAttachments,toolArtifacts,imageToolOptions);
         const subagentSemaphore=new Semaphore(MAX_CONCURRENT_SUBAGENTS);
-        const executeWebTool=createWebToolExecutor(safeAttachments,toolArtifacts);
+        const executeWebTool=createWebToolExecutor(safeAttachments,toolArtifacts,imageToolOptions);
         const gatedExecuteWebTool=async(name,input,context)=>{await subagentSemaphore.acquire();try{return await executeWebTool(name,input,context)}finally{subagentSemaphore.release()}};
         const subagentSpecs=buildVectraSubagentSpecs(WEB_TOOL_DEFINITIONS,gatedExecuteWebTool,!!bridge.completeWithTools);
         const sourceDocumentCount=new Set(safeAttachments.map(file=>attachmentRootName(file.name))).size;
         const collaborationPrompt=sourceDocumentCount>=4?' This request has multiple source documents. Collaborate through researcher subagents when useful: assign at most three non-overlapping batches of named files, require filename/page-grounded findings, then personally reconcile conflicts and synthesize one final answer. Do not delegate a simple single-document read and do not repeatedly delegate the same batch.':'';
-        const runtime=new VectraDeepAgentRuntime({provider:bridge,model,tools,context:{},events,maxSteps:24,systemPrompt:`${systemPrompt(safeAttachments)} The latest user request is authoritative. Use older conversation only to resolve genuine references; never blend earlier document facts, tables, requested formats, or conclusions into a new answer unless the user explicitly asks to compare, combine, continue, or use previous material. Complete work in the current response: never promise later work. The UI already shows loading while work continues.${collaborationPrompt} Dynamically infer the user's goal and each uploaded file's structure without special trigger words. Build a grounded document model from native layout text, page markers, metadata, tables, page classifications, selectively rendered pages, embedded images, dimensions, and literal visual OCR. Inspect all relevant evidence and cross-check exact identifiers, descriptions, revisions, quantities, dates, dimensions, units, and relationships. Native text is authoritative when available; visual OCR is used only where native extraction was insufficient. Never autocorrect or infer source values. For a general parse request, report structure and metadata, then detected tables or records, image or drawing findings, dimensions, notes, and uncertainties. Never impose a generic title, industry template, or fixed columns. If the user supplies headers, reproduce their wording and order exactly; otherwise derive fields only from the evidence and request. Preserve source page order, table boundaries, columns, whitespace cues, and line breaks. Keep [UNCLEAR] and [OCR FAILED] rather than guessing. Verify every structured cell against native text or visual OCR. When evidence contains repeating records, call document_extraction with the complete dataset and return its table verbatim. Preserve filename and page provenance.`,subagentSpecs});
+        const runtime=new VectraDeepAgentRuntime({provider:bridge,model,tools,context:{},events,maxSteps:24,systemPrompt:`${systemPrompt(safeAttachments)} The latest user request is authoritative. Use older conversation only to resolve genuine references; never blend earlier document facts, tables, requested formats, or conclusions into a new answer unless the user explicitly asks to compare, combine, continue, or use previous material. Complete work in the current response: never promise later work. The UI already shows loading while work continues. When the user asks to show, view, highlight, draw, plot, or visualize something, call show_image (re-displays an uploaded image, or one page of an uploaded PDF when given its name plus page; verify regions carefully against the actual image before passing bounding boxes as 0..1 fractions), fetch_image (downloads a public web image URL and displays it - use it whenever the user should actually see an image found on the web, never just paste its link; if given a page URL it returns that page's image URLs to pick from) or draw_image (a new SVG figure) so it opens in the split viewer. Always prefer show_image for an image or PDF that was uploaded; never use draw_image to recreate or approximate an uploaded image. For an OCR or text-extraction request on an image or PDF page, do both: return the recognized text in the chat, and call show_image on the original image or PDF page with a bounding box around each detected text region, using the recognized text (shortened) as the box label.${collaborationPrompt} Dynamically infer the user's goal and each uploaded file's structure without special trigger words. Build a grounded document model from native layout text, page markers, metadata, tables, page classifications, selectively rendered pages, embedded images, dimensions, and literal visual OCR. Inspect all relevant evidence and cross-check exact identifiers, descriptions, revisions, quantities, dates, dimensions, units, and relationships. Native text is authoritative when available; visual OCR is used only where native extraction was insufficient. Never autocorrect or infer source values. For a general parse request, report structure and metadata, then detected tables or records, image or drawing findings, dimensions, notes, and uncertainties. Never impose a generic title, industry template, or fixed columns. If the user supplies headers, reproduce their wording and order exactly; otherwise derive fields only from the evidence and request. Preserve source page order, table boundaries, columns, whitespace cues, and line breaks. Keep [UNCLEAR] and [OCR FAILED] rather than guessing. Verify every structured cell against native text or visual OCR. When evidence contains repeating records, call document_extraction with the complete dataset and return its table verbatim. Preserve filename and page provenance.`,subagentSpecs});
         const hasVisualOcr=safeAttachments.some(file=>/visual OCR$/i.test(file.name));
         const originalTask=safeMessages.at(-1)?.content||'Please analyze the attached files.';
         const last=hasVisualOcr?`${originalTask}\n\n[VECTRA EVIDENCE REQUIREMENT: Selective visual OCR has completed for pages or images without sufficient native text. Account for every visual source in the coverage preview. For complete extraction, read the full visual OCR attachment in consecutive chunks until hasMore is false. Preserve page order and do not invent unreadable values.]`:originalTask;
@@ -196,9 +207,14 @@ async function handleChat(req,res){
           generated=`${generated}\n\n${next}`;
         }
       }else{
+        // Split the raw token stream: visible text goes to the chat, <think>
+        // reasoning goes to the collapsible "Thinking..." block - it used to
+        // flash raw think markup in the chat until the final text replaced it.
+        const splitter=new VisibleModelTextStream((delta)=>events.emit({type:'ui.delta',delta}),(delta)=>events.emit({type:'deepagent.thinking',delta}));
         generated=streamable
-          ? await compatibleChatStream({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,messages:safeMessages,attachments:modelAttachments},(delta)=>events.emit({type:'ui.delta',delta}),idleTimeoutMs)
+          ? await compatibleChatStream({apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,messages:safeMessages,attachments:modelAttachments},(delta)=>splitter.push(delta),idleTimeoutMs)
           : await callProvider(provider,{apiKey,model,baseUrl,allowInsecureTls,messages:safeMessages,attachments:modelAttachments});
+        splitter.finish();
       }
       if(!streamable||agentHarness==='deepagents')events.emit({type:'ui.delta',delta:generated});
       return generated;

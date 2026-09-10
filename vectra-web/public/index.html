@@ -42,6 +42,12 @@
       </div>
     </section>
   </main>
+
+  <!-- Split image viewer: opens as a third column when the agent shows or draws an image -->
+  <aside id="viewerPanel" class="viewer-panel" hidden>
+    <div class="viewer-head"><strong id="viewerTitle">Viewer</strong><button id="viewerClose" class="icon-close" title="Close viewer">×</button></div>
+    <div class="viewer-body"><div id="viewerStage" class="viewer-stage"></div></div>
+  </aside>
 </div>
 
 <dialog id="settingsDialog" class="local-dialog">

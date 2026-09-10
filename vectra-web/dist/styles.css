@@ -25,6 +25,27 @@ html[data-theme="gray"]{
 body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg)}
 button,input,select,textarea{font:inherit}
 .app-shell{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
+/* Split image viewer: a third column that appears when the agent shows or draws an image */
+.app-shell.viewer-open{grid-template-columns:250px minmax(0,1fr) minmax(280px,42%)}
+.viewer-panel{display:flex;flex-direction:column;min-width:0;max-height:100vh;border-left:1px solid var(--border);background:var(--bg-elevated)}
+/* display:flex above would defeat the hidden attribute, leaving an empty panel visible on load */
+.viewer-panel[hidden]{display:none}
+.viewer-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.viewer-body{overflow:auto;padding:14px}
+.viewer-frame{position:relative;display:inline-block;max-width:100%}
+.viewer-frame img{display:block;max-width:100%;height:auto;border-radius:6px;background:#fff}
+.viewer-box{position:absolute;border:2px solid #ff4d4f;border-radius:2px;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.viewer-box-label{position:absolute;top:-1.5em;left:-2px;background:#ff4d4f;color:#fff;font-size:11px;line-height:1.3;padding:1px 5px;border-radius:3px;white-space:nowrap}
+.artifact-view{border:1px solid var(--border);background:var(--bg-elevated);color:var(--fg);border-radius:6px;padding:4px 10px;cursor:pointer}
+.artifact-view:hover{background:var(--bg-elevated-hover)}
+/* Live "Thinking..." block: collapsible, streams the model's private reasoning */
+.thinking-block{margin:2px 0 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-elevated)}
+.thinking-block>summary{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:.9em;font-weight:600;opacity:.8;list-style:none}
+.thinking-block>summary::-webkit-details-marker{display:none}
+.thinking-block>summary::before{content:'▸';transition:transform .15s}
+.thinking-block[open]>summary::before{transform:rotate(90deg)}
+.thinking-time{margin-left:auto;font-size:.88em;opacity:.6;font-variant-numeric:tabular-nums}
+.thinking-text{max-height:180px;overflow-y:auto;padding:0 10px 8px;font-size:.86em;line-height:1.45;opacity:.62;white-space:pre-wrap;word-break:break-word;font-style:italic}
 .sidebar{background:var(--bg-sidebar);padding:14px 12px;display:flex;flex-direction:column;border-right:1px solid var(--border)}
 .brand{display:flex;align-items:center;gap:9px;font-weight:700;padding:4px 6px 18px}
 .mark,.hero-mark{display:block;object-fit:contain;background:transparent}
@@ -64,6 +85,9 @@ select,.ghost{border:1px solid var(--border);background:var(--bg);color:var(--fg
 .send:disabled{opacity:.35;cursor:default}
 .attachments{display:flex;gap:7px;flex-wrap:wrap;padding:8px 5px}
 .attachment-chip{display:flex;align-items:center;gap:7px;max-width:280px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;padding:7px 8px;font-size:12px}
+/* Uploads pinned to a sent user message, visible for the whole chat */
+.message-files{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.message-files .attachment-chip{display:inline-flex;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .attachment-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .attachment-chip button{border:0;background:transparent;color:var(--fg-muted);cursor:pointer}
 .fineprint{text-align:center;color:var(--fg-faint);font-size:11px;margin-top:8px}
@@ -81,7 +105,7 @@ dialog::backdrop{background:#0008}
 .settings-connection-status[data-status="ready"]{color:#67c774}
 .settings-connection-status[data-status="testing"]{color:#e4bd5a}
 .primary{border:0;background:var(--btn-primary-bg);color:var(--btn-primary-fg);border-radius:9px;padding:8px 13px;cursor:pointer}
-@media(max-width:780px){.app-shell{grid-template-columns:1fr}.sidebar{display:none}.composer-zone{left:0}.topbar{padding:8px 10px}.model-area select{max-width:160px}.web-message{padding-left:14px;padding-right:14px}}
+@media(max-width:780px){.app-shell{grid-template-columns:1fr}.app-shell.viewer-open{grid-template-columns:1fr}.viewer-panel{display:none}.sidebar{display:none}.composer-zone{left:0}.topbar{padding:8px 10px}.model-area select{max-width:160px}.web-message{padding-left:14px;padding-right:14px}}
 
 .local-model-button{border-color:var(--border)}
 .status-pill{font-size:11px;padding:5px 8px;border-radius:999px;border:1px solid var(--border);color:var(--fg-muted);background:var(--bg-elevated)}

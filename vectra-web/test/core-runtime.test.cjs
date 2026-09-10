@@ -212,6 +212,44 @@ test('web adapter uses shared portable definitions and creates downloadable file
   assert.equal(Buffer.from(artifacts[0].base64, 'base64').toString(), '# Echo state network');
 });
 
+// Regression: "show this PDF as an image" used to fail with '"x.pdf" is not an
+// image attachment', and images whose bytes were released after OCR could
+// never be re-displayed.
+test('show_image renders PDF pages on demand and keeps post-OCR display bytes usable', async () => {
+  const artifacts = [];
+  const attachments = [
+    { name: 'drawing.pdf', kind: 'pdf', mime: 'application/pdf', text: 'native text', base64: Buffer.from('pdf-bytes').toString('base64') },
+    { name: 'scan.png', kind: 'image', mime: 'image/png', base64: '', viewBase64: Buffer.from('scan-bytes').toString('base64') }
+  ];
+  const rendered = [];
+  const tools = createWebTools(attachments, artifacts, {
+    renderPdfPage: async (record, pageNumber) => {
+      rendered.push([record.name, pageNumber]);
+      return { mime: 'image/png', base64: Buffer.from(`page-${pageNumber}`).toString('base64'), width: 100, height: 50 };
+    }
+  });
+  const show = tools.find((item) => item.name === 'show_image');
+
+  // A PDF name plus page rasterizes that page from the original document.
+  assert.match(await show.execute({ name: 'drawing.pdf', page: 3 }, {}), /drawing\.pdf · page 3/);
+  assert.deepEqual(rendered, [['drawing.pdf', 3]]);
+  assert.equal(artifacts[0].name, 'drawing.pdf · page 3');
+  assert.equal(artifacts[0].view, 'image');
+
+  // Display-only bytes retained after OCR release still show.
+  await show.execute({ name: 'scan.png' }, {});
+  assert.ok(artifacts.some((item) => item.name === 'scan.png' && item.base64 === attachments[1].viewBase64));
+
+  // Without a host page renderer the PDF error is actionable, not "not an image".
+  const bare = createWebTools(attachments, []).find((item) => item.name === 'show_image');
+  await assert.rejects(async () => bare.execute({ name: 'drawing.pdf', page: 2 }, {}), /No rendered image is available/);
+
+  // fetch_image is registered and its URLs pass the SSRF guard before any request.
+  const fetchImage = tools.find((item) => item.name === 'fetch_image');
+  assert.ok(fetchImage);
+  await assert.rejects(async () => fetchImage.execute({ url: 'http://localhost/logo.png' }, {}), /local\/private address/);
+});
+
 test('web-only document_extraction supports arbitrary schemas and cross-matching', async () => {
   const tools = createWebTools([], []);
   const extraction = tools.find((item) => item.name === 'document_extraction');

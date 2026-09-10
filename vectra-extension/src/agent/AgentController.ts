@@ -44,6 +44,8 @@ interface RunLoopOptions {
   contextCharBudget: number;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
+  /** Live <think> reasoning from the model, streamed to the "Thinking..." UI. */
+  onThinking?: (delta: string) => void;
   onTodosChanged?: (todos: TodoItem[]) => void;
   onPlanChanged?: (plan: Plan) => void;
   onProposalsChanged?: () => void;
@@ -139,6 +141,7 @@ export class AgentController {
         contextCharBudget,
         signal: request.signal,
         onProgress: request.onProgress,
+        onThinking: request.onThinking,
         onTodosChanged: request.onTodosChanged,
         onPlanChanged: request.onPlanChanged,
         onProposalsChanged: request.onProposalsChanged,
@@ -184,6 +187,7 @@ export class AgentController {
         if (event.tool === 'write_todos') this.syncDeepTodos(event.input, opts.onTodosChanged);
       }
       if (event.type === 'deepagent.delta' && typeof event.delta === 'string') opts.onProgress?.('Generating response…');
+      if (event.type === 'deepagent.thinking' && typeof event.delta === 'string') opts.onThinking?.(event.delta);
       if (event.type === 'deepagent.stalled_narration') opts.onProgress?.('That turn described an action without running it; asking again…');
       if (event.type === 'deepagent.closing_answer.requested') opts.onProgress?.('Writing the final answer…');
       if (event.type === 'deepagent.subagent.started' && typeof event.role === 'string') {

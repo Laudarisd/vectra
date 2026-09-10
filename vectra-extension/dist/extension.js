@@ -101906,7 +101906,8 @@ var VectraLangChainChatModel = class _VectraLangChainChatModel extends BaseChatM
       model: this.modelId,
       structured: true,
       signal: options.signal,
-      onDelta: (delta) => this.events?.emit({ type: "deepagent.delta", delta })
+      onDelta: (delta) => this.events?.emit({ type: "deepagent.delta", delta }),
+      onThinking: (delta) => this.events?.emit({ type: "deepagent.thinking", delta })
     });
     return parseToolEnvelope(raw, this.boundTools);
   }
@@ -102024,9 +102025,9 @@ function extractEnvelopeMessageField(candidate) {
   }
 }
 var ACT_OR_ANSWER_NUDGE = "You described what you were about to do but called no tool, so nothing happened. Call the tool now, in this turn, to actually do it. If no tool is needed, give the complete answer instead. Never reply with only a statement of what you are about to do next.";
-var PENDING_ACTION_PATTERN = /\b(?:let(?:'s| us| me)|i(?:'ll| will| am going to| going to)|first,? i(?:'ll| will)|now i(?:'ll| will))\b[^.!?\n]{0,120}\b(?:read|check|look|inspect|examine|review|search|explore|scan|open|list|find|start|begin|create|add|write|update|modify|edit|implement|build|fix|run|analyz\w*|investigat\w*)\b/i;
+var PENDING_ACTION_PATTERN = /\b(?:let(?:'s| us| me)|i(?:'ll| will| am going to| going to| need to| should| must| have to)|we (?:need to|should|must)|first,? i(?:'ll| will)|now i(?:'ll| will))\b[^.!?\n]{0,120}\b(?:read|check|look|inspect|examine|review|search|explore|scan|open|list|find|start|begin|create|add|write|update|modify|edit|implement|build|fix|run|try|attempt|access|load|fetch|retrieve|continue|proceed|analyz\w*|investigat\w*)\b/i;
 var MAX_STALL_NARRATION_CHARACTERS = 900;
-var GERUND_OPENER_PATTERN = /^(?:okay[,.!]?\s+|sure[,.!]?\s+|now\s+|next\s+)?(?:creating|generating|writing|building|adding|updating|modifying|editing|implementing|fixing|making|preparing|setting up)\b/i;
+var GERUND_OPENER_PATTERN = /^(?:okay[,.!]?\s+|sure[,.!]?\s+|now\s+|next\s+)?(?:creating|generating|writing|building|adding|updating|modifying|editing|implementing|fixing|making|preparing|setting up|reading|checking|inspecting|examining|reviewing|searching|scanning|opening|listing|looking|analyzing|investigating|exploring|loading|fetching|accessing|trying|continuing)\b/i;
 function announcesPendingAction(text) {
   const value = String(text ?? "").trim();
   if (!value || value.length > MAX_STALL_NARRATION_CHARACTERS) return false;
@@ -102236,6 +102237,91 @@ function summarizeState(state) {
     files,
     asyncTasks: Array.isArray(value.asyncTasks) ? value.asyncTasks : []
   };
+}
+
+// src/core/agent/modelTextStream.ts
+var VisibleModelTextStream = class {
+  constructor(onVisible, onThinking) {
+    this.onVisible = onVisible;
+    this.onThinking = onThinking;
+  }
+  pending = "";
+  hidden = false;
+  value = "";
+  push(chunk) {
+    this.pending += String(chunk ?? "");
+    this.drain(false);
+  }
+  /** Flush the buffer and return the complete visible (non-thinking) text. */
+  finish() {
+    this.drain(true);
+    return this.value.trim();
+  }
+  emit(text) {
+    if (!text) return;
+    this.value += text;
+    this.onVisible?.(text);
+  }
+  drain(final2) {
+    while (this.pending) {
+      const lower = this.pending.toLowerCase();
+      if (this.hidden) {
+        const close = lower.indexOf("</think>");
+        if (close >= 0) {
+          this.onThinking?.(this.pending.slice(0, close));
+          this.pending = this.pending.slice(close + "</think>".length);
+          this.hidden = false;
+          continue;
+        }
+        if (final2) {
+          this.onThinking?.(this.pending);
+          this.pending = "";
+          return;
+        }
+        const keep2 = partialTagSuffix(this.pending, "</think>");
+        this.onThinking?.(keep2 ? this.pending.slice(0, -keep2) : this.pending);
+        this.pending = keep2 ? this.pending.slice(-keep2) : "";
+        return;
+      }
+      const open = lower.indexOf("<think");
+      const strayClose = lower.indexOf("</think>");
+      if (strayClose >= 0 && (open < 0 || strayClose < open)) {
+        this.emit(this.pending.slice(0, strayClose));
+        this.pending = this.pending.slice(strayClose + "</think>".length);
+        continue;
+      }
+      if (open >= 0) {
+        this.emit(this.pending.slice(0, open));
+        const end = this.pending.indexOf(">", open);
+        if (end < 0) {
+          this.pending = this.pending.slice(open);
+          if (final2) this.pending = "";
+          return;
+        }
+        this.pending = this.pending.slice(end + 1);
+        this.hidden = true;
+        continue;
+      }
+      if (final2) {
+        this.emit(this.pending.replace(/<\/?think\b[^>]*>/gi, ""));
+        this.pending = "";
+        return;
+      }
+      const keep = Math.max(partialTagSuffix(this.pending, "<think"), partialTagSuffix(this.pending, "</think>"));
+      this.emit(keep ? this.pending.slice(0, -keep) : this.pending);
+      this.pending = keep ? this.pending.slice(-keep) : "";
+      return;
+    }
+  }
+};
+function partialTagSuffix(value, tag) {
+  const lower = value.toLowerCase();
+  const wanted = tag.toLowerCase();
+  const maximum = Math.min(lower.length, wanted.length - 1);
+  for (let length = maximum; length > 0; length--) {
+    if (lower.endsWith(wanted.slice(0, length))) return length;
+  }
+  return 0;
 }
 
 // src/core/tools/attachments.ts
@@ -102590,10 +102676,25 @@ var DOCUMENT_EXTRACTION_TOOL_DEFINITION = {
   surface: "web"
 };
 
+// src/core/tools/web/imageTools.ts
+var IMAGE_TOOL_DEFINITIONS = [
+  { name: "show_image", displayName: "Show Image", description: "Display an uploaded image or one page of an uploaded PDF in the split viewer panel, optionally highlighting regions with labeled bounding boxes.", risk: "read", surface: "web" },
+  { name: "fetch_image", displayName: "Fetch Web Image", description: "Download an image from a public web URL and display it in the split viewer panel; an HTML page returns its referenced image URLs instead.", risk: "network", surface: "web" },
+  { name: "draw_image", displayName: "Draw Image", description: "Generate a new SVG figure (plot, chart, diagram, sketch) and display it in the split viewer panel.", risk: "read", surface: "web" }
+];
+var boxSchema = external_exports2.object({
+  x: external_exports2.number().min(0).max(1).describe("Left edge as a fraction of image width, from the left."),
+  y: external_exports2.number().min(0).max(1).describe("Top edge as a fraction of image height, from the top."),
+  w: external_exports2.number().min(0).max(1).describe("Box width as a fraction of image width."),
+  h: external_exports2.number().min(0).max(1).describe("Box height as a fraction of image height."),
+  label: external_exports2.string().max(80).optional().describe("Short caption drawn on the box.")
+});
+
 // src/core/tools/web/index.ts
 var WEB_TOOL_DEFINITIONS = [
   ...ATTACHMENT_TOOL_DEFINITIONS,
   DOCUMENT_EXTRACTION_TOOL_DEFINITION,
+  ...IMAGE_TOOL_DEFINITIONS,
   ...VECTRA_TOOL_DEFINITIONS.filter((item) => item.surface === "web" || item.surface === "all")
 ];
 
@@ -103487,84 +103588,6 @@ function visibleModelText2(raw) {
   text = text.replace(/<think\b[^>]*>[\s\S]*$/gi, "");
   return text.replace(/<tool_call\b[^>]*>[\s\S]*?<\/tool_call>/gi, "").replace(/<tool_call\b[^>]*>[\s\S]*$/gi, "").trim();
 }
-var VisibleModelTextStream = class {
-  constructor(onVisible) {
-    this.onVisible = onVisible;
-  }
-  pending = "";
-  hidden = false;
-  value = "";
-  push(chunk) {
-    this.pending += String(chunk ?? "");
-    this.drain(false);
-  }
-  finish() {
-    this.drain(true);
-    return this.value.trim();
-  }
-  emit(text) {
-    if (!text) return;
-    this.value += text;
-    this.onVisible?.(text);
-  }
-  drain(final2) {
-    while (this.pending) {
-      const lower = this.pending.toLowerCase();
-      if (this.hidden) {
-        const close = lower.indexOf("</think>");
-        if (close >= 0) {
-          this.pending = this.pending.slice(close + "</think>".length);
-          this.hidden = false;
-          continue;
-        }
-        if (final2) {
-          this.pending = "";
-          return;
-        }
-        const keep2 = partialTagSuffix(this.pending, "</think>");
-        this.pending = keep2 ? this.pending.slice(-keep2) : "";
-        return;
-      }
-      const open = lower.indexOf("<think");
-      const strayClose = lower.indexOf("</think>");
-      if (strayClose >= 0 && (open < 0 || strayClose < open)) {
-        this.emit(this.pending.slice(0, strayClose));
-        this.pending = this.pending.slice(strayClose + "</think>".length);
-        continue;
-      }
-      if (open >= 0) {
-        this.emit(this.pending.slice(0, open));
-        const end = this.pending.indexOf(">", open);
-        if (end < 0) {
-          this.pending = this.pending.slice(open);
-          if (final2) this.pending = "";
-          return;
-        }
-        this.pending = this.pending.slice(end + 1);
-        this.hidden = true;
-        continue;
-      }
-      if (final2) {
-        this.emit(this.pending.replace(/<\/?think\b[^>]*>/gi, ""));
-        this.pending = "";
-        return;
-      }
-      const keep = Math.max(partialTagSuffix(this.pending, "<think"), partialTagSuffix(this.pending, "</think>"));
-      this.emit(keep ? this.pending.slice(0, -keep) : this.pending);
-      this.pending = keep ? this.pending.slice(-keep) : "";
-      return;
-    }
-  }
-};
-function partialTagSuffix(value, tag) {
-  const lower = value.toLowerCase();
-  const wanted = tag.toLowerCase();
-  const maximum = Math.min(lower.length, wanted.length - 1);
-  for (let length = maximum; length > 0; length--) {
-    if (lower.endsWith(wanted.slice(0, length))) return length;
-  }
-  return 0;
-}
 
 // src/agent/protocol.ts
 var AGENT_TOOL_NAMES = new Set(AGENT_TOOL_DEFINITIONS.map((definition) => definition.name));
@@ -103948,6 +103971,7 @@ var AgentController = class {
         contextCharBudget,
         signal: request2.signal,
         onProgress: request2.onProgress,
+        onThinking: request2.onThinking,
         onTodosChanged: request2.onTodosChanged,
         onPlanChanged: request2.onPlanChanged,
         onProposalsChanged: request2.onProposalsChanged,
@@ -103987,6 +104011,7 @@ var AgentController = class {
         if (event.tool === "write_todos") this.syncDeepTodos(event.input, opts.onTodosChanged);
       }
       if (event.type === "deepagent.delta" && typeof event.delta === "string") opts.onProgress?.("Generating response\u2026");
+      if (event.type === "deepagent.thinking" && typeof event.delta === "string") opts.onThinking?.(event.delta);
       if (event.type === "deepagent.stalled_narration") opts.onProgress?.("That turn described an action without running it; asking again\u2026");
       if (event.type === "deepagent.closing_answer.requested") opts.onProgress?.("Writing the final answer\u2026");
       if (event.type === "deepagent.subagent.started" && typeof event.role === "string") {
@@ -104719,7 +104744,7 @@ async function consumeStream(url2, init, options, handleLine) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    const visible = new VisibleModelTextStream(onDelta);
+    const visible = new VisibleModelTextStream(onDelta, options.onThinking);
     const collect = (delta) => visible.push(delta);
     while (true) {
       const { done, value } = await reader.read();
@@ -104868,7 +104893,7 @@ var OllamaProvider = class {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...body, stream: true }),
         signal: request2.signal
-      }, { onDelta: request2.onDelta, idleTimeoutMs: this.timeoutMs, signal: request2.signal });
+      }, { onDelta: request2.onDelta, onThinking: request2.onThinking, idleTimeoutMs: this.timeoutMs, signal: request2.signal });
       if (!text2.trim()) throw new Error("Ollama returned no text output.");
       return text2.trim();
     }
@@ -104923,7 +104948,7 @@ var OpenAICompatibleProvider = class {
     const body = { model: request2.model, messages: [{ role: "system", content: request2.systemPrompt }, { role: "user", content: userContent }], temperature: request2.structured === false ? 0.6 : 0.2, ...this.structuredAgentJson ? { cache_prompt: true } : {}, ...wantsEnvelope ? { response_format: { type: "json_object", schema: AGENT_ENVELOPE_SCHEMA } } : {}, ...briefReplyOptions(request2) };
     const send = async (payload) => {
       if (request2.structured === false && request2.onDelta) {
-        const streamed = await streamSse(`${this.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ ...payload, stream: true }), signal: request2.signal }, { onDelta: request2.onDelta, idleTimeoutMs: this.timeoutMs, signal: request2.signal, allowInsecureTls: this.allowInsecureTls });
+        const streamed = await streamSse(`${this.baseUrl}/chat/completions`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ ...payload, stream: true }), signal: request2.signal }, { onDelta: request2.onDelta, onThinking: request2.onThinking, idleTimeoutMs: this.timeoutMs, signal: request2.signal, allowInsecureTls: this.allowInsecureTls });
         if (!streamed.trim()) throw new Error("OpenAI-compatible endpoint returned no text output.");
         return streamed.trim();
       }
@@ -108197,6 +108222,7 @@ var ChatViewProvider = class _ChatViewProvider {
           signal,
           onProgress: (progress) => events.emit({ type: "ui.progress", message: progress }),
           onDelta: (delta) => events.emit({ type: "ui.delta", id: streamId, delta }),
+          onThinking: (delta) => events.emit({ type: "ui.thinking", delta }),
           onTodosChanged: (todos) => events.emit({ type: "ui.todos", todos }),
           onPlanChanged: (plan) => events.emit({ type: "ui.plan", plan }),
           onProposalsChanged: () => void this.postState(),
@@ -108307,6 +108333,9 @@ var ChatViewProvider = class _ChatViewProvider {
         break;
       case "ui.delta":
         void this.post({ type: "chatDelta", id: event.id, delta: event.delta });
+        break;
+      case "ui.thinking":
+        void this.post({ type: "thinking", delta: event.delta });
         break;
       case "ui.todos":
         void this.post({ type: "todoUpdate", todos: event.todos });

@@ -17,6 +17,8 @@
 
 Vectra Web is the browser edition of Vectra. It combines conversational AI with persistent research, live web tools, document and image understanding, local model discovery, file generation, and a universal preview viewer.
 
+Current web release: **1.0.0**.
+
 Run it with a GGUF model on CPU or GPU, connect an OpenAI-compatible inference server already running on your network, or use OpenAI, Anthropic, or Gemini.
 
 ## What it can do

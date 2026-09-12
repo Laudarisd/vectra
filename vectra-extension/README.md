@@ -22,6 +22,8 @@ Use a GGUF model directly through llama.cpp, connect a running local API, use Ol
 
 > Published on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=laudarisd.vectra-ai) as **Vectra AI** (`laudarisd.vectra-ai`).
 
+Current extension release: **1.1.8**.
+
 ![Vectra AI with a local Qwen3 4B model](https://raw.githubusercontent.com/Laudarisd/vectra/main/docs/assets/vectra-local-model.png)
 
 ## What it can do

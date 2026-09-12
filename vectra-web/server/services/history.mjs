@@ -185,7 +185,11 @@ function sanitizeArtifacts(value) {
   return value.slice(0, 12).map((artifact) => ({
     name: cleanField(artifact?.name || 'download', 240),
     mime: cleanField(artifact?.mime || 'application/octet-stream', 160),
-    base64: String(artifact?.base64 || '').slice(0, 64_000_000)
+    base64: String(artifact?.base64 || '').slice(0, 64_000_000),
+    previewText: String(artifact?.previewText || '').slice(0, 4_000_000),
+    view: artifact?.view === 'image' ? 'image' : undefined,
+    title: cleanField(artifact?.title || '', 240),
+    boxes: Array.isArray(artifact?.boxes) ? artifact.boxes.slice(0, 50) : undefined
   }));
 }
 

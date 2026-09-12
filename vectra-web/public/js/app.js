@@ -26,7 +26,7 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     messages: $('messages'), prompt: $('prompt'), send: $('send'), attach: $('attach'), fileInput: $('fileInput'), attachments: $('attachments'),
-    viewerPanel: $('viewerPanel'), viewerTitle: $('viewerTitle'), viewerClose: $('viewerClose'), viewerStage: $('viewerStage'),
+    viewerPanel: $('viewerPanel'), viewerTitle: $('viewerTitle'), viewerMeta: $('viewerMeta'), viewerDownload: $('viewerDownload'), viewerClose: $('viewerClose'), viewerStage: $('viewerStage'),
     model: $('model'), testConnection: $('testConnection'), localStatusPill: $('localStatusPill'),
     settings: $('settings'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
     autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
@@ -852,9 +852,8 @@
       placeholder.content = data.text;
       placeholder.artifacts = data.artifacts || [];
       placeholder.pending = false;
-      // A show_image/draw_image result opens the split viewer with the newest visual.
-      const viewable = placeholder.artifacts.filter((artifact) => artifact.view === 'image');
-      if (viewable.length) openImageViewer(viewable[viewable.length - 1]);
+      // Every generated artifact can be inspected before download.
+      if (placeholder.artifacts.length) openArtifactViewer(placeholder.artifacts[placeholder.artifacts.length - 1]);
     } catch (error) {
       placeholder.content = error.name === 'AbortError' ? 'Generation stopped. Edit or resend your message whenever you are ready.' : `Error: ${error.message}`;
       placeholder.pending = false;
@@ -864,10 +863,32 @@
     }
   }
 
-  // --- Split image viewer: renders an image/SVG artifact with optional bounding-box overlays ---
-  function openImageViewer(artifact) {
+  // --- Universal artifact inspector: safe previews before download ---
+  let viewerObjectUrl = '';
+  function openArtifactViewer(artifact) {
+    if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
     els.viewerTitle.textContent = artifact.title || artifact.name;
+    els.viewerMeta.textContent = `${artifactTypeLabel(artifact)} · ${formatSize(base64ByteLength(artifact.base64))}`;
+    els.viewerDownload.download = artifact.name;
+    els.viewerDownload.href = `data:${artifact.mime};base64,${artifact.base64}`;
     els.viewerStage.replaceChildren();
+    if (artifact.view === 'image' || String(artifact.mime).startsWith('image/')) return openImageArtifact(artifact);
+    if (artifact.mime === 'application/pdf') {
+      const frame = document.createElement('iframe'); frame.className = 'viewer-document'; frame.title = `${artifact.name} PDF preview`;
+      viewerObjectUrl = URL.createObjectURL(base64Blob(artifact.base64, artifact.mime)); frame.src = viewerObjectUrl; els.viewerStage.appendChild(frame);
+    } else if (artifact.mime === 'text/markdown' || /\.md$/i.test(artifact.name)) {
+      const content = document.createElement('article'); content.className = 'viewer-markdown'; renderMarkdownInto(content, artifact.previewText || decodeArtifactText(artifact)); els.viewerStage.appendChild(content);
+    } else if (isTextArtifact(artifact)) {
+      const content = document.createElement('pre'); content.className = 'viewer-text'; content.textContent = artifact.previewText || decodeArtifactText(artifact); els.viewerStage.appendChild(content);
+    } else if (artifact.previewText) {
+      const content = document.createElement('article'); content.className = 'viewer-markdown'; renderMarkdownInto(content, artifact.previewText); els.viewerStage.appendChild(content);
+    } else {
+      const empty = document.createElement('div'); empty.className = 'viewer-empty'; empty.innerHTML = '<div><strong>Preview unavailable</strong>This file can still be downloaded and opened in its native application.</div>'; els.viewerStage.appendChild(empty);
+    }
+    showViewerPanel();
+  }
+
+  function openImageArtifact(artifact) {
     const frame = document.createElement('div'); frame.className = 'viewer-frame';
     const img = document.createElement('img');
     img.alt = artifact.title || artifact.name;
@@ -882,15 +903,26 @@
       frame.appendChild(overlay);
     }
     els.viewerStage.appendChild(frame);
+    showViewerPanel();
+  }
+
+  function showViewerPanel() {
     els.viewerPanel.hidden = false;
     document.querySelector('.app-shell').classList.add('viewer-open');
   }
 
   function closeImageViewer() {
+    if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
     els.viewerPanel.hidden = true;
     document.querySelector('.app-shell').classList.remove('viewer-open');
   }
   els.viewerClose.addEventListener('click', closeImageViewer);
+
+  function base64Blob(base64, mime) { const bytes=Uint8Array.from(atob(base64), char=>char.charCodeAt(0)); return new Blob([bytes], { type:mime }); }
+  function base64ByteLength(base64) { return Math.max(0, Math.floor(String(base64||'').length * .75) - ((String(base64||'').match(/=*$/)||[''])[0].length)); }
+  function decodeArtifactText(artifact) { try { return new TextDecoder().decode(Uint8Array.from(atob(artifact.base64), char=>char.charCodeAt(0))); } catch { return 'This text preview could not be decoded.'; } }
+  function isTextArtifact(artifact) { return /^text\//i.test(artifact.mime) || /\.(?:txt|json|csv|html?|py|js|mjs|cjs|ts|tsx|jsx|cs|cpp|cc|cxx|c|h|hpp|java|go|rs|rb|php|sh|sql|ya?ml|xml)$/i.test(artifact.name); }
+  function artifactTypeLabel(artifact) { if (artifact.mime==='application/pdf') return 'PDF'; if (/wordprocessingml|\.docx$/i.test(`${artifact.mime} ${artifact.name}`)) return 'Word document'; if (artifact.mime==='text/markdown') return 'Markdown'; if (String(artifact.mime).startsWith('image/')) return 'Image'; return artifact.mime || 'File'; }
 
   // Rasterize an SVG artifact to PNG in the browser and trigger the download.
   function downloadSvgAsPng(artifact) {
@@ -1155,8 +1187,9 @@
           actions.append(edit, resend); body.appendChild(actions);
         }
         if (message.artifacts?.length) { const row=document.createElement('div'); row.className='artifact-row'; for (const artifact of message.artifacts) {
-          // Visuals open in the viewer automatically; the message keeps only download links.
+          // Every artifact stays previewable after the automatic viewer opening.
           const a=document.createElement('a'); a.className='artifact-download'; a.download=artifact.name; a.href=`data:${artifact.mime};base64,${artifact.base64}`; a.textContent=`Download ${artifact.name}`; row.appendChild(a);
+          const view=document.createElement('button'); view.className='artifact-view'; view.textContent='Preview'; view.addEventListener('click', () => openArtifactViewer(artifact)); row.prepend(view);
           // Drawn SVG figures also download as PNG, rasterized in the browser.
           if (artifact.mime === 'image/svg+xml') { const png=document.createElement('button'); png.className='artifact-view'; png.textContent='Download PNG'; png.addEventListener('click', () => downloadSvgAsPng(artifact)); row.appendChild(png); } } body.appendChild(row); }
         wrap.append(avatar, body); els.messages.appendChild(wrap);

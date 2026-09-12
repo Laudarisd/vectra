@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make Vectra more capable than Deep Agents while remaining a local agent, cross-platform, safe, and usable from both the VS Code extension and Vectra Web.
+Make Vectra more capable than Deep Agents while supporting local CPU/GPU and cloud models, remaining cross-platform and safe, and working in both the VS Code extension and Vectra Web.
 
 ## Tasks
 

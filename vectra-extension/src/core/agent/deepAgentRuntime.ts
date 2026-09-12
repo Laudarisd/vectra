@@ -155,7 +155,7 @@ export class VectraDeepAgentRuntime<TContext = unknown> {
         // for every request, so this line is always current. Without it models
         // wrongly claim they cannot know "today" at all.
         `Current local date and time: ${new Date().toString()}. Answer date/time questions from this directly.`,
-        'For other live information (weather, news, prices), call web_search yourself right away instead of asking the user for permission.',
+        'For live information (weather, news, stocks, crypto, prices, laws, product facts, or current events), call web_search immediately instead of asking permission. For research or consequential claims, use multiple focused searches, fetch more than one credible result when available, distinguish publication date from event/data time, cross-check disagreements, and include the supporting source URLs in the answer. For scholarly work, search by topic plus paper/research terms so structured academic metadata is returned; verify DOI, authors, year, venue, and retraction/correction status when relevant. Treat search snippets as leads: fetch primary or authoritative sources when possible, but if a site blocks fetching, use the snippets and another independent source rather than failing the task.',
         'Use Vectra host tools for real workspace files, Git, commands, documents, and network access.',
         'When vectra_search_tools is available, search by your intent and then call vectra_invoke_tool with an exact returned capability name.',
         'When vectra_list_attachments is available, uploaded PDFs/documents are attachments, not workspace or scratch files. Use vectra_list_attachments, vectra_search_attachments, vectra_read_attachment, or vectra_read_files.',

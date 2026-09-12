@@ -107,9 +107,9 @@ export function artifactForRequest(userText,responseText,attachments=[]){
   if(!wanted.length&&sourceDoc&&/\b(edit|revise|update|rewrite)\b/.test(lower))wanted.push(`revised-${sourceDoc.name}`);
   for(const requested of [...new Set(wanted)].slice(0,6)){
     const name=requested.replace(/^.*[\/]/,'');const ext=(name.split('.').pop()||'').toLowerCase();
-    if(ext==='docx')artifacts.push({name,mime:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',base64:buildDocx(responseText,name.replace(/\.docx$/i,'')).toString('base64')});
-    else if(ext==='pdf')artifacts.push({name,mime:'application/pdf',base64:buildPdf(responseText,name.replace(/\.pdf$/i,'')).toString('base64')});
-    else {const content=extractBestFileContent(responseText,ext);if(content)artifacts.push({name,mime:textMime(ext),base64:Buffer.from(content,'utf8').toString('base64')})}
+    if(ext==='docx')artifacts.push({name,mime:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',base64:buildDocx(responseText,name.replace(/\.docx$/i,'')).toString('base64'),previewText:responseText});
+    else if(ext==='pdf')artifacts.push({name,mime:'application/pdf',base64:buildPdf(responseText,name.replace(/\.pdf$/i,'')).toString('base64'),previewText:responseText});
+    else {const content=extractBestFileContent(responseText,ext);if(content)artifacts.push({name,mime:textMime(ext),base64:Buffer.from(content,'utf8').toString('base64'),previewText:content})}
   }
   return artifacts;
 }

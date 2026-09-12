@@ -49,3 +49,34 @@ test('web_search requires a non-empty query', async () => {
   const web = new WebTools();
   await assert.rejects(web.search('   ', 5), /non-empty query/i);
 });
+
+test('web_search falls back when the primary provider times out', async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    if (calls.length === 1) throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+    if (calls.length === 2) return new Response('<html>No result links here</html>', { status: 200 });
+    return new Response('<?xml version="1.0"?><rss><channel><item><title>Kathmandu Weather</title><link>https://example.com/weather</link><description>Current conditions in Kathmandu</description></item></channel></rss>', { status: 200 });
+  };
+  try {
+    const result = await new WebTools().search('weather Kathmandu', 5);
+    assert.equal(calls.length, 3);
+    assert.match(result, /Kathmandu Weather/);
+    assert.match(result, /Current conditions in Kathmandu/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('network timeouts are recoverable tool results instead of fatal agent errors', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => { throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+  try {
+    const web = new WebTools();
+    assert.match(await web.search('weather Kathmandu', 5), /temporarily unavailable/i);
+    assert.match(await web.fetch('https://example.com/weather'), /timed out.*web_search snippets/i);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});

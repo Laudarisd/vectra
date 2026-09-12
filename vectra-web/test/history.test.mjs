@@ -33,10 +33,13 @@ test('SQLite history creates, updates, lists, and deletes conversations', async 
       title: created.title,
       provider: created.provider,
       model: created.model,
-      messages: [...created.messages, { role: 'assistant', content: 'Done', artifacts: [{ name: 'result.md', mime: 'text/markdown', base64: 'RG9uZQ==' }] }]
+      messages: [...created.messages, { role: 'assistant', content: 'Done', artifacts: [{ name: 'result.png', mime: 'image/png', base64: 'RG9uZQ==', previewText: 'Done', view: 'image', title: 'Result', boxes: [{ x: 1, y: 2, width: 3, height: 4 }] }] }]
     });
     assert.equal(updated.messages.length, 2);
-    assert.equal(updated.messages[1].artifacts[0].name, 'result.md');
+    assert.equal(updated.messages[1].artifacts[0].name, 'result.png');
+    assert.equal(updated.messages[1].artifacts[0].previewText, 'Done');
+    assert.equal(updated.messages[1].artifacts[0].view, 'image');
+    assert.deepEqual(updated.messages[1].artifacts[0].boxes, [{ x: 1, y: 2, width: 3, height: 4 }]);
     await writeFile(join(directory, 'history', `${created.id}.json`), JSON.stringify({
       ...updated, updatedAt: updated.updatedAt + 1,
       messages: [...updated.messages, { role: 'user', content: 'Updated in VS Code', createdAt: Date.now() }]

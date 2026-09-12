@@ -1,6 +1,6 @@
 # Security
 
-Vectra is a local agent but can send selected context to configured cloud providers.
+Vectra supports local CPU/GPU models and configured cloud providers. It sends selected context externally only when a cloud provider is active.
 
 - VS Code workspace writes are review-before-apply.
 - File proposals use stale-content hashes.

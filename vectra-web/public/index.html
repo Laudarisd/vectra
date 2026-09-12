@@ -43,9 +43,9 @@
     </section>
   </main>
 
-  <!-- Split image viewer: opens as a third column when the agent shows or draws an image -->
+  <!-- Universal artifact inspector: previews generated files before download. -->
   <aside id="viewerPanel" class="viewer-panel" hidden>
-    <div class="viewer-head"><strong id="viewerTitle">Viewer</strong><button id="viewerClose" class="icon-close" title="Close viewer">×</button></div>
+    <div class="viewer-head"><div class="viewer-file"><strong id="viewerTitle">Preview</strong><span id="viewerMeta"></span></div><div class="viewer-actions"><a id="viewerDownload" class="artifact-view" download>Download</a><button id="viewerClose" class="icon-close" title="Close preview" aria-label="Close preview">×</button></div></div>
     <div class="viewer-body"><div id="viewerStage" class="viewer-stage"></div></div>
   </aside>
 </div>

@@ -13,10 +13,11 @@
 <div class="app-shell">
   <aside class="sidebar">
     <div class="brand"><img class="mark" src="/VectraLogo.png" alt="Vectra logo" /><span>Vectra</span></div>
-    <button id="newChat" class="new-chat">＋ New chat</button>
-    <div class="history-heading"><span>Chats</span><button id="refreshHistory" class="history-refresh" title="Refresh history">↻</button></div>
-    <button id="newProject" class="new-chat secondary">+ New project</button>
-    <div class="history-select-row"><button id="selectHistory" class="history-refresh">Select</button></div>
+    <div class="sidebar-actions">
+      <button id="newChat" class="new-chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/></svg>New chat</button>
+      <button id="newProject" class="new-chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>New project</button>
+    </div>
+    <div class="history-select-row"><button id="selectHistory" class="history-refresh">Select</button><button id="refreshHistory" class="history-refresh" title="Refresh history">↻</button></div>
     <div class="history-scroll"><div id="chatHistory" class="chat-history" aria-label="Chat history"></div></div>
     <div id="historyActions" class="history-actions"><button id="deleteSelected" class="danger-ghost" hidden>Delete selected</button><button id="deleteAllHistory" class="danger-ghost">Delete chat history</button></div>
   </aside>

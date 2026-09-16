@@ -258,10 +258,15 @@
     state.savedAttachments = [];
     state.editingIndex = -1;
     els.prompt.value = '';
-    els.prompt.placeholder = 'Message Vectra';
+    syncPromptPlaceholder();
     autoGrow();
     render();
     renderHistory();
+  }
+
+  function syncPromptPlaceholder() {
+    const project=state.projects.find(p=>p.id===state.currentProjectId);
+    els.prompt.placeholder = project ? `Message Vectra in ${project.name}` : 'Message Vectra';
   }
 
   async function loadHistory() {
@@ -277,6 +282,7 @@
     const chat = await request(`/api/chats/${encodeURIComponent(id)}`);
     state.currentChatId = chat.id;
     state.currentProjectId = chat.projectId || null;
+    syncPromptPlaceholder();
     state.messages = Array.isArray(chat.messages) ? chat.messages : [];
     state.savedAttachments = Array.isArray(chat.attachments) ? chat.attachments : [];
     state.attachments = state.savedAttachments.map(file=>({...file}));
@@ -294,6 +300,15 @@
     if (state.busy || !confirm('Delete this local chat permanently?')) return;
     await request(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (state.currentChatId === id) newChat();
+    await loadHistory();
+  }
+
+  async function deleteProject(id) {
+    if (state.busy) return;
+    const project=state.projects.find(p=>p.id===id);const count=state.history.filter(chat=>chat.projectId===id).length;
+    if (!confirm(`Delete project "${project?.name||''}" and its ${count} chat(s) permanently?`)) return;
+    await request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (state.currentProjectId === id) newChat();
     await loadHistory();
   }
 
@@ -332,39 +347,48 @@
     newChat();await loadHistory();
   }
 
+  const PEN_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 20h9\"/><path d=\"M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z\"/></svg>";
+  const FOLDER_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"/></svg>";
+
   function renderHistory() {
     els.chatHistory.replaceChildren();
     const projectMap=new Map(state.projects.map(project=>[project.id,project]));
-    const groups=[...state.projects.map(project=>({label:project.name,id:project.id,chats:state.history.filter(chat=>chat.projectId===project.id)})),{label:'Single chats',id:null,chats:state.history.filter(chat=>!chat.projectId||!projectMap.has(chat.projectId))}];
-    for(const group of groups){
-      if(!group.chats.length&&group.id===null)continue;
-      const heading=document.createElement('button');heading.className='history-group';heading.textContent=`${group.label} (${group.chats.length})`;heading.title=group.id?'Start a chat in this project':'Single chats';
-      heading.addEventListener('click',()=>newChat(group.id));els.chatHistory.appendChild(heading);
-      for (const chat of group.chats) {
-      const row = document.createElement('div');
-      row.className = `history-item${chat.id === state.currentChatId ? ' active' : ''}${state.selectingHistory?' selecting':''}`;
-      if(state.selectingHistory){const check=document.createElement('input');check.type='checkbox';check.className='history-check';check.checked=state.selectedChats.has(chat.id);check.addEventListener('change',()=>{check.checked?state.selectedChats.add(chat.id):state.selectedChats.delete(chat.id)});row.appendChild(check)}
-      const open = document.createElement('button');
-      open.className = 'history-open';
-      open.title = chat.title;
-      open.textContent = chat.title || 'New chat';
-      open.addEventListener('click', () => openChat(chat.id).catch((error) => alert(error.message)));
-      const remove = document.createElement('button');
-      remove.className = 'history-delete';
-      remove.title = 'Delete chat';
-      remove.textContent = '×';
-      remove.addEventListener('click', () => deleteChat(chat.id).catch((error) => alert(error.message)));
-      row.append(open);
-      if(!state.selectingHistory)row.append(remove);
-      els.chatHistory.appendChild(row);
-      }
+    const section=(label)=>{const title=document.createElement('div');title.className='history-section';title.textContent=label;els.chatHistory.appendChild(title)};
+    const hint=(text)=>{const empty=document.createElement('div');empty.className='history-empty';empty.textContent=text;els.chatHistory.appendChild(empty)};
+    section('Projects');
+    if(!state.projects.length)hint('No projects yet. Create one above.');
+    for(const project of state.projects){
+      // Clicking the project name opens a chat screen scoped to that project; the pen starts another chat there.
+      const row=document.createElement('div');row.className=`history-project${project.id===state.currentProjectId?' active':''}`;
+      const open=document.createElement('button');open.className='history-open';open.title=`Open ${project.name}`;open.innerHTML=FOLDER_ICON;open.append(project.name);open.addEventListener('click',()=>newChat(project.id));
+      const add=document.createElement('button');add.className='history-add';add.title=`New chat in ${project.name}`;add.innerHTML=PEN_ICON;add.addEventListener('click',()=>newChat(project.id));
+      const remove=document.createElement('button');remove.className='history-delete';remove.title=`Delete project ${project.name} and its chats`;remove.textContent='×';remove.addEventListener('click',()=>deleteProject(project.id).catch((error)=>alert(error.message)));
+      row.append(open,add,remove);els.chatHistory.appendChild(row);
+      for(const chat of state.history.filter(chat=>chat.projectId===project.id))appendChatRow(chat,true);
     }
-    if (!state.history.length) {
-      const empty = document.createElement('div');
-      empty.className = 'history-empty';
-      empty.textContent = 'Your local chats will appear here.';
-      els.chatHistory.appendChild(empty);
-    }
+    section('Single chats');
+    const singles=state.history.filter(chat=>!chat.projectId||!projectMap.has(chat.projectId));
+    if(!singles.length)hint('Your local chats will appear here.');
+    for(const chat of singles)appendChatRow(chat,false);
+  }
+
+  function appendChatRow(chat,nested){
+    const row = document.createElement('div');
+    row.className = `history-item${nested?' nested':''}${chat.id === state.currentChatId ? ' active' : ''}${state.selectingHistory?' selecting':''}`;
+    if(state.selectingHistory){const check=document.createElement('input');check.type='checkbox';check.className='history-check';check.checked=state.selectedChats.has(chat.id);check.addEventListener('change',()=>{check.checked?state.selectedChats.add(chat.id):state.selectedChats.delete(chat.id)});row.appendChild(check)}
+    const open = document.createElement('button');
+    open.className = 'history-open';
+    open.title = chat.title;
+    open.textContent = chat.title || 'New chat';
+    open.addEventListener('click', () => openChat(chat.id).catch((error) => alert(error.message)));
+    const remove = document.createElement('button');
+    remove.className = 'history-delete';
+    remove.title = 'Delete chat';
+    remove.textContent = '×';
+    remove.addEventListener('click', () => deleteChat(chat.id).catch((error) => alert(error.message)));
+    row.append(open);
+    if(!state.selectingHistory)row.append(remove);
+    els.chatHistory.appendChild(row);
   }
 
   async function persistChat() {
@@ -873,7 +897,7 @@
     for(const file of payloadAttachments){const index=state.savedAttachments.findIndex(saved=>saved.name===file.name);if(index>=0)state.savedAttachments[index]=file;else state.savedAttachments.push(file)}
     state.attachments = [];
     els.prompt.value = ''; autoGrow(); renderAttachments();
-    els.prompt.placeholder = 'Message Vectra';
+    syncPromptPlaceholder();
     state.busy = true;
     state.chatAbort = new AbortController();
     // Keep real progress visible instead of showing a speculative assistant reply.
@@ -1229,6 +1253,8 @@
     if (!state.messages.length) {
       const welcome = document.createElement('div'); welcome.className = 'welcome';
       welcome.innerHTML = '<img class="hero-mark" src="/VectraLogo.png" alt="Vectra logo" /><h1>How can Vectra help?</h1><p>Chat, analyze code and documents, or run a local GGUF model with llama.cpp.</p>';
+      const project=state.projects.find(p=>p.id===state.currentProjectId);
+      if(project){const tag=document.createElement('div');tag.className='welcome-project';tag.innerHTML=FOLDER_ICON;tag.append('Working on ');const name=document.createElement('strong');name.textContent=project.name;tag.append(name,' project');welcome.appendChild(tag)}
       els.messages.appendChild(welcome);
     } else {
       state.messages.forEach((message, index) => {

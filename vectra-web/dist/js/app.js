@@ -957,7 +957,7 @@
   function openImageArtifact(artifact) {
     const frame = document.createElement('div'); frame.className = 'viewer-frame';
     const img = document.createElement('img');
-    img.alt = artifact.title || artifact.name;
+    img.alt = artifact.title || artifact.name; img.draggable = false;
     img.onload=()=>{viewerFrame=frame;viewerImage=img;const fit=Math.min(1,els.viewerStage.clientWidth/Math.max(1,img.naturalWidth));setViewerZoom(fit)};
     img.src = `data:${artifact.mime};base64,${artifact.base64}`;
     frame.appendChild(img);
@@ -990,6 +990,11 @@
   els.viewerZoomOut.addEventListener('click',()=>setViewerZoom(viewerZoom/1.25));
   els.viewerZoomReset.addEventListener('click',()=>setViewerZoom(1));
   els.viewerStage.addEventListener('wheel',(event)=>{if(!viewerFrame)return;event.preventDefault();setViewerZoom(viewerZoom*(event.deltaY<0?1.12:1/1.12),event.clientX,event.clientY)},{passive:false});
+  // Drag to pan: hold the left button and move to scroll a zoomed image in any direction.
+  let viewerPan=null;
+  els.viewerStage.addEventListener('pointerdown',(event)=>{if(!viewerFrame||event.button!==0)return;const stage=els.viewerStage;viewerPan={x:event.clientX,y:event.clientY,left:stage.scrollLeft,top:stage.scrollTop};stage.setPointerCapture(event.pointerId);stage.classList.add('panning');event.preventDefault()});
+  els.viewerStage.addEventListener('pointermove',(event)=>{if(!viewerPan)return;els.viewerStage.scrollLeft=viewerPan.left-(event.clientX-viewerPan.x);els.viewerStage.scrollTop=viewerPan.top-(event.clientY-viewerPan.y)});
+  for(const type of ['pointerup','pointercancel'])els.viewerStage.addEventListener(type,()=>{viewerPan=null;els.viewerStage.classList.remove('panning')});
 
   function closeImageViewer() {
     viewerFrame=viewerImage=null;viewerZoom=1;

@@ -8,7 +8,7 @@
 // Every URL passes an SSRF guard first: only the PUBLIC internet is reachable,
 // never localhost or the private network. Anything fetched is untrusted data.
 
-const FETCH_TIMEOUT_MS = 25_000;
+const FETCH_TIMEOUT_MS = 15_000;
 const MAX_OUTPUT = 18_000;
 const USER_AGENT = 'Mozilla/5.0 (compatible; Vectra/1.0; +https://github.com/Laudarisd/vectra)';
 
@@ -17,39 +17,107 @@ export async function searchWeb(query: string, maxResults?: number, signal?: Abo
   const q = String(query ?? '').trim();
   if (!q) throw new Error('web_search requires a non-empty query.');
   const capped = clampInt(maxResults, 1, 10, 5);
+  const encoded = encodeURIComponent(q);
+  const providers = [
+    { name: 'DuckDuckGo', url: `https://html.duckduckgo.com/html/?q=${encoded}`, parse: parseDuckDuckGoResults },
+    { name: 'DuckDuckGo Lite', url: `https://lite.duckduckgo.com/lite/?q=${encoded}`, parse: parseDuckDuckGoResults },
+    { name: 'Bing', url: `https://www.bing.com/search?format=rss&q=${encoded}`, parse: parseBingRssResults }
+  ];
+  if (/\b(?:paper|papers|research|study|studies|journal|doi|citation|academic|scholar|arxiv|preprint)\b/i.test(q)) {
+    providers.unshift({ name: 'OpenAlex', url: `https://api.openalex.org/works?search=${encoded}&per-page=${capped}`, parse: parseOpenAlexResults });
+  }
+  const failures: string[] = [];
+  for (const provider of providers) {
+    try {
+      const body = await httpGetText(provider.url, signal);
+      const results = provider.parse(body, capped);
+      if (results.length) return formatSearchResults(results);
+      failures.push(`${provider.name}: no results`);
+    } catch (error) {
+      if (signal?.aborted) throw new Error('Web search was cancelled.');
+      failures.push(`${provider.name}: ${friendlyNetworkError(error)}`);
+    }
+  }
+  // A network outage is a recoverable tool observation, not a reason to abort
+  // the entire agent run. The model can explain it or continue from context.
+  return `Web search is temporarily unavailable. Check the internet, DNS, VPN, or firewall, or try again. Provider details: ${failures.join('; ')}.`;
+}
 
-  const html = await httpGetText(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, signal);
+interface SearchResult { title: string; href: string; snippet: string }
 
-  // DuckDuckGo's HTML endpoint marks each result link with class="result__a"
-  // and each description with class="result__snippet" - pull both lists out.
+function parseDuckDuckGoResults(html: string, capped: number): SearchResult[] {
   const titles: string[] = [];
   const hrefs: string[] = [];
-  const resultRe = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const resultRe = /<a[^>]+class=["'][^"']*(?:result-link|result__a)[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let match: RegExpExecArray | null;
   while ((match = resultRe.exec(html)) && hrefs.length < capped) {
     hrefs.push(decodeDuckDuckGoUrl(match[1]));
     titles.push(htmlToText(match[2]));
   }
   const snippets: string[] = [];
-  const snippetRe = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+  const snippetRe = /<(?:a|td)[^>]+class=["'][^"']*(?:result__snippet|result-snippet)[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|td)>/gi;
   while ((match = snippetRe.exec(html)) && snippets.length < capped) {
     snippets.push(htmlToText(match[1]));
   }
 
-  if (!hrefs.length) return `No results found for "${q}".`;
-  return hrefs
-    .map((href, index) => {
-      const title = titles[index] || href;
-      const snippet = snippets[index] ? `\n${snippets[index]}` : '';
-      return `${index + 1}. ${title}\n${href}${snippet}`;
-    })
-    .join('\n\n');
+  return hrefs.map((href, index) => ({ href, title: titles[index] || href, snippet: snippets[index] || '' }));
+}
+
+function parseBingRssResults(xml: string, capped: number): SearchResult[] {
+  const results: SearchResult[] = [];
+  const itemRe = /<item>([\s\S]*?)<\/item>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = itemRe.exec(xml)) && results.length < capped) {
+    const item = match[1];
+    const title = xmlValue(item, 'title');
+    const href = xmlValue(item, 'link');
+    const snippet = xmlValue(item, 'description');
+    if (href) results.push({ title: htmlToText(title) || href, href, snippet: htmlToText(snippet) });
+  }
+  return results;
+}
+
+function parseOpenAlexResults(json: string, capped: number): SearchResult[] {
+  try {
+    const works = JSON.parse(json)?.results;
+    if (!Array.isArray(works)) return [];
+    return works.slice(0, capped).map((work) => {
+      const title = String(work?.display_name || work?.title || 'Untitled research work');
+      const doi = String(work?.doi || '');
+      const href = doi || String(work?.primary_location?.landing_page_url || work?.id || '');
+      const authors = Array.isArray(work?.authorships) ? work.authorships.slice(0, 4).map((item: any) => item?.author?.display_name).filter(Boolean).join(', ') : '';
+      const details = [authors, work?.publication_year, work?.primary_location?.source?.display_name, Number.isFinite(work?.cited_by_count) ? `${work.cited_by_count} citations` : ''].filter(Boolean).join(' · ');
+      return { title, href, snippet: details };
+    }).filter((result) => result.href);
+  } catch { return []; }
+}
+
+function xmlValue(xml: string, tag: string): string {
+  const match = xml.match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'));
+  return match?.[1]?.trim() || '';
+}
+
+function formatSearchResults(results: SearchResult[]): string {
+  return results.map((result, index) => `${index + 1}. ${result.title}\n${result.href}${result.snippet ? `\n${result.snippet}` : ''}`).join('\n\n');
 }
 
 /** Fetch one public http(s) URL and return its readable text (HTML is stripped, JSON is pretty-printed). */
 export async function fetchWebPage(rawUrl: string, signal?: AbortSignal): Promise<string> {
   const url = assertPublicHttpUrl(rawUrl);
-  const body = await httpGetText(url.toString(), signal);
+  let body: string;
+  try {
+    body = await httpGetText(url.toString(), signal);
+  } catch (error) {
+    if (signal?.aborted) throw new Error('Web fetch was cancelled.');
+    // Many news, finance, and research sites block plain server fetches or need
+    // JavaScript. Jina Reader provides a clean, LLM-oriented rendering fallback.
+    try {
+      body = await httpGetText(`https://r.jina.ai/${url.toString()}`, signal);
+    } catch (readerError) {
+      if (signal?.aborted) throw new Error('Web fetch was cancelled.');
+      return `Could not fetch ${url.toString()} directly (${friendlyNetworkError(error)}) or through the reader fallback (${friendlyNetworkError(readerError)}). Use the web_search snippets or fetch another result.`;
+    }
+  }
   let content: string;
   try {
     content = JSON.stringify(JSON.parse(body), null, 2);
@@ -68,6 +136,12 @@ async function httpGetText(url: string, signal?: AbortSignal): Promise<string> {
   });
   if (!response.ok) throw new Error(`Request failed with HTTP ${response.status} for ${url}`);
   return response.text();
+}
+
+function friendlyNetworkError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/abort|timeout/i.test(message) || (error instanceof Error && error.name === 'TimeoutError')) return `timed out after ${Math.round(FETCH_TIMEOUT_MS / 1000)}s`;
+  return message.replace(/^fetch failed(?::\s*)?/i, '') || 'network request failed';
 }
 
 const MAX_IMAGE_BYTES = 15_000_000;
@@ -191,6 +265,7 @@ function decodeEntities(text: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
     .replace(/&#(\d+);/g, (_match, code: string) => String.fromCharCode(Number(code)));
 }
 

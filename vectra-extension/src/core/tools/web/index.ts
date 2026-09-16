@@ -13,7 +13,7 @@ export * from './liveWeb';
 export * from './imageTools';
 
 // view/title/boxes are display hints for the browser's split image viewer.
-export interface VectraWebArtifact { name: string; mime: string; base64: string; view?: 'image'; title?: string; boxes?: VectraImageBox[] }
+export interface VectraWebArtifact { name: string; mime: string; base64: string; previewText?: string; view?: 'image'; title?: string; boxes?: VectraImageBox[] }
 
 export const WEB_TOOL_DEFINITIONS = [
   ...ATTACHMENT_TOOL_DEFINITIONS,
@@ -98,7 +98,7 @@ function addArtifact(artifacts: VectraWebArtifact[], requestedPath: string, cont
   const name = requestedPath.replace(/\\/g, '/').replace(/^\/+/, '');
   if (!name || name.includes('../')) throw new Error('Artifact paths must be relative and cannot traverse parent folders.');
   const existing = artifacts.findIndex((item) => item.name === name);
-  const artifact = { name, mime: mimeFor(name), base64: Buffer.from(content, 'utf8').toString('base64') };
+  const artifact = { name, mime: mimeFor(name), base64: Buffer.from(content, 'utf8').toString('base64'), previewText: content };
   if (existing >= 0) artifacts[existing] = artifact;
   else artifacts.push(artifact);
   return `Prepared downloadable artifact ${name} (${content.length} characters).`;

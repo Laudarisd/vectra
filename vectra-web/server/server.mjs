@@ -119,7 +119,10 @@ async function handleChat(req,res){
   const send=(obj)=>{try{res.write(`data: ${JSON.stringify(obj)}\n\n`)}catch{}};
   let closed=false;
   const requestAbort=new AbortController();
-  req.on('close',()=>{closed=true;requestAbort.abort()});
+  // A normal, fully-read IncomingMessage can emit "close" before this SSE
+  // response finishes. Only an abandoned request/response should cancel work.
+  req.on('aborted',()=>{closed=true;requestAbort.abort()});
+  res.on('close',()=>{if(!res.writableEnded){closed=true;requestAbort.abort()}});
   const unsubscribe=session.events.subscribe((event)=>{
     if(event.type==='ui.delta'&&!closed)send({delta:event.delta});
     if(event.type==='deepagent.thinking'&&!closed)send({thinking:event.delta});
@@ -356,7 +359,8 @@ async function streamSseResult(req,res,run){
   const send=(obj)=>{try{res.write(`data: ${JSON.stringify(obj)}\n\n`)}catch{}};
   let closed=false;
   const controller=new AbortController();
-  req.on('close',()=>{closed=true;controller.abort()});
+  req.on('aborted',()=>{closed=true;controller.abort()});
+  res.on('close',()=>{if(!res.writableEnded){closed=true;controller.abort()}});
   try{
     const result=await run((progress)=>{if(!closed)send(progress)},controller.signal);
     if(!closed){send({done:true,...result});res.write('data: [DONE]\n\n')}

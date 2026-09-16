@@ -1,8 +1,8 @@
 {
   "name": "vectra-ai",
   "displayName": "Vectra AI",
-  "description": "A fast local AI coding agent for VS Code. Run GGUF models efficiently on GPU or CPU, understand your repo, review edits, and run approved commands.",
-  "version": "1.1.7",
+  "description": "A fast AI coding agent for VS Code with local CPU/GPU and cloud model support. Understand your repo, review edits, and run approved commands.",
+  "version": "1.1.8",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -429,7 +429,9 @@
     "check:release": "node scripts/check-release.mjs",
     "compile": "tsc -p .",
     "prebundle": "node scripts/clean-extension.mjs",
-    "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.js --log-level=info",
+    "bundle": "esbuild src/extension.ts --bundle --minify --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.js --log-level=info && node scripts/check-bundle-size.mjs",
+    "bundle:dev": "esbuild src/extension.ts --bundle --sourcemap --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.js --log-level=info",
+    "check:bundle-size": "node scripts/check-bundle-size.mjs",
     "build": "npm run compile && npm run bundle",
     "watch": "tsc -watch -p .",
     "test": "npm run compile && node --test --experimental-test-isolation=none test/*.test.cjs",

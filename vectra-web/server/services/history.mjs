@@ -230,9 +230,10 @@ function sanitizeArtifacts(value) {
     name: cleanField(artifact?.name || 'download', 240),
     mime: cleanField(artifact?.mime || 'application/octet-stream', 160),
     base64: String(artifact?.base64 || '').slice(0, 64_000_000),
+    previewText: String(artifact?.previewText || '').slice(0, 4_000_000),
     ...(artifact?.view==='image'?{view:'image'}:{}),
-    ...(artifact?.title?{title:cleanField(artifact.title,160)}:{}),
-    ...(Array.isArray(artifact?.boxes)?{boxes:artifact.boxes.slice(0,200).map(box=>({x:Number(box.x)||0,y:Number(box.y)||0,w:Number(box.w)||0,h:Number(box.h)||0,label:cleanField(box.label||'',80)}))}:{})
+    ...(artifact?.title?{title:cleanField(artifact.title,240)}:{}),
+    ...(Array.isArray(artifact?.boxes)?{boxes:artifact.boxes.slice(0,200)}:{})
   }));
 }
 

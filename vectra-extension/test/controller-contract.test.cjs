@@ -68,6 +68,17 @@ test('controller suppresses repeated tool-action loops', () => {
   assert.match(src, /duplicateOnlySteps >= 2/);
 });
 
+test('substantial research keeps working until evidence coverage is sufficient', () => {
+  const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
+  assert.match(src, /let researchSearchCalls = 0/);
+  assert.match(src, /let researchFetchCalls = 0/);
+  assert.match(src, /needsMoreResearch\(opts\.task, researchSearchCalls, researchFetchCalls\)/);
+  assert.match(src, /auditPass <= 2/);
+  assert.match(src, /RESEARCH COVERAGE AUDIT/);
+  assert.match(src, /if \(opts\.signal\?\.aborted\)/);
+  assert.match(src, /searchCalls < 2 \|\| fetchCalls < 2/);
+});
+
 test('controller treats plan proposal as an approval boundary', () => {
   const src = fs.readFileSync('src/agent/AgentController.ts','utf8');
   assert.match(src, /proposedPlanAction = requestedActions\.find/);

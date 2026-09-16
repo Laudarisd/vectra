@@ -32,6 +32,7 @@ test('web can create downloadable requested documents', () => {
   const artifacts=artifactForRequest('Create report.docx and a PDF','Generated report body');
   assert.equal(artifacts.length,2);
   assert.ok(artifacts.every(a=>a.base64.length>20));
+  assert.ok(artifacts.every(a=>a.previewText==='Generated report body'));
 });
 
 
@@ -40,4 +41,5 @@ test('web can generate a requested code file artifact', () => {
   assert.equal(artifacts.length,1);
   assert.equal(artifacts[0].name,'hello.py');
   assert.equal(Buffer.from(artifacts[0].base64,'base64').toString('utf8'),'print(\"hello\")');
+  assert.equal(artifacts[0].previewText,'print(\"hello\")');
 });

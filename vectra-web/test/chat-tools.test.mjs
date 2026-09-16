@@ -7,10 +7,26 @@ import { buildPdf } from '../server/services/documents.mjs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 
 async function freePort(){return await new Promise((resolve,reject)=>{const s=http.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});});}
 async function waitFor(url, timeout=8000){const start=Date.now();while(Date.now()-start<timeout){try{const r=await fetch(url);if(r.ok)return;}catch{}await new Promise(r=>setTimeout(r,80));}throw new Error(`Timed out waiting for ${url}`);}
+
+test('normal request completion does not cancel ongoing web work', async()=>{
+  const source=await readFile(new URL('../server/server.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/req\.on\('close',[^\n]*\.abort\(\)/);
+  assert.match(source,/req\.on\('aborted'/);
+  assert.match(source,/res\.on\('close',[^\n]*!res\.writableEnded/);
+});
+
+test('saved artifacts can be reopened in the universal preview viewer', async()=>{
+  const source=await readFile(new URL('../public/js/app.js',import.meta.url),'utf8');
+  assert.match(source,/function openArtifactViewer\(artifact\)/);
+  assert.match(source,/view\.textContent='Preview'/);
+  assert.match(source,/openArtifactViewer\(artifact\)/);
+  assert.match(source,/artifact\.mime === 'application\/pdf'/);
+  assert.match(source,/renderMarkdownInto\(content/);
+});
 
 async function withVectraServer(fn){const port=await freePort();const databasePath=join(tmpdir(),`vectra-test-${randomUUID()}.sqlite`);const child=spawn(process.execPath,['server/server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,VECTRA_PORT:String(port),VECTRA_HOST:'127.0.0.1',VECTRA_DATABASE_PATH:databasePath},stdio:['ignore','pipe','pipe']});let logs='';child.stdout.on('data',d=>logs+=d);child.stderr.on('data',d=>logs+=d);try{try{await waitFor(`http://127.0.0.1:${port}/`,15000);}catch(error){throw new Error(`${error.message}\nServer output:\n${logs||'(server produced no output)'}`);}return await fn(`http://127.0.0.1:${port}`);}finally{child.kill('SIGTERM');await new Promise(r=>setTimeout(r,100));if(!child.killed)child.kill('SIGKILL');await Promise.all(['','-wal','-shm'].map(suffix=>rm(`${databasePath}${suffix}`,{force:true}).catch(()=>{})));}}
 
@@ -120,7 +136,7 @@ test('web generation request returns downloadable PDF and code artifacts', async
   const mock=await mockCompatibleServer(()=> '```python\nprint("hello")\n```\n\nSimple generated document content.');
   try{await withVectraServer(async(root)=>{
     const response=await fetch(`${root}/api/chat`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({provider:'openaiCompatible',baseUrl:mock.baseUrl,model:'mock',messages:[{role:'user',content:'Generate simple.pdf and hello.py'}],attachments:[]})});
-    const data=await readSseChat(response);assert.equal(response.status,200);assert.equal(data.artifacts.length,2);assert.deepEqual(data.artifacts.map(a=>a.name).sort(),['hello.py','simple.pdf']);const py=data.artifacts.find(a=>a.name==='hello.py');assert.equal(Buffer.from(py.base64,'base64').toString('utf8'),'print("hello")');
+    const data=await readSseChat(response);assert.equal(response.status,200);assert.equal(data.artifacts.length,2);assert.deepEqual(data.artifacts.map(a=>a.name).sort(),['hello.py','simple.pdf']);const py=data.artifacts.find(a=>a.name==='hello.py');const pdf=data.artifacts.find(a=>a.name==='simple.pdf');assert.equal(Buffer.from(py.base64,'base64').toString('utf8'),'print("hello")');assert.equal(py.previewText,'print("hello")');assert.match(pdf.previewText,/Simple generated document content/);
   });}finally{await new Promise(r=>mock.server.close(r));}
 });
 

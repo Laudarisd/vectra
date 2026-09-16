@@ -208,6 +208,8 @@ export class AgentController {
     };
     let hostToolCalls = 0;
     let successfulWorkspaceMutations = 0;
+    let researchSearchCalls = 0;
+    let researchFetchCalls = 0;
     // Deep Agents already owns read_file/write_file names for scratch space,
     // so the shared factory namespaces real project tools as vectra_*.
     const hostDefinitions = AGENT_TOOL_DEFINITIONS.filter((definition) => definition.name !== 'delegate_task');
@@ -222,6 +224,8 @@ export class AgentController {
             throw new Error(envelope.actionError || `Invalid ${toolName} arguments.`);
           }
           hostToolCalls++;
+          if (action.type === 'web_search') researchSearchCalls++;
+          if (action.type === 'web_fetch') researchFetchCalls++;
           opts.onProgress?.(this.toolRegistry.describe(action));
           const result = await this.toolRegistry.execute(action, context);
           if (result.effect === 'workspace' && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
@@ -293,11 +297,33 @@ export class AgentController {
 
     try {
       opts.onProgress?.('Starting Deep Agents orchestration…');
-      const result = await runtime.run({
+      let result = await runtime.run({
         task: prompt,
         history: opts.history.map((message) => ({ role: message.role, content: message.content })),
         signal: opts.signal
       });
+      // Deep research is iterative: a model-generated draft is not necessarily
+      // evidence-complete. For explicitly research-shaped requests, audit the
+      // tool coverage and re-enter the same guarded agent loop when it stopped
+      // after too little searching/fetching. This is intentionally bounded and
+      // does not affect simple live facts, ordinary chat, or workspace tasks.
+      for (let auditPass = 1; auditPass <= 2 && !result.stopReason && needsMoreResearch(opts.task, researchSearchCalls, researchFetchCalls); auditPass++) {
+        if (opts.signal?.aborted) throw new Error('Request cancelled.');
+        opts.onProgress?.(`Checking research coverage and filling evidence gaps (${auditPass}/2)…`);
+        const previousDraft = truncateMiddle(result.text || '', 18_000);
+        result = await runtime.run({
+          task:
+            'RESEARCH COVERAGE AUDIT: Continue the original request; do not merely rewrite the draft. ' +
+            'The evidence collected so far is insufficient. Run additional focused web searches with meaningfully different queries, ' +
+            'open credible primary or authoritative sources, resolve contradictions and freshness dates, then return one complete answer ' +
+            'with source URLs. Do not stop at search snippets when readable sources are available.',
+          history: [
+            ...opts.history.map((message) => ({ role: message.role, content: message.content })),
+            { role: 'assistant' as const, content: previousDraft }
+          ],
+          signal: opts.signal
+        });
+      }
       this.syncDeepTodos(result.state, opts.onTodosChanged);
       // Deep Agents' built-in write_file targets an ephemeral scratch backend,
       // and a small model regularly puts the actual deliverable there — the
@@ -820,6 +846,15 @@ function describeWorkspaceMutation(action: AgentAction): string {
     case 'copy_path': return `copied ${action.path} to ${action.destinationPath}`;
     default: return `changed ${'path' in action && typeof action.path === 'string' ? action.path : action.type}`;
   }
+}
+
+/** Only substantial external-research requests trigger automatic evidence
+ * audits. A single current fact should remain fast; explicit research,
+ * comparison, literature, due-diligence, and multi-source requests continue. */
+export function needsMoreResearch(task: string, searchCalls: number, fetchCalls: number): boolean {
+  const researchShaped = /\b(?:deep\s+research|research|investigat(?:e|ion)|compare|comparison|literature|papers?|studies|systematic|evidence|sources?|citations?|due\s+diligence|market\s+analysis|competitive\s+analysis|latest\s+developments?|comprehensive|in[- ]depth)\b/i.test(task);
+  if (!researchShaped) return false;
+  return searchCalls < 2 || fetchCalls < 2;
 }
 
 /**

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.8
+
+- Added persistent multi-source research runs in the VS Code extension so Vectra can continue searching, compare evidence, and recover from individual web-tool failures instead of stopping after the first result.
+- Strengthened live web access across the extension and web app with search-provider fallbacks, recoverable timeouts, reader fallbacks for blocked pages, and structured academic-paper discovery.
+- Fixed Vectra Web request cancellation so normal HTTP request completion no longer aborts ongoing weather, market, research, or other live-information work.
+- Added Vectra Web's universal artifact viewer for images and OCR regions, PDFs, rendered Markdown, code, text, and generated-document content before download, including saved-conversation previews.
+- Minified the extension's production bundle and added a 2.50 MiB bundle-size gate so future builds cannot silently grow beyond the release budget.
+- Expanded the main, extension, and web documentation with model discovery, CPU/GPU/hybrid execution, OpenAI-compatible local API setup, Marketplace installation, privacy, and troubleshooting guidance.
+
 ## 1.1.7
 
 - Vectra Web: `show_image` now displays uploaded PDFs — pass the PDF name plus a 1-based `page` and the server rasterizes that page on demand from the original document (native-text pages included, which were never pre-rendered before). "x.pdf is not an image attachment" errors are gone, and OCR + image-view requests show the page with highlighted text regions.

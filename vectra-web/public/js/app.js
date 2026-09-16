@@ -11,6 +11,7 @@
     currentProjectId: null,
     history: [],
     projects: [],
+    collapsedProjects: loadCollapsedProjects(),
     selectingHistory: false,
     selectedChats: new Set(),
     editingIndex: -1,
@@ -32,9 +33,9 @@
   const els = {
     messages: $('messages'), prompt: $('prompt'), send: $('send'), attach: $('attach'), fileInput: $('fileInput'), attachments: $('attachments'),
     viewerPanel: $('viewerPanel'), viewerTitle: $('viewerTitle'), viewerMeta: $('viewerMeta'), viewerDownload: $('viewerDownload'), viewerClose: $('viewerClose'), viewerStage: $('viewerStage'),
-    viewerZoomIn: $('viewerZoomIn'), viewerZoomOut: $('viewerZoomOut'), viewerZoomReset: $('viewerZoomReset'), viewerZoomControls: $('viewerZoomControls'),
+    viewerZoomIn: $('viewerZoomIn'), viewerZoomOut: $('viewerZoomOut'), viewerZoomReset: $('viewerZoomReset'), viewerZoomControls: $('viewerZoomControls'), viewerResize: $('viewerResize'),
     model: $('model'), testConnection: $('testConnection'), localStatusPill: $('localStatusPill'),
-    settings: $('settings'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
+    settings: $('settings'), themeToggle: $('themeToggle'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
     autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
     localRuntimeFields: $('localRuntimeFields'), downloadFields: $('downloadFields'),
     apiKey: $('apiKey'), localApiFields: $('localApiFields'), localApiBaseUrl: $('localApiBaseUrl'), localApiAllowInsecureTls: $('localApiAllowInsecureTls'), saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
@@ -68,6 +69,8 @@
   els.deleteAllHistory.addEventListener('click', () => void deleteAllHistory());
   els.refreshHistory.addEventListener('click', () => loadHistory().catch((error) => alert(error.message)));
   els.settings.addEventListener('click', openSettings);
+  els.themeToggle.addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'gray' ? 'dark' : 'gray'));
+  applyTheme(document.documentElement.dataset.theme === 'gray' ? 'gray' : 'dark');
   els.settingsProvider.addEventListener('change', () => {
     const value = els.settingsProvider.value;
     updateSettingsProviderUi();
@@ -249,6 +252,21 @@
     if (state.provider === 'llamaCpp' || els.dialog.open || ['starting', 'ready'].includes(state.localStatus.status)) void refreshLocalStatus().catch(() => {});
   }, 2500);
 
+  // Theme: the light palette lives on html[data-theme="gray"]; index.html restores it before first paint.
+  function applyTheme(theme) {
+    if (theme === 'gray') document.documentElement.dataset.theme = 'gray'; else delete document.documentElement.dataset.theme;
+    els.themeToggle.textContent = theme === 'gray' ? '☾ Dark' : '☀ Light';
+    try { localStorage.setItem('vectra.theme', theme); } catch {}
+  }
+
+  const COLLAPSED_KEY = 'vectra.collapsedProjects';
+  function loadCollapsedProjects() { try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); } catch { return new Set(); } }
+  function toggleProjectCollapsed(id) {
+    state.collapsedProjects.has(id) ? state.collapsedProjects.delete(id) : state.collapsedProjects.add(id);
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsedProjects])); } catch {}
+    renderHistory();
+  }
+
   function newChat(projectId = null) {
     if (state.busy) return;
     state.currentChatId = '';
@@ -349,6 +367,7 @@
 
   const PEN_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 20h9\"/><path d=\"M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z\"/></svg>";
   const FOLDER_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"/></svg>";
+  const CHEVRON_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 18 6-6-6-6\"/></svg>";
 
   function renderHistory() {
     els.chatHistory.replaceChildren();
@@ -358,13 +377,15 @@
     section('Projects');
     if(!state.projects.length)hint('No projects yet. Create one above.');
     for(const project of state.projects){
-      // Clicking the project name opens a chat screen scoped to that project; the pen starts another chat there.
-      const row=document.createElement('div');row.className=`history-project${project.id===state.currentProjectId?' active':''}`;
-      const open=document.createElement('button');open.className='history-open';open.title=`Open ${project.name}`;open.innerHTML=FOLDER_ICON;open.append(project.name);open.addEventListener('click',()=>newChat(project.id));
+      // Clicking the project name opens a chat screen scoped to that project; the pen starts another chat there; the chevron hides its chats.
+      const chats=state.history.filter(chat=>chat.projectId===project.id);const collapsed=state.collapsedProjects.has(project.id);
+      const row=document.createElement('div');row.className=`history-project${project.id===state.currentProjectId?' active':''}${collapsed?' collapsed':''}`;
+      const toggle=document.createElement('button');toggle.className='history-toggle';toggle.title=collapsed?'Show chats':'Hide chats';toggle.innerHTML=CHEVRON_ICON;toggle.addEventListener('click',()=>toggleProjectCollapsed(project.id));
+      const open=document.createElement('button');open.className='history-open';open.title=`Open ${project.name}`;open.innerHTML=FOLDER_ICON;open.append(project.name);if(collapsed&&chats.length){const count=document.createElement('span');count.className='history-count';count.textContent=chats.length;open.append(count)}open.addEventListener('click',()=>newChat(project.id));
       const add=document.createElement('button');add.className='history-add';add.title=`New chat in ${project.name}`;add.innerHTML=PEN_ICON;add.addEventListener('click',()=>newChat(project.id));
       const remove=document.createElement('button');remove.className='history-delete';remove.title=`Delete project ${project.name} and its chats`;remove.textContent='×';remove.addEventListener('click',()=>deleteProject(project.id).catch((error)=>alert(error.message)));
-      row.append(open,add,remove);els.chatHistory.appendChild(row);
-      for(const chat of state.history.filter(chat=>chat.projectId===project.id))appendChatRow(chat,true);
+      row.append(toggle,open,add,remove);els.chatHistory.appendChild(row);
+      if(!collapsed)for(const chat of chats)appendChatRow(chat,true);
     }
     section('Single chats');
     const singles=state.history.filter(chat=>!chat.projectId||!projectMap.has(chat.projectId));
@@ -969,7 +990,7 @@
     } else if (artifact.mime === 'text/markdown' || /\.md$/i.test(artifact.name)) {
       const content = document.createElement('article'); content.className = 'viewer-markdown'; renderMarkdownInto(content, artifact.previewText || decodeArtifactText(artifact)); els.viewerStage.appendChild(content);
     } else if (isTextArtifact(artifact)) {
-      const content = document.createElement('pre'); content.className = 'viewer-text'; content.textContent = artifact.previewText || decodeArtifactText(artifact); els.viewerStage.appendChild(content);
+      els.viewerStage.appendChild(buildCodeViewer(artifact.previewText || decodeArtifactText(artifact), String(artifact.name || '').split('.').pop()));
     } else if (artifact.previewText) {
       const content = document.createElement('article'); content.className = 'viewer-markdown'; renderMarkdownInto(content, artifact.previewText); els.viewerStage.appendChild(content);
     } else {
@@ -1020,6 +1041,14 @@
   els.viewerStage.addEventListener('pointermove',(event)=>{if(!viewerPan)return;els.viewerStage.scrollLeft=viewerPan.left-(event.clientX-viewerPan.x);els.viewerStage.scrollTop=viewerPan.top-(event.clientY-viewerPan.y)});
   for(const type of ['pointerup','pointercancel'])els.viewerStage.addEventListener(type,()=>{viewerPan=null;els.viewerStage.classList.remove('panning')});
 
+  // Drag the viewer's left edge to resize it; the CSS clamps the width and the value persists across reloads.
+  const VIEWER_WIDTH_KEY='vectra.viewerWidth';const appShell=document.querySelector('.app-shell');
+  try{const saved=Number(localStorage.getItem(VIEWER_WIDTH_KEY));if(saved>0)appShell.style.setProperty('--viewer-width',`${saved}px`)}catch{}
+  let viewerResizing=false;
+  els.viewerResize.addEventListener('pointerdown',(event)=>{if(event.button!==0)return;viewerResizing=true;els.viewerResize.setPointerCapture(event.pointerId);els.viewerResize.classList.add('dragging');document.body.classList.add('resizing');event.preventDefault()});
+  els.viewerResize.addEventListener('pointermove',(event)=>{if(!viewerResizing)return;appShell.style.setProperty('--viewer-width',`${Math.round(appShell.getBoundingClientRect().right-event.clientX)}px`)});
+  for(const type of ['pointerup','pointercancel'])els.viewerResize.addEventListener(type,()=>{if(!viewerResizing)return;viewerResizing=false;els.viewerResize.classList.remove('dragging');document.body.classList.remove('resizing');try{localStorage.setItem(VIEWER_WIDTH_KEY,String(parseInt(appShell.style.getPropertyValue('--viewer-width'))||''))}catch{}});
+
   function closeImageViewer() {
     viewerFrame=viewerImage=null;viewerZoom=1;
     if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
@@ -1028,11 +1057,57 @@
   }
   els.viewerClose.addEventListener('click', closeImageViewer);
 
+  // --- Lightweight syntax highlighter: token classes mirror editor scopes; the colors live in the theme CSS (.tok-*). ---
+  const HL_FAMILY={js:'js',javascript:'js',jsx:'js',ts:'js',typescript:'js',tsx:'js',mjs:'js',cjs:'js',json:'js',py:'py',python:'py',c:'c',h:'c',cpp:'c','c++':'c',cc:'c',cxx:'c',hpp:'c',cs:'c',csharp:'c',java:'c',go:'c',golang:'c',rs:'c',rust:'c',kt:'c',kotlin:'c',swift:'c',scala:'c',dart:'c',php:'c',sh:'sh',bash:'sh',shell:'sh',zsh:'sh',console:'sh',ps1:'sh',powershell:'sh',bat:'sh',cmd:'sh',sql:'sql',css:'css',scss:'css',less:'css',html:'html',htm:'html',xml:'html',svg:'html',vue:'html',yaml:'yaml',yml:'yaml',toml:'yaml',ini:'yaml'};
+  const HL_KEYWORDS={
+    js:'abstract as async await break case catch class const continue debugger default delete do else enum export extends false finally for from function get if implements import in instanceof interface let new null of package private protected public return set static super switch this throw true try typeof undefined var void while with yield type declare readonly namespace keyof never unknown any number string boolean symbol bigint object',
+    py:'False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield self cls',
+    c:'auto break case char const continue default do double else enum extern float for goto if inline int long register return short signed sizeof static struct switch typedef union unsigned void volatile while bool true false class namespace using template typename public private protected virtual override new delete this nullptr null try catch throw finally constexpr friend operator explicit import package interface extends implements final abstract synchronized instanceof var val fun let mut impl trait pub crate mod use match loop where dyn ref self Self unsafe async await move fn func chan defer map range select type string int64 int32 float64 uint byte rune error nil decimal object out readonly sealed',
+    sh:'if then else elif fi for while until do done case esac in function select time return exit export local readonly declare unset shift source alias set echo cd sudo param begin process end foreach try catch finally throw switch break continue',
+    sql:'select from where and or not null insert into values update set delete create table drop alter add column primary key foreign references index view as join inner left right outer full on group by order having limit offset union all distinct case when then else end exists between like in is asc desc count sum avg min max begin commit rollback with true false',
+    css:'',html:'',yaml:'true false null yes no on off'
+  };
+  const HL_RULES={
+    js:/(?<cmt>\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(?<str>"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|(?<num>\b0[xXbBoO][\da-fA-F_]+n?\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?n?\b)|(?<dec>@[\w$]+)|(?<fn>\b[a-zA-Z_$][\w$]*(?=\s*\())|(?<id>\b[a-zA-Z_$][\w$]*\b)|(?<op>[+\-*\/%=<>!&|^~?:]+)/g,
+    py:/(?<cmt>#[^\n]*)|(?<str>[rRbBfFuU]{0,2}(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'))|(?<num>\b0[xXbBoO][\da-fA-F_]+\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?j?\b)|(?<dec>@[\w.]+)|(?<fn>\b[a-zA-Z_]\w*(?=\s*\())|(?<id>\b[a-zA-Z_]\w*\b)|(?<op>[+\-*\/%=<>!&|^~:]+)/g,
+    c:/(?<cmt>\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(?<dec>^[ \t]*#[ \t]*\w+|#\[[^\]\n]*\]|@\w+)|(?<str>"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|(?<num>\b0[xXbB][\da-fA-F_']+[uUlL]*\b|\b\d[\d_']*(?:\.\d+)?(?:[eE][+-]?\d+)?[fFuUlLdD]*\b)|(?<fn>\b[a-zA-Z_]\w*(?=\s*\())|(?<id>\b[a-zA-Z_]\w*\b)|(?<op>[+\-*\/%=<>!&|^~?:]+)/gm,
+    sh:/(?<cmt>#[^\n]*)|(?<str>"(?:[^"\\]|\\.)*"|'[^']*')|(?<dec>\$\{[^}\n]*\}|\$[\w@#?*!-]+)|(?<attr>(?<![\w-])--?[a-zA-Z][\w-]*)|(?<num>\b\d+\b)|(?<id>\b[a-zA-Z_][\w-]*\b)|(?<op>[|&;<>=]+)/g,
+    sql:/(?<cmt>--[^\n]*|\/\*[\s\S]*?\*\/)|(?<str>'(?:[^'\\]|\\.|'')*'|"[^"\n]*"|`[^`\n]*`)|(?<num>\b\d+(?:\.\d+)?\b)|(?<fn>\b[a-zA-Z_]\w*(?=\s*\())|(?<id>\b[a-zA-Z_]\w*\b)|(?<op>[+\-*\/%=<>!|]+)/g,
+    css:/(?<cmt>\/\*[\s\S]*?\*\/)|(?<str>"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(?<dec>@[\w-]+)|(?<prop>(?<=^|[{;\s(])[a-zA-Z-]+(?=\s*:))|(?<tag>(?:[.#]?[a-zA-Z_-][\w-]*|::?[\w-]+(?:\([^)\n]*\))?|\*)(?=[^{};]*\{))|(?<num>#[\da-fA-F]{3,8}\b|-?\b\d[\d.]*(?:px|em|rem|%|vh|vw|vmin|vmax|s|ms|deg|fr|ch)?\b)|(?<fn>\b[a-zA-Z-]+(?=\())|(?<op>[:;{}>,~+*]+)/gm,
+    html:/(?<cmt><!--[\s\S]*?-->)|(?<dec><![^>]*>|<\?[\s\S]*?\?>)|(?<tag><\/?[a-zA-Z][\w:-]*|\/?>)|(?<attr>[a-zA-Z_:][\w:.@-]*(?=\s*=))|(?<str>"[^"]*"|'[^']*')|(?<op>=)/g,
+    yaml:/(?<cmt>#[^\n]*)|(?<str>"(?:[^"\\]|\\.)*"|'[^']*')|(?<prop>(?<=^[ \t]*(?:-[ \t]+)?)[\w.\/-]+(?=[ \t]*:(?:[ \t]|$)))|(?<dec>[&*][\w-]+|!!?[\w-]+|^---|^\.\.\.)|(?<num>\b\d[\d_]*(?:\.\d+)?\b)|(?<id>\b[a-zA-Z_][\w-]*\b)|(?<op>^[ \t]*-(?=[ \t])|:(?=[ \t]|$)|[>|])/gm
+  };
+  function hlFamily(lang) { return HL_FAMILY[String(lang || '').toLowerCase().trim()] || null; }
+  function highlightCode(code, lang) {
+    const frag = document.createDocumentFragment(); const family = hlFamily(lang);
+    if (!family || code.length > 300000) { frag.append(code); return frag; }
+    const rules = HL_RULES[family], kw = new Set(HL_KEYWORDS[family].split(' ').filter(Boolean)), typed = family === 'js' || family === 'py' || family === 'c';
+    let last = 0, m; rules.lastIndex = 0;
+    while ((m = rules.exec(code))) {
+      if (!m[0]) { rules.lastIndex++; continue; }
+      if (m.index > last) frag.append(code.slice(last, m.index));
+      const g = m.groups, word = g.fn || g.id; let kind = '';
+      if (word) kind = kw.has(family === 'sql' ? word.toLowerCase() : word) ? 'kw' : g.fn ? 'fn' : typed && /^[A-Z]/.test(word) ? 'type' : '';
+      else kind = ['cmt', 'str', 'num', 'dec', 'tag', 'attr', 'prop', 'op'].find((name) => g[name]) || '';
+      if (kind) { const span = document.createElement('span'); span.className = `tok-${kind}`; span.textContent = m[0]; frag.append(span); } else frag.append(m[0]);
+      last = rules.lastIndex;
+    }
+    if (last < code.length) frag.append(code.slice(last));
+    return frag;
+  }
+  // Editor-style code preview: line-number gutter plus theme-aware syntax colors.
+  function buildCodeViewer(text, lang) {
+    const wrap = document.createElement('div'); wrap.className = 'viewer-code';
+    const gutter = document.createElement('pre'); gutter.className = 'viewer-gutter'; gutter.textContent = Array.from({ length: text.split('\n').length }, (_, i) => i + 1).join('\n');
+    const pre = document.createElement('pre'); pre.className = 'viewer-text'; const codeEl = document.createElement('code'); codeEl.appendChild(highlightCode(text, lang)); pre.appendChild(codeEl);
+    wrap.append(gutter, pre); return wrap;
+  }
+
   function base64Blob(base64, mime) { const bytes=Uint8Array.from(atob(base64), char=>char.charCodeAt(0)); return new Blob([bytes], { type:mime }); }
   function base64ByteLength(base64) { return Math.max(0, Math.floor(String(base64||'').length * .75) - ((String(base64||'').match(/=*$/)||[''])[0].length)); }
   function decodeArtifactText(artifact) { try { return new TextDecoder().decode(Uint8Array.from(atob(artifact.base64), char=>char.charCodeAt(0))); } catch { return 'This text preview could not be decoded.'; } }
   function isTextArtifact(artifact) { return /^text\//i.test(artifact.mime) || /\.(?:txt|json|csv|html?|py|js|mjs|cjs|ts|tsx|jsx|cs|cpp|cc|cxx|c|h|hpp|java|go|rs|rb|php|sh|sql|ya?ml|xml)$/i.test(artifact.name); }
-  function artifactTypeLabel(artifact) { if (artifact.mime==='application/pdf') return 'PDF'; if (/wordprocessingml|\.docx$/i.test(`${artifact.mime} ${artifact.name}`)) return 'Word document'; if (artifact.mime==='text/markdown') return 'Markdown'; if (String(artifact.mime).startsWith('image/')) return 'Image'; return artifact.mime || 'File'; }
+  function artifactTypeLabel(artifact) { if (artifact.mime==='application/pdf') return 'PDF'; if (/wordprocessingml|\.docx$/i.test(`${artifact.mime} ${artifact.name}`)) return 'Word document'; if (artifact.mime==='text/markdown') return 'Markdown'; if (String(artifact.mime).startsWith('image/')) return 'Image'; const ext = String(artifact.name || '').split('.').pop().toLowerCase(); if (hlFamily(ext)) return `${ext.toUpperCase()} code`; return artifact.mime || 'File'; }
 
   // Rasterize an SVG artifact to PNG in the browser and trigger the download.
   function downloadSvgAsPng(artifact) {
@@ -1741,7 +1816,7 @@
     bar.append(label, copy);
     const pre = document.createElement('pre');
     const codeEl = document.createElement('code');
-    codeEl.textContent = code;
+    codeEl.appendChild(highlightCode(code, lang));
     pre.appendChild(codeEl);
     wrap.append(bar, pre);
     return wrap;

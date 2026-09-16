@@ -29,7 +29,7 @@
         <button id="testConnection" class="ghost" title="Check the connection to the selected model or API">Test connection</button>
         <span id="localStatusPill" class="status-pill" hidden>Stopped</span>
       </div>
-      <button id="settings" class="ghost web-settings-button">⚙ Settings</button>
+      <div class="topbar-actions"><button id="themeToggle" class="ghost web-settings-button" title="Switch between dark and light theme">☀ Light</button><button id="settings" class="ghost web-settings-button">⚙ Settings</button></div>
     </header>
 
     <section id="messages" class="messages">
@@ -49,6 +49,7 @@
 
   <!-- Universal artifact inspector: previews generated files before download. -->
   <aside id="viewerPanel" class="viewer-panel" hidden>
+    <div id="viewerResize" class="viewer-resize" title="Drag to resize the viewer"></div>
     <div class="viewer-head"><div class="viewer-file"><strong id="viewerTitle">Preview</strong><span id="viewerMeta"></span></div><div class="viewer-actions"><span id="viewerZoomControls" class="viewer-controls"><button id="viewerZoomOut" title="Zoom out">−</button><button id="viewerZoomReset" title="Reset zoom">100%</button><button id="viewerZoomIn" title="Zoom in">+</button></span><a id="viewerDownload" class="artifact-view" download>Download</a><button id="viewerClose" class="icon-close" title="Close preview" aria-label="Close preview">×</button></div></div>
     <div class="viewer-body"><div id="viewerStage" class="viewer-stage"></div></div>
   </aside>

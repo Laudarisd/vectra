@@ -238,7 +238,7 @@ async function configureCloudProvider(
     { id: 'openai', label: 'OpenAI', description: 'Use your OpenAI API key' },
     { id: 'anthropic', label: 'Anthropic / Claude', description: 'Use your Anthropic API key' },
     { id: 'gemini', label: 'Google Gemini', description: 'Use your Gemini API key' },
-    { id: 'openaiCompatible', label: 'Local API', description: 'Remote/self-hosted OpenAI-compatible host and API key' }
+    { id: 'openaiCompatible', label: 'Local API', description: 'Remote/self-hosted OpenAI-compatible host; API key optional' }
   ];
   const current = getConfig().provider;
   const picked = await vscode.window.showQuickPick(cloudItems, {
@@ -254,10 +254,11 @@ async function configureCloudProvider(
     value: existing ?? '',
     password: true,
     ignoreFocusOut: true,
-    placeHolder: 'Paste API key'
+    placeHolder: picked.id === 'openaiCompatible' ? 'Optional. Leave empty if your local server needs no key' : 'Paste API key'
   });
   if (key === undefined) return;
-  if (!key.trim()) {
+  // Local API servers (llama.cpp, LM Studio, Ollama, vLLM) usually run without a key; only cloud providers need one.
+  if (!key.trim() && picked.id !== 'openaiCompatible') {
     void vscode.window.showWarningMessage('An API key is required for this provider.');
     return;
   }
@@ -289,7 +290,7 @@ async function configureCloudProvider(
     await updateOpenAICompatibleBaseUrl(baseUrl.trim());
     await updateOpenAICompatibleAllowInsecureTls(allowInsecureTls);
   }
-  await credentials.set(picked.id, key);
+  if (key.trim()) await credentials.set(picked.id, key.trim()); else await credentials.delete(picked.id);
   await updateProvider(picked.id);
   await updateModel('');
   await chat.refresh();

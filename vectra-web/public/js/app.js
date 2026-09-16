@@ -141,7 +141,7 @@
   els.saveSettings.addEventListener('click', () => {
     const selectedSource = els.settingsProvider.value;
     if (selectedSource === 'download') { els.dialog.close(); return; }
-    if (['openai', 'anthropic', 'gemini', 'openaiCompatible'].includes(selectedSource) && !els.apiKey.value.trim()) {
+    if (['openai', 'anthropic', 'gemini'].includes(selectedSource) && !els.apiKey.value.trim()) {
       setSettingsConnectionResult('error', 'Not saved', 'Enter an API key.');
       els.apiKey.focus();
       return;
@@ -487,7 +487,7 @@
     const value = els.settingsProvider.value;
     const apiProvider = ['openai', 'anthropic', 'gemini', 'openaiCompatible'].includes(value);
     els.apiFields.hidden = !apiProvider;
-    els.localApiFields.hidden = value !== 'openaiCompatible';
+    els.localApiFields.hidden = value !== 'openaiCompatible'; els.apiKey.placeholder = value === 'openaiCompatible' ? 'Optional for local servers that need no key' : 'Paste your API key';
     els.autoDetectFields.hidden = value !== 'localAuto';
     els.localRuntimeFields.hidden = value !== 'llamaCpp';
     els.downloadFields.hidden = value !== 'download';
@@ -906,7 +906,7 @@
       persistSession();
     }
     if (!state.model) { if (state.provider === 'llamaCpp') await openLocalDialog(); else if (state.provider === 'localAuto') await loadModels(); else openSettings(); return; }
-    if (!['llamaCpp', 'localAuto'].includes(state.provider) && !state.apiKey) { openSettings(); return; }
+    if (!['llamaCpp', 'localAuto', 'openaiCompatible'].includes(state.provider) && !state.apiKey) { openSettings(); return; }
     if (state.provider === 'openaiCompatible' && !state.baseUrl) { openSettings(); return; }
 
     if (state.editingIndex >= 0) state.messages.splice(state.editingIndex);

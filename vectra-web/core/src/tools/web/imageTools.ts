@@ -13,7 +13,7 @@ import { fetchWebImage } from './liveWeb';
 export interface VectraImageBox { x: number; y: number; w: number; h: number; label?: string; type?: string; confidence?: number }
 
 // A normal downloadable artifact plus display hints the browser viewer understands.
-export interface VectraViewableArtifact { name: string; mime: string; base64: string; view?: 'image'; title?: string; boxes?: VectraImageBox[] }
+export interface VectraViewableArtifact { name: string; mime: string; base64: string; view?: 'image'|'chart'; title?: string; boxes?: VectraImageBox[] }
 
 /** Host hooks for image capabilities the portable tools cannot provide alone. */
 export interface VectraImageToolOptions {

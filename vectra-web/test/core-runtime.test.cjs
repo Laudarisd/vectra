@@ -285,6 +285,24 @@ test('web-only document_extraction supports arbitrary schemas and cross-matching
   assert.match(output, /\| P-100 \| Bracket \| 3 \|/);
 });
 
+test('create_visualization produces a validated interactive chart artifact', async () => {
+  const artifacts=[];
+  const chart=createWebTools([],artifacts).find(tool=>tool.name==='create_visualization');
+  const output=await chart.execute({title:'PI trend',type:'line',xKey:'date',data:[{date:'2026-01-01',price:.2},{date:'2026-01-02',price:.24}],series:[{key:'price',label:'PI (USD)'}],source:'verified market data'},{});
+  assert.match(output,/interactive line chart/i);
+  assert.equal(artifacts[0].view,'chart');
+  assert.equal(JSON.parse(Buffer.from(artifacts[0].base64,'base64')).data.length,2);
+});
+
+test('native artifact tools preserve requested formats and real image generation is host-backed',async()=>{
+  const artifacts=[],calls=[];
+  const tools=createWebTools([],artifacts,{createArtifact:async(kind,input)=>{calls.push([kind,input.name]);return{name:input.name,mime:'application/octet-stream',base64:'YQ=='}},generateImage:async input=>({name:input.name,mime:'image/png',base64:'aW1hZ2U=',view:'image'})});
+  await tools.find(tool=>tool.name==='create_spreadsheet').execute({name:'doors.xlsx',columns:[{key:'door',header:'Door'}],rows:[{door:'A'}]},{});
+  await tools.find(tool=>tool.name==='create_presentation').execute({name:'review.pptx',slides:[{title:'Review',bullets:['Complete']}]},{});
+  await tools.find(tool=>tool.name==='generate_image').execute({name:'door.png',prompt:'Professional architectural photograph of a modern entry door'},{});
+  assert.deepEqual(calls,[['spreadsheet','doors.xlsx'],['presentation','review.pptx']]);assert.equal(artifacts.at(-1).view,'image');
+});
+
 test('document_extraction supports arbitrary multi-source columns', async () => {
   const extraction = createWebTools([], []).find((item) => item.name === 'document_extraction');
   const output = await extraction.execute({ sources: ['a.pdf', 'b.xlsx'], columns: [

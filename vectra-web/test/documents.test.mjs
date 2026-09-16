@@ -1,7 +1,7 @@
 // Beginner guide: Checks that d oc um en ts.t es t behavior stays correct as the project changes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDocx, buildPdf, extractDocxText, extractPdfText, artifactForRequest } from '../server/services/documents.mjs';
+import { buildDocx, buildPdf, buildPptx, buildXlsx, extractDocxText, extractPdfText, extractPptxText, extractXlsxText, artifactForRequest } from '../server/services/documents.mjs';
 import { renderPdfForVision } from '../server/services/pdf-renderer.mjs';
 
 test('web document codec round-trips DOCX text', () => {
@@ -42,4 +42,11 @@ test('web can generate a requested code file artifact', () => {
   assert.equal(artifacts[0].name,'hello.py');
   assert.equal(Buffer.from(artifacts[0].base64,'base64').toString('utf8'),'print(\"hello\")');
   assert.equal(artifacts[0].previewText,'print(\"hello\")');
+});
+
+test('native spreadsheet and presentation builders preserve structured content',()=>{
+  const xlsx=buildXlsx([{key:'item',header:'Item'},{key:'qty',header:'Quantity'}],[{item:'Door A',qty:2}],'Schedule');
+  assert.match(extractXlsxText(xlsx),/Door A/);assert.match(extractXlsxText(xlsx),/2/);
+  const pptx=buildPptx([{title:'Door Review',bullets:['Two doors inspected','No defects']}],'Inspection');
+  assert.match(extractPptxText(pptx),/Door Review/);assert.match(extractPptxText(pptx),/No defects/);
 });

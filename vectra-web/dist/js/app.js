@@ -19,6 +19,10 @@
     apiKey: sessionStorage.getItem('vectra.apiKey') || '',
     baseUrl: sessionStorage.getItem('vectra.baseUrl') || '',
     allowInsecureTls: sessionStorage.getItem('vectra.allowInsecureTls') === 'true',
+    imageBaseUrl: sessionStorage.getItem('vectra.imageBaseUrl') || '',
+    imageApiKey: sessionStorage.getItem('vectra.imageApiKey') || '',
+    imageModel: sessionStorage.getItem('vectra.imageModel') || '',
+    imageAllowInsecureTls: sessionStorage.getItem('vectra.imageAllowInsecureTls') === 'true',
     model: sessionStorage.getItem('vectra.model') || '',
     local: loadLocalConfig(),
     localStatus: { status: 'stopped', running: false, logs: [] },
@@ -38,7 +42,9 @@
     settings: $('settings'), themeToggle: $('themeToggle'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
     autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
     localRuntimeFields: $('localRuntimeFields'), downloadFields: $('downloadFields'),
-    apiKey: $('apiKey'), localApiFields: $('localApiFields'), localApiBaseUrl: $('localApiBaseUrl'), localApiAllowInsecureTls: $('localApiAllowInsecureTls'), saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
+    apiKey: $('apiKey'), localApiFields: $('localApiFields'), localApiBaseUrl: $('localApiBaseUrl'), localApiAllowInsecureTls: $('localApiAllowInsecureTls'),
+    imageApiBaseUrl: $('imageApiBaseUrl'), imageApiKey: $('imageApiKey'), imageApiModel: $('imageApiModel'), imageApiAllowInsecureTls: $('imageApiAllowInsecureTls'),
+    saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
     chatHistory: $('chatHistory'), refreshHistory: $('refreshHistory'), newProject: $('newProject'), selectHistory: $('selectHistory'),
     deleteSelected: $('deleteSelected'), deleteAllHistory: $('deleteAllHistory'),
     localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
@@ -140,7 +146,23 @@
 
   els.saveSettings.addEventListener('click', () => {
     const selectedSource = els.settingsProvider.value;
-    if (selectedSource === 'download') { els.dialog.close(); return; }
+    const imageBaseUrl = els.imageApiBaseUrl.value.trim().replace(/\/+$/, '');
+    if (imageBaseUrl) {
+      try {
+        const url = new URL(imageBaseUrl);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      } catch {
+        setSettingsConnectionResult('error', 'Not saved', 'Enter a valid image API URL, or leave it blank.');
+        els.imageApiBaseUrl.focus();
+        return;
+      }
+    }
+    if (els.imageApiAllowInsecureTls.checked && !confirm('Allowing a self-signed certificate disables TLS certificate verification for the image API. Continue?')) return;
+    state.imageBaseUrl = imageBaseUrl;
+    state.imageApiKey = els.imageApiKey.value.trim();
+    state.imageModel = els.imageApiModel.value.trim();
+    state.imageAllowInsecureTls = !!imageBaseUrl && els.imageApiAllowInsecureTls.checked;
+    if (selectedSource === 'download') { persistSession(); els.dialog.close(); return; }
     if (['openai', 'anthropic', 'gemini'].includes(selectedSource) && !els.apiKey.value.trim()) {
       setSettingsConnectionResult('error', 'Not saved', 'Enter an API key.');
       els.apiKey.focus();
@@ -482,6 +504,10 @@
     els.apiKey.value = state.apiKey;
     els.localApiBaseUrl.value = state.provider === 'openaiCompatible' ? state.baseUrl : '';
     els.localApiAllowInsecureTls.checked = state.provider === 'openaiCompatible' && state.allowInsecureTls;
+    els.imageApiBaseUrl.value = state.imageBaseUrl;
+    els.imageApiKey.value = state.imageApiKey;
+    els.imageApiModel.value = state.imageModel;
+    els.imageApiAllowInsecureTls.checked = state.imageAllowInsecureTls;
   }
   function updateSettingsProviderUi() {
     const value = els.settingsProvider.value;
@@ -501,6 +527,10 @@
     sessionStorage.setItem('vectra.baseUrl', state.baseUrl);
     sessionStorage.setItem('vectra.allowInsecureTls', String(state.allowInsecureTls));
     sessionStorage.setItem('vectra.model', state.model);
+    sessionStorage.setItem('vectra.imageBaseUrl', state.imageBaseUrl);
+    sessionStorage.setItem('vectra.imageApiKey', state.imageApiKey);
+    sessionStorage.setItem('vectra.imageModel', state.imageModel);
+    sessionStorage.setItem('vectra.imageAllowInsecureTls', String(state.imageAllowInsecureTls));
   }
   function applyProviderDefaults() {
     if (state.provider === 'llamaCpp') {
@@ -534,6 +564,10 @@
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
         allowInsecureTls: state.allowInsecureTls,
+        imageBaseUrl: state.imageBaseUrl,
+        imageApiKey: state.imageApiKey,
+        imageModel: state.imageModel,
+        imageAllowInsecureTls: state.imageAllowInsecureTls,
         model: state.model
       });
       alert(data.message);
@@ -935,6 +969,10 @@
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
         allowInsecureTls: state.allowInsecureTls,
+        imageBaseUrl: state.imageBaseUrl,
+        imageApiKey: state.imageApiKey,
+        imageModel: state.imageModel,
+        imageAllowInsecureTls: state.imageAllowInsecureTls,
         model: state.model,
         agentHarness: 'deepagents',
         conversationId: state.currentChatId,
@@ -984,6 +1022,9 @@
     const isImage = artifact.view === 'image' || String(artifact.mime).startsWith('image/');
     els.viewerZoomControls.hidden = !isImage;
     if (isImage) return openImageArtifact(artifact);
+    if(artifact.view==='chart'||artifact.mime==='application/vnd.vectra.chart+json'){
+      try{window.renderVectraChart(els.viewerStage,JSON.parse(decodeArtifactText(artifact)));showViewerPanel();return}catch(error){console.warn('Chart preview failed:',error)}
+    }
     if (artifact.mime === 'application/pdf') {
       const frame = document.createElement('iframe'); frame.className = 'viewer-document'; frame.title = `${artifact.name} PDF preview`;
       viewerObjectUrl = URL.createObjectURL(base64Blob(artifact.base64, artifact.mime)); frame.src = viewerObjectUrl; els.viewerStage.appendChild(frame);
@@ -1107,7 +1148,7 @@
   function base64ByteLength(base64) { return Math.max(0, Math.floor(String(base64||'').length * .75) - ((String(base64||'').match(/=*$/)||[''])[0].length)); }
   function decodeArtifactText(artifact) { try { return new TextDecoder().decode(Uint8Array.from(atob(artifact.base64), char=>char.charCodeAt(0))); } catch { return 'This text preview could not be decoded.'; } }
   function isTextArtifact(artifact) { return /^text\//i.test(artifact.mime) || /\.(?:txt|json|csv|html?|py|js|mjs|cjs|ts|tsx|jsx|cs|cpp|cc|cxx|c|h|hpp|java|go|rs|rb|php|sh|sql|ya?ml|xml)$/i.test(artifact.name); }
-  function artifactTypeLabel(artifact) { if (artifact.mime==='application/pdf') return 'PDF'; if (/wordprocessingml|\.docx$/i.test(`${artifact.mime} ${artifact.name}`)) return 'Word document'; if (artifact.mime==='text/markdown') return 'Markdown'; if (String(artifact.mime).startsWith('image/')) return 'Image'; const ext = String(artifact.name || '').split('.').pop().toLowerCase(); if (hlFamily(ext)) return `${ext.toUpperCase()} code`; return artifact.mime || 'File'; }
+  function artifactTypeLabel(artifact) { if (artifact.view==='chart') return 'Interactive chart'; if (artifact.mime==='application/pdf') return 'PDF'; if (/wordprocessingml|\.docx$/i.test(`${artifact.mime} ${artifact.name}`)) return 'Word document'; if (artifact.mime==='text/markdown') return 'Markdown'; if (String(artifact.mime).startsWith('image/')) return 'Image'; const ext = String(artifact.name || '').split('.').pop().toLowerCase(); if (hlFamily(ext)) return `${ext.toUpperCase()} code`; return artifact.mime || 'File'; }
 
   // Rasterize an SVG artifact to PNG in the browser and trigger the download.
   function downloadSvgAsPng(artifact) {

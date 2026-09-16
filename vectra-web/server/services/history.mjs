@@ -231,7 +231,7 @@ function sanitizeArtifacts(value) {
     mime: cleanField(artifact?.mime || 'application/octet-stream', 160),
     base64: String(artifact?.base64 || '').slice(0, 64_000_000),
     previewText: String(artifact?.previewText || '').slice(0, 4_000_000),
-    ...(artifact?.view==='image'?{view:'image'}:{}),
+    ...(['image','chart'].includes(artifact?.view)?{view:artifact.view}:{}),
     ...(artifact?.title?{title:cleanField(artifact.title,240)}:{}),
     ...(Array.isArray(artifact?.boxes)?{boxes:artifact.boxes.slice(0,200)}:{})
   }));

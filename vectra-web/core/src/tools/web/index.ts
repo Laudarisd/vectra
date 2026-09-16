@@ -7,17 +7,23 @@ import { toHostToolExecutor } from '../deepTools';
 import { DOCUMENT_EXTRACTION_TOOL_DEFINITION, createDocumentExtractionTool } from './documentExtractionTool';
 import { searchWeb, fetchWebPage } from './liveWeb';
 import { IMAGE_TOOL_DEFINITIONS, createImageTools, VectraImageBox, VectraImageToolOptions } from './imageTools';
+import { VISUALIZATION_TOOL_DEFINITION, createVisualizationTool } from './visualizationTool';
+import { ARTIFACT_CREATION_DEFINITIONS, ArtifactCreationOptions, createArtifactCreationTools } from './artifactCreationTools';
 
 export * from './documentExtractionTool';
 export * from './liveWeb';
 export * from './imageTools';
+export * from './visualizationTool';
+export * from './artifactCreationTools';
 
 // view/title/boxes are display hints for the browser's split image viewer.
-export interface VectraWebArtifact { name: string; mime: string; base64: string; previewText?: string; view?: 'image'; title?: string; boxes?: VectraImageBox[] }
+export interface VectraWebArtifact { name: string; mime: string; base64: string; previewText?: string; view?: 'image'|'chart'; title?: string; boxes?: VectraImageBox[] }
 
 export const WEB_TOOL_DEFINITIONS = [
   ...ATTACHMENT_TOOL_DEFINITIONS,
   DOCUMENT_EXTRACTION_TOOL_DEFINITION,
+  VISUALIZATION_TOOL_DEFINITION,
+  ...ARTIFACT_CREATION_DEFINITIONS,
   ...IMAGE_TOOL_DEFINITIONS,
   ...VECTRA_TOOL_DEFINITIONS.filter((item) => item.surface === 'web' || item.surface === 'all')
 ];
@@ -28,13 +34,15 @@ export const WEB_TOOL_DEFINITIONS = [
 export function createWebTools<TContext = unknown>(
   attachments: VectraAttachmentRecord[],
   artifacts: VectraWebArtifact[],
-  imageOptions?: VectraImageToolOptions
+  imageOptions?: VectraImageToolOptions & ArtifactCreationOptions
 ): VectraDeepTool<TContext>[] {
   const attachmentTools = createAttachmentTools<TContext>(attachments);
   const filesSchema = z.array(z.object({ path: z.string().min(1), content: z.string() })).min(1).max(30);
   return [
     ...attachmentTools,
     createDocumentExtractionTool<TContext>(),
+    createVisualizationTool<TContext>(artifacts),
+    ...createArtifactCreationTools<TContext>(artifacts, imageOptions),
     ...createImageTools<TContext>(attachments, artifacts, imageOptions),
     {
       name: 'vectra_read_files',
@@ -89,7 +97,7 @@ export function createWebTools<TContext = unknown>(
 export function createWebToolExecutor<TContext = unknown>(
   attachments: VectraAttachmentRecord[],
   artifacts: VectraWebArtifact[],
-  imageOptions?: VectraImageToolOptions
+  imageOptions?: VectraImageToolOptions & ArtifactCreationOptions
 ): VectraHostToolExecutor<TContext> {
   return toHostToolExecutor(createWebTools<TContext>(attachments, artifacts, imageOptions));
 }

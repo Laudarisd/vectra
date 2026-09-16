@@ -42,6 +42,16 @@ test('SQLite history creates, updates, lists, and deletes conversations', async 
       messages: [...updated.messages, { role: 'user', content: 'Updated in VS Code', createdAt: Date.now() }]
     }));
     assert.equal(store.get(created.id).messages.at(-1).content, 'Updated in VS Code');
+    const project=store.createProject('Door review');
+    const projectChat=store.save({projectId:project.id,messages:[{role:'user',content:'Inspect every door'}]});
+    assert.equal(store.get(projectChat.id).projectId,project.id);
+    assert.equal(store.listProjects()[0].chatCount,1);
+    assert.equal(store.deleteMany([projectChat.id]),1);
+    assert.equal(store.deleteProject(project.id),true);
+    const attachmentChat=store.save({messages:[{role:'user',content:'Keep this image'}],attachments:[{name:'door.png',mime:'image/png',kind:'image',size:3,base64:'YWJj',width:100,height:50}]});
+    assert.equal(store.get(attachmentChat.id).attachments[0].base64,'YWJj');
+    assert.equal(store.get(attachmentChat.id).attachments[0].width,100);
+    assert.equal(store.delete(attachmentChat.id),true);
     assert.equal(store.delete(created.id), true);
     assert.equal(store.get(created.id), undefined);
   } finally {

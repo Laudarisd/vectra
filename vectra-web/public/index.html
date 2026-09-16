@@ -15,7 +15,10 @@
     <div class="brand"><img class="mark" src="/VectraLogo.png" alt="Vectra logo" /><span>Vectra</span></div>
     <button id="newChat" class="new-chat">＋ New chat</button>
     <div class="history-heading"><span>Chats</span><button id="refreshHistory" class="history-refresh" title="Refresh history">↻</button></div>
-    <div id="chatHistory" class="chat-history" aria-label="Chat history"></div>
+    <button id="newProject" class="new-chat secondary">+ New project</button>
+    <div class="history-select-row"><button id="selectHistory" class="history-refresh">Select</button></div>
+    <div class="history-scroll"><div id="chatHistory" class="chat-history" aria-label="Chat history"></div></div>
+    <div id="historyActions" class="history-actions"><button id="deleteSelected" class="danger-ghost" hidden>Delete selected</button><button id="deleteAllHistory" class="danger-ghost">Delete chat history</button></div>
   </aside>
 
   <main class="main">
@@ -45,7 +48,7 @@
 
   <!-- Split image viewer: opens as a third column when the agent shows or draws an image -->
   <aside id="viewerPanel" class="viewer-panel" hidden>
-    <div class="viewer-head"><strong id="viewerTitle">Viewer</strong><button id="viewerClose" class="icon-close" title="Close viewer">×</button></div>
+    <div class="viewer-head"><strong id="viewerTitle">Viewer</strong><div class="viewer-controls"><button id="viewerZoomOut" title="Zoom out">−</button><button id="viewerZoomReset" title="Reset zoom">100%</button><button id="viewerZoomIn" title="Zoom in">+</button><button id="viewerClose" class="icon-close" title="Close viewer">×</button></div></div>
     <div class="viewer-body"><div id="viewerStage" class="viewer-stage"></div></div>
   </aside>
 </div>

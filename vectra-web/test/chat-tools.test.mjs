@@ -126,10 +126,13 @@ test('web generation request returns downloadable PDF and code artifacts', async
 
 test('web chat history API persists conversations in SQLite', async()=>{
   await withVectraServer(async(root)=>{
-    const createdResponse=await fetch(`${root}/api/chats`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({provider:'localAuto',model:'demo',messages:[{role:'user',content:'Remember this locally'}]})});
+    const projectResponse=await fetch(`${root}/api/projects`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Door review'})});
+    const project=await projectResponse.json();assert.equal(projectResponse.status,201);assert.ok(project.id);
+    const createdResponse=await fetch(`${root}/api/chats`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({provider:'localAuto',model:'demo',projectId:project.id,messages:[{role:'user',content:'Remember this locally'}]})});
     const created=await createdResponse.json();assert.equal(createdResponse.status,201);assert.ok(created.id);
     const list=await fetch(`${root}/api/chats`).then(response=>response.json());assert.equal(list.chats.length,1);assert.equal(list.chats[0].title,'Remember this locally');
-    const loaded=await fetch(`${root}/api/chats/${created.id}`).then(response=>response.json());assert.equal(loaded.messages[0].content,'Remember this locally');
-    const deleted=await fetch(`${root}/api/chats/${created.id}`,{method:'DELETE'}).then(response=>response.json());assert.equal(deleted.deleted,true);
+    const loaded=await fetch(`${root}/api/chats/${created.id}`).then(response=>response.json());assert.equal(loaded.messages[0].content,'Remember this locally');assert.equal(loaded.projectId,project.id);
+    const projects=await fetch(`${root}/api/projects`).then(response=>response.json());assert.equal(projects.projects[0].chatCount,1);
+    const deleted=await fetch(`${root}/api/chats`,{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[created.id]})}).then(response=>response.json());assert.equal(deleted.deleted,1);
   });
 });

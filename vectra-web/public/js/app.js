@@ -4,10 +4,15 @@
   const state = {
     messages: [],
     attachments: [],
+    savedAttachments: [],
     busy: false,
     chatAbort: null,
     currentChatId: '',
+    currentProjectId: null,
     history: [],
+    projects: [],
+    selectingHistory: false,
+    selectedChats: new Set(),
     editingIndex: -1,
     provider: sessionStorage.getItem('vectra.provider') || 'openai',
     apiKey: sessionStorage.getItem('vectra.apiKey') || '',
@@ -27,12 +32,14 @@
   const els = {
     messages: $('messages'), prompt: $('prompt'), send: $('send'), attach: $('attach'), fileInput: $('fileInput'), attachments: $('attachments'),
     viewerPanel: $('viewerPanel'), viewerTitle: $('viewerTitle'), viewerClose: $('viewerClose'), viewerStage: $('viewerStage'),
+    viewerZoomIn: $('viewerZoomIn'), viewerZoomOut: $('viewerZoomOut'), viewerZoomReset: $('viewerZoomReset'),
     model: $('model'), testConnection: $('testConnection'), localStatusPill: $('localStatusPill'),
     settings: $('settings'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
     autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
     localRuntimeFields: $('localRuntimeFields'), downloadFields: $('downloadFields'),
     apiKey: $('apiKey'), localApiFields: $('localApiFields'), localApiBaseUrl: $('localApiBaseUrl'), localApiAllowInsecureTls: $('localApiAllowInsecureTls'), saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
-    chatHistory: $('chatHistory'), refreshHistory: $('refreshHistory'),
+    chatHistory: $('chatHistory'), refreshHistory: $('refreshHistory'), newProject: $('newProject'), selectHistory: $('selectHistory'),
+    deleteSelected: $('deleteSelected'), deleteAllHistory: $('deleteAllHistory'),
     localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
     localModelPath: $('localModelPath'), localMmprojPath: $('localMmprojPath'), localServerPath: $('localServerPath'), localPort: $('localPort'), localContext: $('localContext'),
     localGpuLayers: $('localGpuLayers'), localSplitMode: $('localSplitMode'), localTimeout: $('localTimeout'), localExtraArgs: $('localExtraArgs'), localCpuMoe: $('localCpuMoe'),
@@ -54,7 +61,11 @@
   loadHistory().catch(() => {});
   if (state.provider === 'localAuto') loadModels().catch(() => {});
 
-  els.newChat.addEventListener('click', newChat);
+  els.newChat.addEventListener('click', () => newChat());
+  els.newProject.addEventListener('click', () => void createProject());
+  els.selectHistory.addEventListener('click', toggleHistorySelection);
+  els.deleteSelected.addEventListener('click', () => void deleteSelectedChats());
+  els.deleteAllHistory.addEventListener('click', () => void deleteAllHistory());
   els.refreshHistory.addEventListener('click', () => loadHistory().catch((error) => alert(error.message)));
   els.settings.addEventListener('click', openSettings);
   els.settingsProvider.addEventListener('change', () => {
@@ -238,11 +249,13 @@
     if (state.provider === 'llamaCpp' || els.dialog.open || ['starting', 'ready'].includes(state.localStatus.status)) void refreshLocalStatus().catch(() => {});
   }, 2500);
 
-  function newChat() {
+  function newChat(projectId = null) {
     if (state.busy) return;
     state.currentChatId = '';
+    state.currentProjectId = projectId;
     state.messages = [];
     state.attachments = [];
+    state.savedAttachments = [];
     state.editingIndex = -1;
     els.prompt.value = '';
     els.prompt.placeholder = 'Message Vectra';
@@ -252,8 +265,10 @@
   }
 
   async function loadHistory() {
-    const data = await request('/api/chats');
+    const [data,projectData] = await Promise.all([request('/api/chats'),request('/api/projects')]);
     state.history = data.chats || [];
+    state.projects = projectData.projects || [];
+    state.selectedChats = new Set([...state.selectedChats].filter(id=>state.history.some(chat=>chat.id===id)));
     renderHistory();
   }
 
@@ -261,8 +276,10 @@
     if (state.busy || id === state.currentChatId) return;
     const chat = await request(`/api/chats/${encodeURIComponent(id)}`);
     state.currentChatId = chat.id;
+    state.currentProjectId = chat.projectId || null;
     state.messages = Array.isArray(chat.messages) ? chat.messages : [];
-    state.attachments = [];
+    state.savedAttachments = Array.isArray(chat.attachments) ? chat.attachments : [];
+    state.attachments = state.savedAttachments.map(file=>({...file}));
     state.editingIndex = -1;
     if (chat.provider) state.provider = chat.provider;
     if (chat.model) state.model = chat.model;
@@ -280,11 +297,53 @@
     await loadHistory();
   }
 
+  async function createProject() {
+    if(state.busy)return;
+    const name=prompt('Project name');
+    if(!name?.trim())return;
+    const project=await request('/api/projects',{method:'POST',body:{name:name.trim()}});
+    await loadHistory();
+    newChat(project.id);
+  }
+
+  function toggleHistorySelection(){
+    state.selectingHistory=!state.selectingHistory;
+    if(!state.selectingHistory)state.selectedChats.clear();
+    els.selectHistory.textContent=state.selectingHistory?'Cancel':'Select';
+    els.deleteSelected.hidden=!state.selectingHistory;
+    renderHistory();
+  }
+
+  async function deleteSelectedChats(){
+    const ids=[...state.selectedChats];
+    if(!ids.length||!confirm(`Delete ${ids.length} selected chat${ids.length===1?'':'s'} permanently?`))return;
+    await request('/api/chats',{method:'DELETE',body:{ids}});
+    if(ids.includes(state.currentChatId))newChat();
+    state.selectedChats.clear();state.selectingHistory=false;
+    els.selectHistory.textContent='Select';els.deleteSelected.hidden=true;
+    await loadHistory();
+  }
+
+  async function deleteAllHistory(){
+    if(!state.history.length)return;
+    if(!confirm(`Delete all ${state.history.length} chats? This cannot be undone.`))return;
+    if(prompt('Type DELETE to permanently erase all chat history.')!=='DELETE')return;
+    await request('/api/chats',{method:'DELETE',body:{all:true}});
+    newChat();await loadHistory();
+  }
+
   function renderHistory() {
     els.chatHistory.replaceChildren();
-    for (const chat of state.history) {
+    const projectMap=new Map(state.projects.map(project=>[project.id,project]));
+    const groups=[...state.projects.map(project=>({label:project.name,id:project.id,chats:state.history.filter(chat=>chat.projectId===project.id)})),{label:'Single chats',id:null,chats:state.history.filter(chat=>!chat.projectId||!projectMap.has(chat.projectId))}];
+    for(const group of groups){
+      if(!group.chats.length&&group.id===null)continue;
+      const heading=document.createElement('button');heading.className='history-group';heading.textContent=`${group.label} (${group.chats.length})`;heading.title=group.id?'Start a chat in this project':'Single chats';
+      heading.addEventListener('click',()=>newChat(group.id));els.chatHistory.appendChild(heading);
+      for (const chat of group.chats) {
       const row = document.createElement('div');
-      row.className = `history-item${chat.id === state.currentChatId ? ' active' : ''}`;
+      row.className = `history-item${chat.id === state.currentChatId ? ' active' : ''}${state.selectingHistory?' selecting':''}`;
+      if(state.selectingHistory){const check=document.createElement('input');check.type='checkbox';check.className='history-check';check.checked=state.selectedChats.has(chat.id);check.addEventListener('change',()=>{check.checked?state.selectedChats.add(chat.id):state.selectedChats.delete(chat.id)});row.appendChild(check)}
       const open = document.createElement('button');
       open.className = 'history-open';
       open.title = chat.title;
@@ -295,8 +354,10 @@
       remove.title = 'Delete chat';
       remove.textContent = '×';
       remove.addEventListener('click', () => deleteChat(chat.id).catch((error) => alert(error.message)));
-      row.append(open, remove);
+      row.append(open);
+      if(!state.selectingHistory)row.append(remove);
       els.chatHistory.appendChild(row);
+      }
     }
     if (!state.history.length) {
       const empty = document.createElement('div');
@@ -308,7 +369,7 @@
 
   async function persistChat() {
     const cleanMessages = state.messages.filter((message) => !message.pending).map(({ role, content, artifacts, files, createdAt }) => ({ role, content, artifacts: artifacts || [], ...(files?.length ? { files } : {}), createdAt }));
-    const payload = { provider: state.provider, model: state.model, messages: cleanMessages };
+    const payload = { provider: state.provider, model: state.model, projectId: state.currentProjectId, messages: cleanMessages, attachments: state.savedAttachments };
     const saved = state.currentChatId
       ? await request(`/api/chats/${encodeURIComponent(state.currentChatId)}`, { method: 'PUT', body: payload })
       : await request('/api/chats', { method: 'POST', body: payload });
@@ -809,6 +870,7 @@
     state.messages.push({ role: 'user', content: text || 'Please analyze the attached files.', createdAt: Date.now(),
       ...(state.attachments.length ? { files: state.attachments.map((file) => ({ name: file.name, kind: file.kind, size: file.size })) } : {}) });
     const payloadAttachments = state.attachments;
+    for(const file of payloadAttachments){const index=state.savedAttachments.findIndex(saved=>saved.name===file.name);if(index>=0)state.savedAttachments[index]=file;else state.savedAttachments.push(file)}
     state.attachments = [];
     els.prompt.value = ''; autoGrow(); renderAttachments();
     els.prompt.placeholder = 'Message Vectra';
@@ -864,13 +926,15 @@
     }
   }
 
-  // --- Split image viewer: renders an image/SVG artifact with optional bounding-box overlays ---
+  // --- Split image viewer: image and overlays share one scalable coordinate surface. ---
+  let viewerFrame,viewerImage,viewerZoom=1;
   function openImageViewer(artifact) {
     els.viewerTitle.textContent = artifact.title || artifact.name;
     els.viewerStage.replaceChildren();
     const frame = document.createElement('div'); frame.className = 'viewer-frame';
     const img = document.createElement('img');
     img.alt = artifact.title || artifact.name;
+    img.onload=()=>{viewerFrame=frame;viewerImage=img;const fit=Math.min(1,els.viewerStage.clientWidth/Math.max(1,img.naturalWidth));setViewerZoom(fit)};
     img.src = `data:${artifact.mime};base64,${artifact.base64}`;
     frame.appendChild(img);
     // Box coordinates are fractions of the image (0..1), so plain % positioning scales with it.
@@ -886,7 +950,21 @@
     document.querySelector('.app-shell').classList.add('viewer-open');
   }
 
+  function setViewerZoom(value,clientX,clientY){
+    if(!viewerFrame||!viewerImage)return;
+    const stage=els.viewerStage,old=viewerZoom,next=Math.max(.2,Math.min(8,value));
+    const rect=stage.getBoundingClientRect(),x=(clientX??rect.left+rect.width/2)-rect.left+stage.scrollLeft,y=(clientY??rect.top+rect.height/2)-rect.top+stage.scrollTop;
+    viewerZoom=next;viewerFrame.style.width=`${viewerImage.naturalWidth*next}px`;els.viewerZoomReset.textContent=`${Math.round(next*100)}%`;
+    stage.scrollLeft=x*(next/old)-((clientX??rect.left+rect.width/2)-rect.left);stage.scrollTop=y*(next/old)-((clientY??rect.top+rect.height/2)-rect.top);
+  }
+
+  els.viewerZoomIn.addEventListener('click',()=>setViewerZoom(viewerZoom*1.25));
+  els.viewerZoomOut.addEventListener('click',()=>setViewerZoom(viewerZoom/1.25));
+  els.viewerZoomReset.addEventListener('click',()=>setViewerZoom(1));
+  els.viewerStage.addEventListener('wheel',(event)=>{event.preventDefault();setViewerZoom(viewerZoom*(event.deltaY<0?1.12:1/1.12),event.clientX,event.clientY)},{passive:false});
+
   function closeImageViewer() {
+    viewerFrame=viewerImage=null;viewerZoom=1;
     els.viewerPanel.hidden = true;
     document.querySelector('.app-shell').classList.remove('viewer-open');
   }
@@ -1140,8 +1218,9 @@
           if (message.files?.length) {
             const filesRow = document.createElement('div'); filesRow.className = 'message-files';
             for (const file of message.files) {
-              const chip = document.createElement('span'); chip.className = 'attachment-chip';
+              const saved=state.savedAttachments.find(item=>item.name===file.name),chip=document.createElement(saved?.base64?'button':'span'); chip.className = 'attachment-chip';
               chip.textContent = `📎 ${file.name} · ${formatSize(file.size)}`;
+              if(saved?.base64){chip.title=saved.mime?.startsWith('image/')?'Open saved image':'Download saved file';chip.addEventListener('click',()=>{if(saved.mime?.startsWith('image/'))openImageViewer({name:saved.name,title:saved.name,mime:saved.mime,base64:saved.base64,view:'image'});else{const link=document.createElement('a');link.download=saved.name;link.href=`data:${saved.mime};base64,${saved.base64}`;link.click()}})}
               filesRow.appendChild(chip);
             }
             content.appendChild(filesRow);
@@ -1155,8 +1234,9 @@
           actions.append(edit, resend); body.appendChild(actions);
         }
         if (message.artifacts?.length) { const row=document.createElement('div'); row.className='artifact-row'; for (const artifact of message.artifacts) {
-          // Visuals open in the viewer automatically; the message keeps only download links.
+          // Persisted visual artifacts can be reopened with their saved overlays.
           const a=document.createElement('a'); a.className='artifact-download'; a.download=artifact.name; a.href=`data:${artifact.mime};base64,${artifact.base64}`; a.textContent=`Download ${artifact.name}`; row.appendChild(a);
+          if(artifact.view==='image'){const view=document.createElement('button');view.className='artifact-view';view.textContent='View';view.addEventListener('click',()=>openImageViewer(artifact));row.appendChild(view)}
           // Drawn SVG figures also download as PNG, rasterized in the browser.
           if (artifact.mime === 'image/svg+xml') { const png=document.createElement('button'); png.className='artifact-view'; png.textContent='Download PNG'; png.addEventListener('click', () => downloadSvgAsPng(artifact)); row.appendChild(png); } } body.appendChild(row); }
         wrap.append(avatar, body); els.messages.appendChild(wrap);

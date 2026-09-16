@@ -240,6 +240,24 @@ test('show_image renders PDF pages on demand and keeps post-OCR display bytes us
   await show.execute({ name: 'scan.png' }, {});
   assert.ok(artifacts.some((item) => item.name === 'scan.png' && item.base64 === attachments[1].viewBase64));
 
+  // Explicit boxes are validated before display.
+  await show.execute({ name: 'scan.png', boxes: [{x:.7,y:.7,w:.5,h:.5,label:'overflow'},{x:.2,y:.3,w:.1,h:.1,label:'manual'}] }, {});
+  assert.deepEqual(artifacts.find((item) => item.name === 'scan.png').boxes,[{x:.2,y:.3,w:.1,h:.1,label:'manual'}]);
+
+  // Spatial detection belongs to inspect_visual, which opens its grounded result.
+  const groundedTools = createWebTools(attachments, artifacts, {
+    inspectVisual: async (record, page, task) => ({
+      name: record.name, mime: 'image/png', base64: record.viewBase64,
+      text: `${task} on page ${page || 1}`,
+      boxes: [{x:.1,y:.2,w:.3,h:.1,label:'A-001',type:'text',confidence:.9}]
+    })
+  });
+  const inspect = groundedTools.find((item) => item.name === 'inspect_visual');
+  const inspected = JSON.parse(await inspect.execute({name:'scan.png',task:'read labels'},{}));
+  assert.equal(inspected.text,'read labels on page 1');
+  assert.equal(inspected.regions[0].label,'A-001');
+  assert.deepEqual(artifacts.find((item) => item.name === 'scan.png').boxes,inspected.regions);
+
   // Without a host page renderer the PDF error is actionable, not "not an image".
   const bare = createWebTools(attachments, []).find((item) => item.name === 'show_image');
   await assert.rejects(async () => bare.execute({ name: 'drawing.pdf', page: 2 }, {}), /No rendered image is available/);

@@ -10,7 +10,7 @@ import { VectraAttachmentRecord } from '../attachments';
 import { fetchWebImage } from './liveWeb';
 
 // One highlight rectangle in fractions of the image size (0..1), so it fits any resolution.
-export interface VectraImageBox { x: number; y: number; w: number; h: number; label?: string }
+export interface VectraImageBox { x: number; y: number; w: number; h: number; label?: string; type?: string; confidence?: number }
 
 // A normal downloadable artifact plus display hints the browser viewer understands.
 export interface VectraViewableArtifact { name: string; mime: string; base64: string; view?: 'image'; title?: string; boxes?: VectraImageBox[] }
@@ -20,9 +20,13 @@ export interface VectraImageToolOptions {
   /** Rasterize one page (1-based) of an uploaded PDF on demand. Receives the record the model named
    * (the PDF itself or a derived "· page N" image whose bytes were released) and must locate the source bytes. */
   renderPdfPage?: (attachment: VectraAttachmentRecord, pageNumber: number) => Promise<{ mime: string; base64: string; width?: number; height?: number } | null>;
+  inspectVisual?: (attachment: VectraAttachmentRecord, page: number | undefined, task: string) => Promise<{
+    name: string; mime: string; base64: string; text: string; boxes: VectraImageBox[];
+  }>;
 }
 
 export const IMAGE_TOOL_DEFINITIONS: readonly VectraToolDefinition[] = [
+  { name: 'inspect_visual', displayName: 'Inspect Visual', description: 'Ground text or objects on any renderable uploaded file and display the measured regions.', risk: 'read', surface: 'web' },
   { name: 'show_image', displayName: 'Show Image', description: 'Display an uploaded image or one page of an uploaded PDF in the split viewer panel, optionally highlighting regions with labeled bounding boxes.', risk: 'read', surface: 'web' },
   { name: 'fetch_image', displayName: 'Fetch Web Image', description: 'Download an image from a public web URL and display it in the split viewer panel; an HTML page returns its referenced image URLs instead.', risk: 'network', surface: 'web' },
   { name: 'draw_image', displayName: 'Draw Image', description: 'Generate a new SVG figure (plot, chart, diagram, sketch) and display it in the split viewer panel.', risk: 'read', surface: 'web' }
@@ -43,13 +47,31 @@ export function createImageTools<TContext = unknown>(
 ): VectraDeepTool<TContext>[] {
   return [
     {
+      name: 'inspect_visual',
+      description: 'Inspect an uploaded image or a renderable page of a document. Use for OCR visualization, object grounding, tables, dimensions, stamps, signatures, or diagrams. The tool measures and displays regions; never estimate boxes yourself.',
+      schema: z.object({
+        name: z.string().min(1).describe('Exact attachment name.'),
+        page: z.number().int().min(1).optional().describe('1-based page or slide number when applicable.'),
+        task: z.string().min(1).max(500).describe('What to detect, transcribe, or verify visually.')
+      }),
+      execute: async ({ name, page, task }) => {
+        const file = findAttachment(attachments, String(name));
+        if (!file) throw new Error(`No attachment found for "${String(name)}". Use vectra_list_attachments for exact names.`);
+        if (!options?.inspectVisual) throw new Error('Visual inspection is unavailable in this host.');
+        const result = await options.inspectVisual(file, typeof page === 'number' ? Math.floor(page) : undefined, String(task));
+        const boxes = result.boxes.filter(validBox);
+        upsert(artifacts, { name: result.name, mime: result.mime, base64: result.base64, view: 'image', title: `Visual inspection · ${result.name}`, ...(boxes.length ? { boxes } : {}) });
+        return JSON.stringify({ source: result.name, text: result.text, regions: boxes }, null, 2);
+      }
+    },
+    {
       name: 'show_image',
-      description: 'Show an uploaded image, or one page of an uploaded PDF, to the user in the viewer panel. Use when asked to show, view, or highlight something in an uploaded file. For a PDF pass its name plus page (1-based). Inspect the image first, then pass boxes as fractions (0..1) of width/height measured from the top-left.',
+      description: 'Show an uploaded image, or one page of an uploaded PDF, in the viewer. This displays supplied regions but does not detect them; use inspect_visual for grounded OCR or object boxes.',
       schema: z.object({
         name: z.string().min(1).describe('Exact attachment name from vectra_list_attachments (an image, or a PDF combined with page).'),
         page: z.number().int().min(1).optional().describe('1-based page number when showing a page of an uploaded PDF.'),
         title: z.string().max(120).optional().describe('Short caption shown above the image.'),
-        boxes: z.array(boxSchema).max(50).optional().describe('Regions to highlight on the image.')
+        boxes: z.array(boxSchema).max(50).optional().describe('Optional already-known regions to display.')
       }),
       execute: async ({ name, page, title, boxes }) => {
         const requested = String(name);
@@ -79,7 +101,7 @@ export function createImageTools<TContext = unknown>(
           }
         }
         if (!source) throw new Error(`No image bytes found for "${requested}". Use vectra_list_attachments for exact names.`);
-        const clean = (boxes as VectraImageBox[] | undefined)?.filter((box) => box.w > 0 && box.h > 0);
+        const clean = (boxes as VectraImageBox[] | undefined)?.filter(validBox);
         upsert(artifacts, { name: shownName, mime: source.mime, base64: source.base64, view: 'image', title: String(title || shownName), ...(clean?.length ? { boxes: clean } : {}) });
         return `Showing ${shownName} in the viewer${clean?.length ? ` with ${clean.length} highlighted region(s)` : ''}.`;
       }
@@ -128,6 +150,11 @@ function isPdf(file: VectraAttachmentRecord): boolean {
   return file.mime === 'application/pdf' || /\.pdf$/i.test(file.name);
 }
 
+function findAttachment(attachments: VectraAttachmentRecord[], name: string): VectraAttachmentRecord | undefined {
+  return attachments.find((item) => item.name === name)
+    || attachments.find((item) => item.name.toLowerCase() === name.toLowerCase());
+}
+
 // Bytes usable for display: prompt bytes first, then display-only bytes kept after OCR release.
 function imageBytes(file: VectraAttachmentRecord): { mime: string; base64: string } | undefined {
   if (!String(file.mime || '').startsWith('image/')) return undefined;
@@ -155,4 +182,9 @@ function upsert(artifacts: VectraViewableArtifact[], artifact: VectraViewableArt
   const index = artifacts.findIndex((item) => item.name === artifact.name);
   if (index >= 0) artifacts[index] = artifact;
   else artifacts.push(artifact);
+}
+
+function validBox(box: VectraImageBox): boolean {
+  return box.w > 0 && box.h > 0 && box.x >= 0 && box.y >= 0
+    && box.x + box.w <= 1 && box.y + box.h <= 1;
 }

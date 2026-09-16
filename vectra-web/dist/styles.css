@@ -24,16 +24,18 @@ html[data-theme="gray"]{
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg)}
 button,input,select,textarea{font:inherit}
-.app-shell{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
+.app-shell{display:grid;grid-template-columns:250px 1fr;height:100vh;overflow:hidden}
 /* Split image viewer: a third column that appears when the agent shows or draws an image */
 .app-shell.viewer-open{grid-template-columns:250px minmax(0,1fr) minmax(280px,42%)}
 .viewer-panel{display:flex;flex-direction:column;min-width:0;max-height:100vh;border-left:1px solid var(--border);background:var(--bg-elevated)}
 /* display:flex above would defeat the hidden attribute, leaving an empty panel visible on load */
 .viewer-panel[hidden]{display:none}
 .viewer-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
-.viewer-body{overflow:auto;padding:14px}
-.viewer-frame{position:relative;display:inline-block;max-width:100%}
-.viewer-frame img{display:block;max-width:100%;height:auto;border-radius:6px;background:#fff}
+.viewer-controls{display:flex;align-items:center;gap:4px}.viewer-controls button{border:1px solid var(--border);background:var(--bg);color:var(--fg);border-radius:6px;padding:3px 7px;cursor:pointer}.viewer-controls button:hover{background:var(--bg-elevated-hover)}
+.viewer-body{flex:1;min-height:0;overflow:hidden;padding:14px}
+.viewer-stage{width:100%;height:100%;overflow:auto;overscroll-behavior:contain}
+.viewer-frame{position:relative;display:block;transform-origin:top left}
+.viewer-frame img{display:block;width:100%;height:auto;border-radius:6px;background:#fff}
 .viewer-box{position:absolute;border:2px solid #ff4d4f;border-radius:2px;box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .viewer-box-label{position:absolute;top:-1.5em;left:-2px;background:#ff4d4f;color:#fff;font-size:11px;line-height:1.3;padding:1px 5px;border-radius:3px;white-space:nowrap}
 .artifact-view{border:1px solid var(--border);background:var(--bg-elevated);color:var(--fg);border-radius:6px;padding:4px 10px;cursor:pointer}
@@ -46,12 +48,13 @@ button,input,select,textarea{font:inherit}
 .thinking-block[open]>summary::before{transform:rotate(90deg)}
 .thinking-time{margin-left:auto;font-size:.88em;opacity:.6;font-variant-numeric:tabular-nums}
 .thinking-text{max-height:180px;overflow-y:auto;padding:0 10px 8px;font-size:.86em;line-height:1.45;opacity:.62;white-space:pre-wrap;word-break:break-word;font-style:italic}
-.sidebar{background:var(--bg-sidebar);padding:14px 12px;display:flex;flex-direction:column;border-right:1px solid var(--border)}
+.sidebar{background:var(--bg-sidebar);padding:14px 12px;display:flex;flex-direction:column;border-right:1px solid var(--border);height:100vh;min-height:0;overflow:hidden}
 .brand{display:flex;align-items:center;gap:9px;font-weight:700;padding:4px 6px 18px}
 .mark,.hero-mark{display:block;object-fit:contain;background:transparent}
 .mark{width:27px;height:27px;border-radius:8px}
 .new-chat{border:1px solid var(--border);background:var(--bg);color:var(--fg);border-radius:10px;padding:10px 12px;text-align:left;cursor:pointer}
 .new-chat:hover,.ghost:hover{background:var(--bg-elevated-hover)}
+.new-chat.secondary{margin-top:7px;color:var(--fg-muted)}
 .side-note{margin-top:22px;padding:0 6px;color:var(--fg-muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
 .main{display:grid;grid-template-rows:auto 1fr auto;min-width:0;height:100vh}
 .topbar{height:58px;display:flex;align-items:center;justify-content:space-between;padding:8px 18px;background:rgba(var(--bg-rgb),.94);border-bottom:1px solid var(--border)}
@@ -88,6 +91,7 @@ select,.ghost{border:1px solid var(--border);background:var(--bg);color:var(--fg
 /* Uploads pinned to a sent user message, visible for the whole chat */
 .message-files{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .message-files .attachment-chip{display:inline-flex;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.message-files button.attachment-chip{color:var(--fg);cursor:pointer}.message-files button.attachment-chip:hover{background:var(--bg-elevated-hover)}
 .attachment-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .attachment-chip button{border:0;background:transparent;color:var(--fg-muted);cursor:pointer}
 .fineprint{text-align:center;color:var(--fg-faint);font-size:11px;margin-top:8px}
@@ -167,8 +171,14 @@ dialog::backdrop{background:#0008}
 .history-heading{display:flex;align-items:center;justify-content:space-between;margin:20px 6px 7px;color:var(--fg-muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
 .history-refresh{border:0;background:transparent;color:var(--fg-muted);cursor:pointer;font-size:16px;padding:2px 5px}
 .history-refresh:hover{color:var(--fg)}
-.chat-history{display:flex;flex-direction:column;gap:3px;overflow-y:auto;min-height:0}
+.history-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.chat-history{display:flex;flex-direction:column;gap:3px;min-height:0}
+.history-select-row{display:flex;justify-content:flex-end;margin:-4px 3px 5px}
+.history-actions{display:flex;flex-direction:column;gap:6px;padding-top:9px;border-top:1px solid var(--border)}
+.history-group{width:calc(100% - 8px);margin:9px 4px 3px;padding:3px;border:0;background:transparent;color:var(--fg-faint);font-size:11px;font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.06em;cursor:pointer}
 .history-item{display:grid;grid-template-columns:minmax(0,1fr) 28px;align-items:center;border-radius:8px}
+.history-item.selecting{grid-template-columns:24px minmax(0,1fr)}
+.history-check{margin-left:6px}
 .history-item:hover,.history-item.active{background:var(--bg-elevated)}
 .history-open,.history-delete{border:0;background:transparent;color:var(--fg-muted);cursor:pointer}
 .history-open{text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 7px}

@@ -288,13 +288,15 @@ test('web-only document_extraction supports arbitrary schemas and cross-matching
 test('create_visualization produces a validated interactive chart artifact', async () => {
   const artifacts=[];
   const chart=createWebTools([],artifacts).find(tool=>tool.name==='create_visualization');
-  const output=await chart.execute({title:'PI trend',type:'line',width:800,height:450,xKey:'date',data:[{date:'2026-01-01',price:.2},{date:'2026-01-02',price:.24}],series:[{key:'price',label:'PI (USD)'}],source:'verified market data'},{});
+  const output=await chart.execute({title:'PI trend',type:'line',width:800,height:450,xKey:'date',data:[{date:'2026-01-01',price:.2},{date:'2026-01-02',price:.24}],series:[{key:'price',label:'PI (USD)',lineStyle:'dashed'}],source:'verified market data'},{});
   assert.match(output,/interactive line chart/i);
   assert.equal(artifacts[0].view,'chart');
+  assert.match(artifacts[0].name,/\.vectra-chart\.json$/);
   const spec=JSON.parse(Buffer.from(artifacts[0].base64,'base64'));
   assert.equal(spec.data.length,2);
   assert.equal(spec.width,800);
   assert.equal(spec.height,450);
+  assert.equal(spec.series[0].lineStyle,'dashed');
 });
 
 test('native artifact tools preserve requested formats and real image generation is host-backed',async()=>{

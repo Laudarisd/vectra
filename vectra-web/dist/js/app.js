@@ -1010,21 +1010,22 @@
 
   // --- Universal artifact inspector: safe previews before download. Images open in a zoomable split viewer. ---
   let viewerObjectUrl = '';
-  let viewerFrame,viewerImage,viewerZoom=1,viewerContentWidth=0,viewerContentHeight=0,viewerResetZoom=1;
+  let viewerFrame,viewerImage,viewerScaleTarget,viewerZoom=1,viewerContentWidth=0,viewerContentHeight=0,viewerResetZoom=1;
   function openArtifactViewer(artifact) {
     if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
-    viewerFrame=viewerImage=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
+    viewerFrame=viewerImage=viewerScaleTarget=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
     els.viewerTitle.textContent = artifact.title || artifact.name;
     els.viewerMeta.textContent = `${artifactTypeLabel(artifact)} · ${formatSize(base64ByteLength(artifact.base64))}`;
     els.viewerDownload.download = artifact.name;
     els.viewerDownload.href = `data:${artifact.mime};base64,${artifact.base64}`;
+    els.viewerDownload.onclick = null;
     els.viewerStage.replaceChildren();
     const isImage = artifact.view === 'image' || String(artifact.mime).startsWith('image/');
     const isChart = artifact.view === 'chart' || artifact.mime === 'application/vnd.vectra.chart+json';
     els.viewerZoomControls.hidden = !(isImage || isChart);
     if (isImage) return openImageArtifact(artifact);
     if(isChart){
-      try{const spec=JSON.parse(decodeArtifactText(artifact)),width=spec.width||960,height=spec.height||540,frame=document.createElement('div');frame.className='viewer-frame viewer-chart-frame';viewerFrame=frame;viewerContentWidth=width;viewerContentHeight=height;els.viewerStage.appendChild(frame);window.renderVectraChart(frame,spec);showViewerPanel();requestAnimationFrame(()=>{viewerResetZoom=Math.min(1,els.viewerStage.clientWidth/width,els.viewerStage.clientHeight/height);setViewerZoom(viewerResetZoom)});return}catch(error){console.warn('Chart preview failed:',error)}
+      try{const spec=JSON.parse(decodeArtifactText(artifact)),width=spec.width||960,height=spec.height||540,frame=document.createElement('div'),surface=document.createElement('div');frame.className='viewer-frame viewer-chart-viewport';surface.className='viewer-chart-frame viewer-chart-surface';surface.style.width=`${width}px`;surface.style.height=`${height}px`;frame.appendChild(surface);viewerFrame=frame;viewerScaleTarget=surface;viewerContentWidth=width;viewerContentHeight=height;els.viewerStage.appendChild(frame);window.renderVectraChart(surface,spec);els.viewerDownload.download=chartPngName(artifact);els.viewerDownload.removeAttribute('href');els.viewerDownload.onclick=async event=>{event.preventDefault();await downloadChartPng(surface,spec,els.viewerDownload.download)};showViewerPanel();requestAnimationFrame(()=>{viewerResetZoom=Math.min(1,els.viewerStage.clientWidth/width,els.viewerStage.clientHeight/height);setViewerZoom(viewerResetZoom)});return}catch(error){console.warn('Chart preview failed:',error)}
     }
     if (artifact.mime === 'application/pdf') {
       const frame = document.createElement('iframe'); frame.className = 'viewer-document'; frame.title = `${artifact.name} PDF preview`;
@@ -1069,7 +1070,7 @@
     if(!viewerFrame||!viewerContentWidth)return;
     const stage=els.viewerStage,old=viewerZoom,next=Math.max(.2,Math.min(8,value));
     const rect=stage.getBoundingClientRect(),x=(clientX??rect.left+rect.width/2)-rect.left+stage.scrollLeft,y=(clientY??rect.top+rect.height/2)-rect.top+stage.scrollTop;
-    viewerZoom=next;viewerFrame.style.width=`${viewerContentWidth*next}px`;if(viewerContentHeight)viewerFrame.style.height=`${viewerContentHeight*next}px`;els.viewerZoomReset.textContent=`${Math.round(next*100)}%`;
+    viewerZoom=next;viewerFrame.style.width=`${viewerContentWidth*next}px`;if(viewerContentHeight)viewerFrame.style.height=`${viewerContentHeight*next}px`;if(viewerScaleTarget)viewerScaleTarget.style.transform=`scale(${next})`;els.viewerZoomReset.textContent=`${Math.round(next*100)}%`;
     stage.scrollLeft=x*(next/old)-((clientX??rect.left+rect.width/2)-rect.left);stage.scrollTop=y*(next/old)-((clientY??rect.top+rect.height/2)-rect.top);
   }
 
@@ -1092,7 +1093,7 @@
   for(const type of ['pointerup','pointercancel'])els.viewerResize.addEventListener(type,()=>{if(!viewerResizing)return;viewerResizing=false;els.viewerResize.classList.remove('dragging');document.body.classList.remove('resizing');try{localStorage.setItem(VIEWER_WIDTH_KEY,String(parseInt(appShell.style.getPropertyValue('--viewer-width'))||''))}catch{}});
 
   function closeImageViewer() {
-    viewerFrame=viewerImage=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
+    viewerFrame=viewerImage=viewerScaleTarget=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
     if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
     els.viewerPanel.hidden = true;
     document.querySelector('.app-shell').classList.remove('viewer-open');
@@ -1164,6 +1165,16 @@
       a.click();
     };
     img.src = `data:${artifact.mime};base64,${artifact.base64}`;
+  }
+
+  async function downloadChartPng(host,spec,name) {
+    const href=await window.exportVectraChartPng(host,spec),link=document.createElement('a');link.download=name;link.href=href;link.click();
+  }
+
+  function chartPngName(artifact) { return String(artifact.name||artifact.title||'chart').replace(/\.vectra-chart\.json$/i,'').replace(/\.[^.]+$/,'')+'.png'; }
+
+  async function downloadChartArtifact(artifact) {
+    const spec=JSON.parse(decodeArtifactText(artifact)),host=document.createElement('div');host.className='viewer-chart-frame chart-export-host';host.style.width=`${spec.width||960}px`;host.style.height=`${spec.height||540}px`;document.body.appendChild(host);window.renderVectraChart(host,spec);await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));try{await downloadChartPng(host,spec,chartPngName(artifact))}finally{host.remove()}
   }
 
   function pushWebActivityStep(placeholder, activeRoles, text) {
@@ -1418,7 +1429,7 @@
         }
         if (message.artifacts?.length) { const row=document.createElement('div'); row.className='artifact-row'; for (const artifact of message.artifacts) {
           // Every artifact stays previewable after the automatic viewer opening.
-          const a=document.createElement('a'); a.className='artifact-download'; a.download=artifact.name; a.href=`data:${artifact.mime};base64,${artifact.base64}`; a.textContent=`Download ${artifact.name}`; row.appendChild(a);
+          const a=document.createElement('a'); a.className='artifact-download'; a.download=artifact.name; a.href=`data:${artifact.mime};base64,${artifact.base64}`; a.textContent=`Download ${artifact.name}`;if(artifact.view==='chart'){a.download=chartPngName(artifact);a.textContent=`Download ${a.download}`;a.href='#';a.addEventListener('click',event=>{event.preventDefault();void downloadChartArtifact(artifact)})} row.appendChild(a);
           const view=document.createElement('button'); view.className='artifact-view'; view.textContent='Preview'; view.addEventListener('click', () => openArtifactViewer(artifact)); row.prepend(view);
           // Drawn SVG figures also download as PNG, rasterized in the browser.
           if (artifact.mime === 'image/svg+xml') { const png=document.createElement('button'); png.className='artifact-view'; png.textContent='Download PNG'; png.addEventListener('click', () => downloadSvgAsPng(artifact)); row.appendChild(png); } } body.appendChild(row); }

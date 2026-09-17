@@ -83,16 +83,6 @@
         </div>
       </div>
 
-      <details class="runtime-logs">
-        <summary>Image generation (optional)</summary>
-        <div class="settings-subtitle">Connect your own OpenAI-compatible image service. This is separate from the chat/VLM server.</div>
-        <label>Image API URL<input id="imageApiBaseUrl" type="url" autocomplete="off" placeholder="https://your-image-server.example/v1" /></label>
-        <span class="field-help">Enter its base URL or the full <code>/images/generations</code> endpoint.</span>
-        <label>Image model<input id="imageApiModel" type="text" autocomplete="off" placeholder="Your image model ID" /></label>
-        <label>Image API key<input id="imageApiKey" type="password" autocomplete="off" placeholder="Optional when your server needs no key" /></label>
-        <label class="check-label"><input id="imageApiAllowInsecureTls" type="checkbox" /> Allow a self-signed certificate (unsafe)</label>
-      </details>
-
       <div id="autoDetectFields" hidden>
         <div id="localSettingsHint" class="settings-hint">Running local-runtime models and GGUF files found on this PC</div>
         <div id="detectedModelList" class="model-search-results"></div>

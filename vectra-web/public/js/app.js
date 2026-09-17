@@ -19,10 +19,6 @@
     apiKey: sessionStorage.getItem('vectra.apiKey') || '',
     baseUrl: sessionStorage.getItem('vectra.baseUrl') || '',
     allowInsecureTls: sessionStorage.getItem('vectra.allowInsecureTls') === 'true',
-    imageBaseUrl: sessionStorage.getItem('vectra.imageBaseUrl') || '',
-    imageApiKey: sessionStorage.getItem('vectra.imageApiKey') || '',
-    imageModel: sessionStorage.getItem('vectra.imageModel') || '',
-    imageAllowInsecureTls: sessionStorage.getItem('vectra.imageAllowInsecureTls') === 'true',
     model: sessionStorage.getItem('vectra.model') || '',
     local: loadLocalConfig(),
     localStatus: { status: 'stopped', running: false, logs: [] },
@@ -43,7 +39,6 @@
     autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
     localRuntimeFields: $('localRuntimeFields'), downloadFields: $('downloadFields'),
     apiKey: $('apiKey'), localApiFields: $('localApiFields'), localApiBaseUrl: $('localApiBaseUrl'), localApiAllowInsecureTls: $('localApiAllowInsecureTls'),
-    imageApiBaseUrl: $('imageApiBaseUrl'), imageApiKey: $('imageApiKey'), imageApiModel: $('imageApiModel'), imageApiAllowInsecureTls: $('imageApiAllowInsecureTls'),
     saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
     chatHistory: $('chatHistory'), refreshHistory: $('refreshHistory'), newProject: $('newProject'), selectHistory: $('selectHistory'),
     deleteSelected: $('deleteSelected'), deleteAllHistory: $('deleteAllHistory'),
@@ -146,22 +141,6 @@
 
   els.saveSettings.addEventListener('click', () => {
     const selectedSource = els.settingsProvider.value;
-    const imageBaseUrl = els.imageApiBaseUrl.value.trim().replace(/\/+$/, '');
-    if (imageBaseUrl) {
-      try {
-        const url = new URL(imageBaseUrl);
-        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
-      } catch {
-        setSettingsConnectionResult('error', 'Not saved', 'Enter a valid image API URL, or leave it blank.');
-        els.imageApiBaseUrl.focus();
-        return;
-      }
-    }
-    if (els.imageApiAllowInsecureTls.checked && !confirm('Allowing a self-signed certificate disables TLS certificate verification for the image API. Continue?')) return;
-    state.imageBaseUrl = imageBaseUrl;
-    state.imageApiKey = els.imageApiKey.value.trim();
-    state.imageModel = els.imageApiModel.value.trim();
-    state.imageAllowInsecureTls = !!imageBaseUrl && els.imageApiAllowInsecureTls.checked;
     if (selectedSource === 'download') { persistSession(); els.dialog.close(); return; }
     if (['openai', 'anthropic', 'gemini'].includes(selectedSource) && !els.apiKey.value.trim()) {
       setSettingsConnectionResult('error', 'Not saved', 'Enter an API key.');
@@ -504,10 +483,6 @@
     els.apiKey.value = state.apiKey;
     els.localApiBaseUrl.value = state.provider === 'openaiCompatible' ? state.baseUrl : '';
     els.localApiAllowInsecureTls.checked = state.provider === 'openaiCompatible' && state.allowInsecureTls;
-    els.imageApiBaseUrl.value = state.imageBaseUrl;
-    els.imageApiKey.value = state.imageApiKey;
-    els.imageApiModel.value = state.imageModel;
-    els.imageApiAllowInsecureTls.checked = state.imageAllowInsecureTls;
   }
   function updateSettingsProviderUi() {
     const value = els.settingsProvider.value;
@@ -527,10 +502,6 @@
     sessionStorage.setItem('vectra.baseUrl', state.baseUrl);
     sessionStorage.setItem('vectra.allowInsecureTls', String(state.allowInsecureTls));
     sessionStorage.setItem('vectra.model', state.model);
-    sessionStorage.setItem('vectra.imageBaseUrl', state.imageBaseUrl);
-    sessionStorage.setItem('vectra.imageApiKey', state.imageApiKey);
-    sessionStorage.setItem('vectra.imageModel', state.imageModel);
-    sessionStorage.setItem('vectra.imageAllowInsecureTls', String(state.imageAllowInsecureTls));
   }
   function applyProviderDefaults() {
     if (state.provider === 'llamaCpp') {
@@ -564,10 +535,6 @@
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
         allowInsecureTls: state.allowInsecureTls,
-        imageBaseUrl: state.imageBaseUrl,
-        imageApiKey: state.imageApiKey,
-        imageModel: state.imageModel,
-        imageAllowInsecureTls: state.imageAllowInsecureTls,
         model: state.model
       });
       alert(data.message);
@@ -969,10 +936,6 @@
         apiKey: state.apiKey,
         baseUrl: state.baseUrl,
         allowInsecureTls: state.allowInsecureTls,
-        imageBaseUrl: state.imageBaseUrl,
-        imageApiKey: state.imageApiKey,
-        imageModel: state.imageModel,
-        imageAllowInsecureTls: state.imageAllowInsecureTls,
         model: state.model,
         agentHarness: 'deepagents',
         conversationId: state.currentChatId,

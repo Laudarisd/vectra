@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir, totalmem, cpus } from 'node:os';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { LocalLlamaManager } from './services/local-llama.mjs';
 import { artifactForRequest, buildDocx, buildPdf, buildPptx, buildXlsx } from './services/documents.mjs';
 import { ChatHistoryStore } from './services/history.mjs';
@@ -67,9 +68,8 @@ async function handleHistory(req,res,pathname,url){
 }
 
 async function handleChat(req,res){
-  const b=await readJson(req);let{provider='openai',apiKey='',model='',baseUrl='',allowInsecureTls=false,imageBaseUrl='',imageApiKey='',imageModel='',imageAllowInsecureTls=false,agentHarness='deepagents',conversationId='',messages=[],attachments=[]}=b;
+  const b=await readJson(req);let{provider='openai',apiKey='',model='',baseUrl='',allowInsecureTls=false,agentHarness='deepagents',conversationId='',messages=[],attachments=[]}=b;
   allowInsecureTls=provider==='openaiCompatible'&&allowInsecureTls===true;
-  imageAllowInsecureTls=!!imageBaseUrl&&imageAllowInsecureTls===true;
   if(provider==='localAuto'&&!baseUrl){const runtimes=await discoverRuntimes();const runtime=runtimes.find(item=>item.models.includes(model))||runtimes[0];if(!runtime)return json(res,400,{error:'No supported local model server was detected. Start Ollama, LM Studio, llama.cpp, vLLM, or another OpenAI-compatible runtime.'});baseUrl=runtime.baseUrl;model=model||runtime.models[0]}
   let localContextTokens=0;
   if(provider==='llamaCpp'){
@@ -209,7 +209,17 @@ async function handleChat(req,res){
           else if(kind==='presentation'){bytes=buildPptx(input.slides||[],title);mime='application/vnd.openxmlformats-officedocument.presentationml.presentation'}
           else throw new Error(`Unsupported artifact kind: ${kind}`);
           return{name,mime,base64:bytes.toString('base64'),...(previewText?{previewText}:{})};
-        },generateImage:async(input)=>generateRasterImage({imageBaseUrl,imageApiKey,imageModel,imageAllowInsecureTls,input})};
+        },generateImage:async(input)=>generateRasterImage({
+          input,
+          planImage:async prompt=>callProvider(provider,{
+            apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,
+            messages:[{role:'user',content:prompt}],attachments:[],timeoutMs:idleTimeoutMs,temperature:.55,purpose:'image-planning'
+          }),
+          createSvg:async prompt=>callProvider(provider,{
+            apiKey,model,baseUrl:baseUrl||'http://127.0.0.1:8080/v1',allowInsecureTls,
+            messages:[{role:'user',content:prompt}],attachments:[],timeoutMs:idleTimeoutMs,temperature:.35,purpose:'image-generation'
+          })
+        })};
         const tools=createWebTools(safeAttachments,toolArtifacts,imageToolOptions);
         const subagentSemaphore=new Semaphore(MAX_CONCURRENT_SUBAGENTS);
         const executeWebTool=createWebToolExecutor(safeAttachments,toolArtifacts,imageToolOptions);
@@ -472,15 +482,35 @@ async function compatibleChatStream({apiKey,model,baseUrl,allowInsecureTls=false
 }
 function logCompatibleTimings(data,model){const t=data?.timings;if(!t)return;console.log(`[Vectra timings] ${model}: prompt=${Number(t.prompt_per_second||0).toFixed(1)} tok/s, generation=${Number(t.predicted_per_second||0).toFixed(1)} tok/s, cached=${Number(t.cache_n||0)} tokens`)}
 
-function providerSystemPrompt(purpose,attachments){return purpose==='ocr'?ocrSystemPrompt():purpose==='visual-grounding'?visualGroundingSystemPrompt():systemPrompt(attachments)}
-async function generateRasterImage({imageBaseUrl,imageApiKey,imageModel,imageAllowInsecureTls,input}){
+function providerSystemPrompt(purpose,attachments){return purpose==='ocr'?ocrSystemPrompt():purpose==='visual-grounding'?visualGroundingSystemPrompt():purpose==='image-planning'?imagePlanningSystemPrompt():purpose==='image-generation'?imageGenerationSystemPrompt():systemPrompt(attachments)}
+async function generateRasterImage({input,planImage,createSvg}){
   const name=String(input.name),extension=extname(name).toLowerCase(),format=extension==='.jpg'||extension==='.jpeg'?'jpeg':extension==='.webp'?'webp':'png';
-  const root=trim(imageBaseUrl);if(!root)throw new Error('Image generation is not configured. Open Settings > Image generation and enter your image API URL and model.');
-  const endpoint=/\/images\/generations$/i.test(root)?root:`${root}/images/generations`;
-  let data;try{data=await fetchJson(endpoint,{method:'POST',headers:{'Content-Type':'application/json',...(imageApiKey?{Authorization:`Bearer ${imageApiKey}`}:{})},body:JSON.stringify({model:String(imageModel||input.model||'gpt-image-1'),prompt:String(input.prompt),size:input.size||'1024x1024',quality:input.quality||'medium',output_format:format,background:input.transparent?'transparent':'opaque'})},120000,imageAllowInsecureTls)}catch(error){const detail=error instanceof Error?error.message:String(error);if(/HTTP 404/.test(detail))throw new Error(`The configured image service does not provide ${endpoint}. Check the Image API URL in Settings.`);throw new Error(`Image generation failed: ${detail}`)}
-  const item=data?.data?.[0]||data;const base64=String(item?.b64_json||item?.base64||item?.image||'').replace(/^data:image\/[^;]+;base64,/, '');if(!base64)throw new Error('The image service returned no image bytes. It must return data[0].b64_json (or base64/image).');
-  return{name,mime:format==='jpeg'?'image/jpeg':`image/${format}`,base64,view:'image',title:name};
+  const [width,height]=String(input.size||'1024x1024').split('x').map(Number);
+  const brief=String(input.prompt);
+  let direction='';
+  try{direction=String(await planImage(`Create a strong art direction for this image: ${brief}\nCanvas: ${width}x${height}. Background: ${input.transparent?'transparent':'opaque'}.`)).trim().slice(0,6000)}catch{}
+  const svgText=await createSvg(`Create the final image from this brief:\n${brief}\n\nArt direction:\n${direction||'Choose a clear focal point, coherent palette, convincing depth, and polished detail.'}\n\nCanvas: ${width}x${height}. Background: ${input.transparent?'transparent':'opaque'}. Make the composition fill the canvas. Return only complete SVG markup.`);
+  const svg=extractSafeSvg(svgText);
+  let source;try{source=await loadImage(Buffer.from(svg,'utf8'))}catch(error){throw new Error(`The selected model produced SVG that could not be rendered: ${error instanceof Error?error.message:String(error)}`)}
+  // Render vectors oversized, then downsample. This locally smooths diagonal
+  // edges, text, gradients, masks, and filter effects without another service.
+  const scale=2,workCanvas=createCanvas(width*scale,height*scale),workContext=workCanvas.getContext('2d');
+  if(!input.transparent){workContext.fillStyle='#ffffff';workContext.fillRect(0,0,width*scale,height*scale)}
+  workContext.drawImage(source,0,0,width*scale,height*scale);
+  const canvas=createCanvas(width,height),context=canvas.getContext('2d');
+  context.imageSmoothingEnabled=true;context.imageSmoothingQuality='high';context.drawImage(workCanvas,0,0,width,height);
+  const quality=input.quality==='low'?55:input.quality==='high'?95:82;
+  const bytes=await canvas.encode(format,format==='png'?undefined:quality);
+  return{name,mime:format==='jpeg'?'image/jpeg':`image/${format}`,base64:bytes.toString('base64'),view:'image',title:name};
 }
+function extractSafeSvg(value){
+  const match=String(value||'').match(/<svg[\s\S]*?<\/svg>/i);if(!match)throw new Error('The selected model did not return a drawable SVG. Try a clearer image prompt or a stronger model.');
+  const svg=match[0];
+  if(/<script|<foreignObject|\son\w+\s*=|javascript:|(?:href|src)\s*=\s*["'](?:https?:|\/\/|data:)/i.test(svg))throw new Error('The selected model returned unsafe or externally linked SVG content.');
+  return svg;
+}
+function imagePlanningSystemPrompt(){return`You are the art director for Vectra's local image tool. Turn the user's brief into a compact production plan for a sophisticated vector illustration. Specify composition and focal point, foreground/midground/background layers, perspective and depth, palette and lighting, materials and textures, important shapes, tasteful fine details, and how to avoid a flat or generic result. Respect the requested aspect ratio and transparency. Do not discuss APIs or limitations. Return only the plan in concise plain text.`}
+function imageGenerationSystemPrompt(){return`You are the senior vector illustrator behind Vectra's local generate_image tool. Produce a polished, visually rich, self-contained SVG from the brief and art direction. Build a deliberate composition with a strong focal point, foreground/midground/background separation, consistent perspective, harmonious color, realistic light and shadow, and materially appropriate texture. Prefer many purposeful layered shapes and paths over a few oversized primitives. Use defs, gradients, clipping paths, masks, patterns, subtle filters, highlights, ambient shadows, and small secondary details when they improve the image. Keep text minimal and render lettering as styled SVG text only when the brief requires it. Make every element contribute; avoid generic icons, empty space, muddy colors, excessive blur, and repetitive decoration. Include width, height, and a matching viewBox. Do not use scripts, event handlers, foreignObject, external URLs, linked images, Markdown, commentary, or code fences. Return only one complete <svg>...</svg> document.`}
 function ocrSystemPrompt(){return`You are a literal OCR engine, not a conversational assistant. The attached complete document image is the sole source of truth. Transcribe only visible text exactly as printed and in natural reading order. Preserve spelling, whitespace, blank lines, table boundaries and alignment, punctuation, identifiers, dimensions, revisions, and quantities. Never infer, autocomplete, autocorrect, normalize, translate, summarize, or answer the document. Use [UNCLEAR] for unreadable spans. Return plain transcription only, without an introduction, explanation, Markdown, or code fences.`}
 function visualGroundingSystemPrompt(){return`You are a visual grounding engine. Inspect only the attached complete image and return strict JSON in the requested schema. Measure every bounding box against the complete image using integer coordinates from 0 to 1000. Never estimate from prior knowledge, invent unseen content, crop the coordinate frame, or add prose outside JSON.`}
 
@@ -512,7 +542,7 @@ function parseVisualInspection(value){
   return{text:String(parsed?.text||''),boxes,structured:true};
 }
 
-function systemPrompt(attachments=[]){const manifest=attachmentManifest(attachments);return`You are Vectra, a precise professional AI assistant with a local runtime that can parse uploaded files and generate downloadable files. ATTACHMENT MANIFEST: ${manifest}. If parsedText is greater than 0, you have the extracted content and must use it. Never ask the user to paste a file Vectra already parsed. PDFs are inspected page by page: usable native text is preferred for exact characters, while pages without sufficient native text receive whole-page visual OCR. An attachment ending in "visual OCR" contains those literal transcriptions. If its supplied excerpt is incomplete, call vectra_read_attachment with increasing offsets until hasMore is false before claiming a complete extraction. Never replace [UNCLEAR] or [OCR FAILED] with a guess. Use create_visualization for quantitative graphs after obtaining verified values; never invent missing data and include its source when known. Honor the user's exact output filename and format: use create_document for PDF/DOCX, create_spreadsheet for XLSX, create_presentation for PPTX, generate_image for real PNG/JPEG/WebP artwork, draw_image only for SVG diagrams, and create_file for text or code. Never silently substitute another format. Keep reasoning, chain-of-thought, tool selection, parameters, XML, and JSON tool envelopes internal; show only the completed answer and requested structure. Preserve source section, page, table, and row order unless the user requests otherwise. For generated text/code file content, use exactly one language-tagged Markdown code fence containing only raw file content.`}
+function systemPrompt(attachments=[]){const manifest=attachmentManifest(attachments);return`You are Vectra, a precise professional AI assistant with a local runtime that can parse uploaded files and generate downloadable files. ATTACHMENT MANIFEST: ${manifest}. If parsedText is greater than 0, you have the extracted content and must use it. Never ask the user to paste a file Vectra already parsed. PDFs are inspected page by page: usable native text is preferred for exact characters, while pages without sufficient native text receive whole-page visual OCR. An attachment ending in "visual OCR" contains those literal transcriptions. If its supplied excerpt is incomplete, call vectra_read_attachment with increasing offsets until hasMore is false before claiming a complete extraction. Never replace [UNCLEAR] or [OCR FAILED] with a guess. Use create_visualization for quantitative graphs after obtaining verified values; never invent missing data and include its source when known. Honor the user's exact output filename and format: use create_document for PDF/DOCX, create_spreadsheet for XLSX, create_presentation for PPTX, generate_image for PNG/JPEG/WebP artwork drawn by the selected model, draw_image only for SVG diagrams, and create_file for text or code. Never ask the user to connect a separate image API. Never silently substitute another format. Keep reasoning, chain-of-thought, tool selection, parameters, XML, and JSON tool envelopes internal; show only the completed answer and requested structure. Preserve source section, page, table, and row order unless the user requests otherwise. For generated text/code file content, use exactly one language-tagged Markdown code fence containing only raw file content.`}
 // Any real extracted text counts. A short document is still content the model
 // has, so a refusal that claims otherwise is false and worth one correction.
 function hasUsableAttachmentContent(files){return files.some(f=>(f.text||'').trim().length>0||f.mime?.startsWith('image/'))}

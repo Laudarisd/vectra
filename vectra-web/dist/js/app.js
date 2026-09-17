@@ -1010,20 +1010,21 @@
 
   // --- Universal artifact inspector: safe previews before download. Images open in a zoomable split viewer. ---
   let viewerObjectUrl = '';
-  let viewerFrame,viewerImage,viewerZoom=1;
+  let viewerFrame,viewerImage,viewerZoom=1,viewerContentWidth=0,viewerContentHeight=0,viewerResetZoom=1;
   function openArtifactViewer(artifact) {
     if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
-    viewerFrame=viewerImage=null;viewerZoom=1;
+    viewerFrame=viewerImage=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
     els.viewerTitle.textContent = artifact.title || artifact.name;
     els.viewerMeta.textContent = `${artifactTypeLabel(artifact)} · ${formatSize(base64ByteLength(artifact.base64))}`;
     els.viewerDownload.download = artifact.name;
     els.viewerDownload.href = `data:${artifact.mime};base64,${artifact.base64}`;
     els.viewerStage.replaceChildren();
     const isImage = artifact.view === 'image' || String(artifact.mime).startsWith('image/');
-    els.viewerZoomControls.hidden = !isImage;
+    const isChart = artifact.view === 'chart' || artifact.mime === 'application/vnd.vectra.chart+json';
+    els.viewerZoomControls.hidden = !(isImage || isChart);
     if (isImage) return openImageArtifact(artifact);
-    if(artifact.view==='chart'||artifact.mime==='application/vnd.vectra.chart+json'){
-      try{window.renderVectraChart(els.viewerStage,JSON.parse(decodeArtifactText(artifact)));showViewerPanel();return}catch(error){console.warn('Chart preview failed:',error)}
+    if(isChart){
+      try{const spec=JSON.parse(decodeArtifactText(artifact)),width=spec.width||960,height=spec.height||540,frame=document.createElement('div');frame.className='viewer-frame viewer-chart-frame';viewerFrame=frame;viewerContentWidth=width;viewerContentHeight=height;els.viewerStage.appendChild(frame);window.renderVectraChart(frame,spec);showViewerPanel();requestAnimationFrame(()=>{viewerResetZoom=Math.min(1,els.viewerStage.clientWidth/width,els.viewerStage.clientHeight/height);setViewerZoom(viewerResetZoom)});return}catch(error){console.warn('Chart preview failed:',error)}
     }
     if (artifact.mime === 'application/pdf') {
       const frame = document.createElement('iframe'); frame.className = 'viewer-document'; frame.title = `${artifact.name} PDF preview`;
@@ -1044,7 +1045,7 @@
     const frame = document.createElement('div'); frame.className = 'viewer-frame';
     const img = document.createElement('img');
     img.alt = artifact.title || artifact.name; img.draggable = false;
-    img.onload=()=>{viewerFrame=frame;viewerImage=img;const fit=Math.min(1,els.viewerStage.clientWidth/Math.max(1,img.naturalWidth));setViewerZoom(fit)};
+    img.onload=()=>{viewerFrame=frame;viewerImage=img;viewerContentWidth=img.naturalWidth;viewerContentHeight=img.naturalHeight;viewerResetZoom=Math.min(1,els.viewerStage.clientWidth/Math.max(1,img.naturalWidth));setViewerZoom(viewerResetZoom)};
     img.src = `data:${artifact.mime};base64,${artifact.base64}`;
     frame.appendChild(img);
     // Box coordinates are fractions of the image (0..1), so plain % positioning scales with it.
@@ -1065,16 +1066,16 @@
   }
 
   function setViewerZoom(value,clientX,clientY){
-    if(!viewerFrame||!viewerImage)return;
+    if(!viewerFrame||!viewerContentWidth)return;
     const stage=els.viewerStage,old=viewerZoom,next=Math.max(.2,Math.min(8,value));
     const rect=stage.getBoundingClientRect(),x=(clientX??rect.left+rect.width/2)-rect.left+stage.scrollLeft,y=(clientY??rect.top+rect.height/2)-rect.top+stage.scrollTop;
-    viewerZoom=next;viewerFrame.style.width=`${viewerImage.naturalWidth*next}px`;els.viewerZoomReset.textContent=`${Math.round(next*100)}%`;
+    viewerZoom=next;viewerFrame.style.width=`${viewerContentWidth*next}px`;if(viewerContentHeight)viewerFrame.style.height=`${viewerContentHeight*next}px`;els.viewerZoomReset.textContent=`${Math.round(next*100)}%`;
     stage.scrollLeft=x*(next/old)-((clientX??rect.left+rect.width/2)-rect.left);stage.scrollTop=y*(next/old)-((clientY??rect.top+rect.height/2)-rect.top);
   }
 
   els.viewerZoomIn.addEventListener('click',()=>setViewerZoom(viewerZoom*1.25));
   els.viewerZoomOut.addEventListener('click',()=>setViewerZoom(viewerZoom/1.25));
-  els.viewerZoomReset.addEventListener('click',()=>setViewerZoom(1));
+  els.viewerZoomReset.addEventListener('click',()=>setViewerZoom(viewerResetZoom));
   els.viewerStage.addEventListener('wheel',(event)=>{if(!viewerFrame)return;event.preventDefault();setViewerZoom(viewerZoom*(event.deltaY<0?1.12:1/1.12),event.clientX,event.clientY)},{passive:false});
   // Drag to pan: hold the left button and move to scroll a zoomed image in any direction.
   let viewerPan=null;
@@ -1091,7 +1092,7 @@
   for(const type of ['pointerup','pointercancel'])els.viewerResize.addEventListener(type,()=>{if(!viewerResizing)return;viewerResizing=false;els.viewerResize.classList.remove('dragging');document.body.classList.remove('resizing');try{localStorage.setItem(VIEWER_WIDTH_KEY,String(parseInt(appShell.style.getPropertyValue('--viewer-width'))||''))}catch{}});
 
   function closeImageViewer() {
-    viewerFrame=viewerImage=null;viewerZoom=1;
+    viewerFrame=viewerImage=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
     if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
     els.viewerPanel.hidden = true;
     document.querySelector('.app-shell').classList.remove('viewer-open');

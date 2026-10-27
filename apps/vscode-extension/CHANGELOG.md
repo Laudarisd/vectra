@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2
+
+- Fixed Agent and Ask showing raw tool-call JSON instead of reading the requested workspace file when a model adds introductory text before the tool envelope.
+- Fixed Copilot-style inline suggestions being disabled by default and appearing tied to the sidebar's Line Suggestion mode; editor ghost text now works in every sidebar mode and its status updates with configuration changes.
+
 ## 1.2.1
 
 - Faster local agent turns: lower per-request overhead when running GGUF models through llama.cpp.

@@ -6,13 +6,12 @@ import { isSensitiveAgentPath, relativeToWorkspace } from '../utils/path';
 import { buildInlinePrompt, cleanInlineCompletion } from './FimPrompt';
 
 /**
- * Opt-in (vectra.inlineSuggestions.enabled). Each keystroke pause asks the
- * model for the code at the cursor; VS Code cancels superseded requests and the
- * debounce keeps typing bursts off the model. A small, fast coder model
- * (vectra.inlineSuggestions.model) is the right fit; the chat model is the fallback.
+ * Enabled by default and independent of the sidebar mode. Each keystroke pause
+ * asks the model for code at the cursor; the status-bar command can turn it off.
  */
 export class InlineSuggestionProvider implements vscode.InlineCompletionItemProvider, vscode.Disposable {
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+  private readonly configListener: vscode.Disposable;
   private readonly cache = new Map<string, string>();
   private failures = 0;
 
@@ -20,6 +19,9 @@ export class InlineSuggestionProvider implements vscode.InlineCompletionItemProv
     this.status.command = 'vectra.toggleInlineSuggestions';
     this.refreshStatus();
     this.status.show();
+    this.configListener = vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('vectra.inlineSuggestions')) this.refreshStatus();
+    });
   }
 
   async toggle(): Promise<void> {
@@ -89,7 +91,7 @@ export class InlineSuggestionProvider implements vscode.InlineCompletionItemProv
     }
   }
 
-  dispose(): void { this.status.dispose(); }
+  dispose(): void { this.configListener.dispose(); this.status.dispose(); }
 
   private items(text: string, position: vscode.Position): vscode.InlineCompletionItem[] {
     return text ? [new vscode.InlineCompletionItem(text, new vscode.Range(position, position))] : [];

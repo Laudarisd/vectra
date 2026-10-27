@@ -17,7 +17,7 @@
   · <a href="https://github.com/Laudarisd/vectra/issues">Issues</a>
 </p>
 
-<p align="center">Current release: <strong>1.2.1</strong></p>
+<p align="center">Current release: <strong>1.2.2</strong></p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Laudarisd/vectra/main/docs/assets/extension_gif.gif" alt="Vectra AI coding workflow" width="900">

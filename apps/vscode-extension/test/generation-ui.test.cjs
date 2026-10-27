@@ -36,6 +36,16 @@ test('sidebar keeps history in the header and exposes four compact modes', () =>
   assert.equal(manifest.contributes.menus['view/title'], undefined);
 });
 
+test('automatic inline suggestions default on and are independent of sidebar mode', () => {
+  const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  const config = fs.readFileSync('src/core/utils/config.ts', 'utf8');
+  const inline = fs.readFileSync('src/core/inline/InlineSuggestionProvider.ts', 'utf8');
+  assert.equal(manifest.contributes.configuration.properties['vectra.inlineSuggestions.enabled'].default, true);
+  assert.match(config, /inlineSuggestions\.enabled', true/);
+  assert.match(inline, /independent of the sidebar mode/);
+  assert.match(inline, /onDidChangeConfiguration/);
+});
+
 test('the shared session is busy before extension state is posted', () => {
   const source = fs.readFileSync('src/core/ui/ChatViewProvider.ts', 'utf8');
   const start = source.indexOf('await this.session.run');

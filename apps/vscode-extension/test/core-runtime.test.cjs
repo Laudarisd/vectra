@@ -86,6 +86,31 @@ test('Vectra model adapter turns JSON fallback actions into LangChain tool calls
   assert.deepEqual(response.tool_calls[0].args, { value: 'hello' });
 });
 
+for (const mode of ['Agent', 'Ask']) {
+  test(`${mode} accepts a tool envelope after introductory prose`, async () => {
+    const provider = {
+      async complete() {
+        return 'I am reading the requested file now.\n' + JSON.stringify({
+          message: 'Reading the requested file.',
+          tool_calls: [{ name: 'echo', args: { value: 'overleaf_files/v2.tex' } }]
+        });
+      }
+    };
+    const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([
+      tool(async ({ value }) => value, {
+        name: 'echo',
+        description: 'Echo text',
+        schema: z.object({ value: z.string() })
+      })
+    ]);
+    const response = await model.invoke([{ role: 'user', content: 'Read my Overleaf file' }]);
+    assert.equal(response.content, 'Reading the requested file.');
+    assert.equal(response.tool_calls.length, 1);
+    assert.equal(response.tool_calls[0].name, 'echo');
+    assert.deepEqual(response.tool_calls[0].args, { value: 'overleaf_files/v2.tex' });
+  });
+}
+
 test('Vectra model adapter consumes Qwen XML tool calls without exposing think text', async () => {
   const provider = {
     async completeWithTools() {

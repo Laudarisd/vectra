@@ -640,6 +640,8 @@ function parseToolEnvelope(raw: string, tools: BindToolsInput[]): ParsedTurn {
     if (!attempt) continue;
     try { value = JSON.parse(attempt) as Record<string, unknown>; break; } catch { /* try the next form, else natural final answer */ }
   }
+  // Some models add one prose line before an otherwise valid tool envelope.
+  value ??= parseTrailingToolEnvelope(candidate);
   if (!value) {
     // A broken tool envelope must never reach the user as prose (it used to
     // end the run with the raw blob as the final answer). Flag it so the chat
@@ -682,6 +684,19 @@ function parseToolEnvelope(raw: string, tools: BindToolsInput[]): ParsedTurn {
   addCalls(inputCalls, false);
   addCalls(actionCalls, true);
   return { text, calls };
+}
+
+function parseTrailingToolEnvelope(candidate: string): Record<string, unknown> | undefined {
+  const lines = candidate.split(/\r?\n/);
+  for (let index = lines.length - 1; index > 0; index--) {
+    const suffix = lines.slice(index).join('\n').trim();
+    if (!suffix.startsWith('{')) continue;
+    try {
+      const value = JSON.parse(suffix) as Record<string, unknown>;
+      if (Array.isArray(value.tool_calls) || Array.isArray(value.actions)) return value;
+    } catch { /* try an earlier line boundary */ }
+  }
+  return undefined;
 }
 
 /** Parse Qwen/ChatML tool syntax emitted inside assistant content. */

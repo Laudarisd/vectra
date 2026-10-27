@@ -753,7 +753,7 @@
       : mode === 'ask'
         ? 'Ask about this repository or attach PDF, Word, code, or images…'
         : mode === 'lineSuggestion'
-          ? 'Describe what the next line or selected code should do…'
+          ? 'Request one suggestion here; automatic editor ghost text works in every mode…'
           : 'Ask Vectra to explain the exact selected code…';
   }
 

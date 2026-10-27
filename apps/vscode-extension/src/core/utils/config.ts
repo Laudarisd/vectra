@@ -65,7 +65,7 @@ export function getConfig(): AgentConfiguration {
     localReasoning: c.get<AgentConfiguration['localReasoning']>('localReasoning', 'fast'),
     commandExecution: c.get<AgentConfiguration['commandExecution']>('commandExecution', 'terminal'),
     inlineSuggestions: {
-      enabled: c.get<boolean>('inlineSuggestions.enabled', false),
+      enabled: c.get<boolean>('inlineSuggestions.enabled', true),
       debounceMs: c.get<number>('inlineSuggestions.debounceMs', 350),
       maxLines: c.get<number>('inlineSuggestions.maxLines', 6),
       model: c.get<string>('inlineSuggestions.model', '').trim()

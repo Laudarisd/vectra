@@ -7,7 +7,7 @@
 <p align="center">
   <a href="./apps/vscode-extension"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code extension"></a>
   <a href="./apps/web"><img src="https://img.shields.io/badge/Web-AI_Workspace-4f46e5" alt="Web app"></a>
-  <a href="./apps/vscode-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.2.1-blue" alt="Extension version 1.2.1"></a>
+  <a href="./apps/vscode-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.2.2-blue" alt="Extension version 1.2.2"></a>
 </p>
 
 <p align="center"><a href="docs/ko/README.md">한국어</a></p>

@@ -2,7 +2,7 @@
   "name": "vectra-ai",
   "displayName": "Vectra AI",
   "description": "An AI coding agent for VS Code. Understand your repository, review edits, and run approved tools with GGUF, Ollama, or cloud models.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -289,8 +289,8 @@
         },
         "vectra.inlineSuggestions.enabled": {
           "type": "boolean",
-          "default": false,
-          "description": "Show Copilot-style inline (ghost text) code suggestions from the configured model while typing. Preview: a small, fast coder model is recommended."
+          "default": true,
+          "description": "Show Copilot-style inline (ghost text) suggestions while typing in an editor, independently of the selected Vectra sidebar mode. A small, fast coder model is recommended."
         },
         "vectra.inlineSuggestions.debounceMs": {
           "type": "number",

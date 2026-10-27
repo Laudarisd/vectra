@@ -1,0 +1,9 @@
+// Selects canonical capabilities supported by the VS Code extension host.
+import { VECTRA_TOOL_DEFINITIONS } from './ToolCatalog';
+
+/** Canonical inventory consumed by the VS Code host adapter. Platform code
+ * stays in the extension because it requires VS Code trust, diagnostics, diff,
+ * confirmation, and workspace APIs. */
+export const EXTENSION_TOOL_DEFINITIONS = VECTRA_TOOL_DEFINITIONS.filter(
+  (item) => item.surface === 'extension' || item.surface === 'all'
+);

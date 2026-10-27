@@ -1,0 +1,140 @@
+// Shared extension-domain types for providers, agent requests, tools, plans, and proposals.
+export type AgentMode = 'agent' | 'ask' | 'selection' | 'lineSuggestion';
+export type ProviderId = 'llamaCpp' | 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openaiCompatible';
+export type SupportedDocumentFormat = 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'rtf';
+export type WritableDocumentFormat = 'pdf' | 'docx';
+
+export interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: 'text' | 'image' | 'pdf' | 'document' | 'binary';
+  source?: 'picker' | 'workspace';
+  path?: string;
+  text?: string;
+  base64?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  createdAt: number;
+  mode?: AgentMode;
+  attachments?: Array<Pick<Attachment, 'id' | 'name' | 'mime' | 'size' | 'kind'>>;
+}
+
+export interface ModelInfo { id: string; label?: string; detail?: string }
+/**
+ * `structured` defaults to true. Set it to false for conversational turns so
+ * providers that can pin a JSON schema return natural prose instead.
+ */
+/** `reasoning: 'minimal'` marks a turn that must not cost an extended thinking pass (greetings, small talk). */
+export interface ProviderRequest { systemPrompt: string; userPrompt: string; model: string; attachments?: Attachment[]; structured?: boolean; reasoning?: 'minimal'; maxTokens?: number; signal?: AbortSignal; onDelta?: (delta: string) => void; onThinking?: (delta: string) => void }
+export interface NativeToolMessage { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string; toolCalls?: NativeToolCall[] }
+export interface NativeToolCall { id: string; name: string; args: Record<string, unknown> }
+export interface NativeToolDefinition { name: string; description?: string; parameters: unknown }
+export interface NativeToolRequest { messages: NativeToolMessage[]; tools: NativeToolDefinition[]; model: string; reasoning?: 'minimal'; signal?: AbortSignal }
+export interface NativeToolResult { text: string; toolCalls: NativeToolCall[] }
+export interface TextProvider { readonly id: ProviderId; complete(request: ProviderRequest): Promise<string>; completeWithTools?(request: NativeToolRequest): Promise<NativeToolResult>; listModels(signal?: AbortSignal): Promise<ModelInfo[]>; testConnection(signal?: AbortSignal): Promise<string> }
+
+/** A complete file included in one reviewed, multi-file proposal batch. */
+export interface ProposedFileInput {
+  path: string;
+  content: string;
+  reason?: string;
+}
+
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
+export interface PlanStep {
+  id: string;
+  text: string;
+}
+
+export type PlanStatus = 'pending' | 'approved' | 'rejected';
+
+export interface Plan {
+  id: string;
+  steps: PlanStep[];
+  reason?: string;
+  status: PlanStatus;
+  revision: number;
+  createdAt: number;
+}
+
+export type AgentAction =
+  | { type: 'workspace_summary'; path?: string; exact?: boolean }
+  | { type: 'list_directory'; path?: string; maxResults?: number; maxDepth?: number }
+  | { type: 'list_files'; path?: string; glob?: string; maxResults?: number }
+  | { type: 'read_file'; path: string; startLine?: number; endLine?: number }
+  | { type: 'read_files'; paths: string[]; startLine?: number; endLine?: number }
+  | { type: 'read_document'; path: string }
+  | { type: 'inspect_file'; path: string }
+  | { type: 'search_text'; query: string; path?: string; glob?: string; maxResults?: number; caseSensitive?: boolean }
+  | { type: 'get_diagnostics'; path?: string }
+  | { type: 'workspace_symbols'; query: string; maxResults?: number }
+  | { type: 'go_to_definition'; path: string; line: number; column?: number }
+  | { type: 'find_references'; path: string; line: number; column?: number; includeDeclaration?: boolean }
+  | { type: 'list_skills' }
+  | { type: 'read_skill'; name: string }
+  | { type: 'git_status' }
+  | { type: 'git_diff'; path?: string; staged?: boolean }
+  | { type: 'create_file'; path: string; content: string; reason?: string }
+  | { type: 'propose_file'; path: string; content: string; reason?: string }
+  | { type: 'propose_files'; files: ProposedFileInput[]; reason?: string }
+  | { type: 'replace_lines'; path: string; startLine: number; endLine: number; content: string; reason?: string }
+  | { type: 'delete_lines'; path: string; startLine: number; endLine: number; reason?: string }
+  | { type: 'insert_lines'; path: string; line: number; content: string; position?: 'before' | 'after'; reason?: string }
+  | { type: 'create_document'; path: string; content: string; title?: string; reason?: string }
+  | { type: 'edit_document'; path: string; content: string; title?: string; reason?: string }
+  | { type: 'delete_file'; path: string; reason?: string }
+  | { type: 'create_directory'; path: string; reason?: string }
+  | { type: 'rename_path'; path: string; destinationPath: string; reason?: string }
+  | { type: 'move_path'; path: string; destinationPath: string; reason?: string }
+  | { type: 'copy_path'; path: string; destinationPath: string; reason?: string }
+  | { type: 'delete_directory'; path: string; recursive?: boolean; reason?: string }
+  | { type: 'run_file'; path: string; args?: string[]; timeoutMs?: number; reason?: string }
+  | { type: 'run_project'; path?: string; timeoutMs?: number; reason?: string }
+  | { type: 'run_command'; command: string; cwd?: string; timeoutMs?: number; reason?: string }
+  | { type: 'run_tests'; command?: string; cwd?: string; timeoutMs?: number; reason?: string }
+  | { type: 'todo_write'; todos: TodoItem[] }
+  | { type: 'propose_plan'; steps: string[]; reason?: string }
+  | { type: 'web_search'; query: string; maxResults?: number }
+  | { type: 'web_fetch'; url: string }
+  | { type: 'delegate_task'; task: string; reason?: string };
+
+export interface AgentEnvelope {
+  message: string;
+  actions: AgentAction[];
+  done: boolean;
+  /** Present when JSON parsed but one or more model-generated actions were not dispatchable. */
+  actionError?: string;
+}
+export type ProposalKind = 'modify' | 'create' | 'delete';
+export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'stale' | 'undone';
+
+export interface EditProposal {
+  id: string;
+  path: string;
+  reason: string;
+  kind: ProposalKind;
+  baseContent: string;
+  proposedContent: string;
+  baseHash: string;
+  createdAt: number;
+  status: ProposalStatus;
+  contentType?: 'text' | 'document' | 'binary';
+  documentFormat?: SupportedDocumentFormat;
+  binaryOutputBase64?: string;
+}
+
+export interface SubagentEvent { event: 'started' | 'finished' | 'failed'; role: string; description?: string; error?: string }
+export interface AgentRunRequest { mode: AgentMode; userText: string; history: ChatMessage[]; attachments?: Attachment[]; onProgress?: (message: string) => void; onDelta?: (delta: string) => void; onThinking?: (delta: string) => void; onTodosChanged?: (todos: TodoItem[]) => void; onPlanChanged?: (plan: Plan) => void; onProposalsChanged?: () => void; onSubagentEvent?: (event: SubagentEvent) => void; signal?: AbortSignal }
+export interface AgentRunResult { text: string; proposals: EditProposal[] }
+export interface WorkspaceContext { workspaceFolders: string[]; workspaceOverview?: string; activeFile?: string; activeLanguage?: string; activeFileContent?: string; selectionText?: string; selectionStartLine?: number; selectionEndLine?: number; cursorLine?: number; cursorColumn?: number; openFiles: string[]; diagnostics: string[]; projectInstructions?: string }

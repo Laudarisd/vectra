@@ -1,0 +1,23 @@
+{
+  "name": "@vectra/local-runtime",
+  "version": "1.1.9",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./discovery": "./dist/discovery/index.js",
+    "./llama/runtime-profile": "./dist/llama/runtimeProfile.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.8.0"
+  }
+}

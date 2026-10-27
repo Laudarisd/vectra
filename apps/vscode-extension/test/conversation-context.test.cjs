@@ -1,0 +1,118 @@
+// Beginner guide: Checks that c on ve rs at io n c on te xt.t es t behavior stays correct as the project changes.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  classifyTurn,
+  parseSimpleDirectoryCreation,
+  formatRecentHistory,
+  isStatusOnlyReply,
+  sanitizeHistoricalContent
+} = require('../build/agent/runtime/ConversationContext.js');
+
+const message = (role, content) => ({ id: Math.random().toString(), role, content, createdAt: Date.now() });
+
+test('historical tool envelopes retain their summary but never their actions', () => {
+  const stale = JSON.stringify({
+    message: 'I planned the old document.',
+    actions: [{ type: 'create_document', path: 'test.md', content: 'old task' }],
+    done: false
+  });
+  const cleaned = sanitizeHistoricalContent(stale);
+  assert.equal(cleaned, 'I planned the old document.');
+  assert.doesNotMatch(cleaned, /create_document|test\.md|old task/);
+});
+
+test('explicit single-folder requests use the deterministic fast path', () => {
+  assert.equal(parseSimpleDirectoryCreation('Create a folder named src in this directory first'), 'src');
+  assert.equal(parseSimpleDirectoryCreation('Please make directory "src/components" here.'), 'src/components');
+  assert.equal(parseSimpleDirectoryCreation('mkdir demo'), 'demo');
+  assert.equal(parseSimpleDirectoryCreation('can you create a folder called demo?'), 'demo');
+  assert.equal(parseSimpleDirectoryCreation('create folder demo please'), 'demo');
+  assert.equal(parseSimpleDirectoryCreation('create folder please'), undefined);
+  assert.equal(parseSimpleDirectoryCreation('Create a folder named src here and add three files'), undefined);
+  assert.equal(parseSimpleDirectoryCreation('Create a folder and add three files'), undefined);
+  assert.equal(parseSimpleDirectoryCreation('Explain how to create a folder'), undefined);
+});
+
+test('malformed historical action JSON cannot leak into a later prompt', () => {
+  const malformed = '{"message":"Old analysis complete","actions":[{"type":"create_document","path":"test.md","content":"unfinished';
+  const cleaned = sanitizeHistoricalContent(malformed);
+  assert.equal(cleaned, 'Old analysis complete');
+  assert.doesNotMatch(cleaned, /create_document|test\.md/);
+});
+
+test('history is retained so follow-up questions stay answerable', () => {
+  const history = [message('user', 'Create test.md'), message('assistant', 'Working on test.md')];
+  const formatted = formatRecentHistory(history);
+  assert.match(formatted, /Create test\.md/);
+  assert.match(formatted, /Working on test\.md/);
+});
+
+test('greetings and questions about Vectra route to the conversational path', () => {
+  const chat = [
+    'Hello there',
+    'hi',
+    'How are you?',
+    'What do you mean? I am just asking Hello, how are you?',
+    'who are you',
+    'thanks!',
+    'good morning'
+  ];
+  for (const text of chat) {
+    assert.equal(classifyTurn(text, 'agent'), 'chat', `expected chat for: ${text}`);
+  }
+});
+
+test('real requests never route to the conversational path', () => {
+  const work = [
+    'Create a React app in src/',
+    'how many files are in this repo?',
+    'hello, can you fix the login bug',
+    'read package.json',
+    'continue',
+    'explain this function',
+    'ok now add tests'
+  ];
+  for (const text of work) {
+    assert.equal(classifyTurn(text, 'agent'), 'work', `expected work for: ${text}`);
+  }
+});
+
+test('generic capability questions route to chat even though they name a work verb', () => {
+  const chat = ['Do you also edit codes?', 'Can you write code?', 'does it edit code'];
+  for (const text of chat) {
+    assert.equal(classifyTurn(text, 'agent'), 'chat', `expected chat for: ${text}`);
+  }
+});
+
+test('capability-shaped phrasing with a concrete target still means work', () => {
+  assert.equal(classifyTurn('can you edit src/app.ts', 'agent'), 'work');
+  assert.equal(classifyTurn('do you also edit config.json', 'agent'), 'work');
+});
+
+test('selection, line suggestion, and attachments always mean work', () => {
+  assert.equal(classifyTurn('hello', 'selection'), 'work');
+  assert.equal(classifyTurn('complete this', 'lineSuggestion'), 'work');
+  assert.equal(classifyTurn('hello', 'ask', true), 'work');
+  assert.equal(classifyTurn('', 'agent'), 'work');
+});
+
+test('bare status lines are recognized so they never reach the user', () => {
+  for (const text of [
+    'action completed',
+    'The requested task has been completed.',
+    'Task completed',
+    'done.',
+    'no action needed',
+    ''
+  ]) {
+    assert.equal(isStatusOnlyReply(text), true, `expected status-only for: ${text}`);
+  }
+  for (const text of [
+    'I am doing well, thanks for asking! What are you working on?',
+    'I read src/app.ts and the route handler is missing an await.',
+    'Done — I updated the three config files and left the tests untouched.'
+  ]) {
+    assert.equal(isStatusOnlyReply(text), false, `expected real reply for: ${text}`);
+  }
+});

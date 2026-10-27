@@ -1,0 +1,1866 @@
+// Beginner guide: Controls the browser interface, sends API requests, and updates what the user sees.
+(() => {
+  const LOCAL_CONFIG_KEY = 'vectra.local.config.v1';
+  const state = {
+    messages: [],
+    attachments: [],
+    savedAttachments: [],
+    busy: false,
+    chatAbort: null,
+    currentChatId: '',
+    currentProjectId: null,
+    history: [],
+    projects: [],
+    collapsedProjects: loadCollapsedProjects(),
+    selectingHistory: false,
+    selectedChats: new Set(),
+    editingIndex: -1,
+    provider: sessionStorage.getItem('vectra.provider') || 'openai',
+    apiKey: sessionStorage.getItem('vectra.apiKey') || '',
+    baseUrl: sessionStorage.getItem('vectra.baseUrl') || '',
+    allowInsecureTls: sessionStorage.getItem('vectra.allowInsecureTls') === 'true',
+    model: sessionStorage.getItem('vectra.model') || '',
+    local: loadLocalConfig(),
+    localStatus: { status: 'stopped', running: false, logs: [] },
+    localBusy: false,
+    detectedRuntimes: [],
+    pendingDetectedModel: '',
+    pendingDetectedBaseUrl: '',
+    downloadDirectory: ''
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    messages: $('messages'), prompt: $('prompt'), send: $('send'), attach: $('attach'), fileInput: $('fileInput'), attachments: $('attachments'),
+    viewerPanel: $('viewerPanel'), viewerTitle: $('viewerTitle'), viewerMeta: $('viewerMeta'), viewerDownload: $('viewerDownload'), viewerClose: $('viewerClose'), viewerStage: $('viewerStage'),
+    viewerZoomIn: $('viewerZoomIn'), viewerZoomOut: $('viewerZoomOut'), viewerZoomReset: $('viewerZoomReset'), viewerZoomControls: $('viewerZoomControls'), viewerResize: $('viewerResize'),
+    model: $('model'), testConnection: $('testConnection'), localStatusPill: $('localStatusPill'),
+    settings: $('settings'), themeToggle: $('themeToggle'), dialog: $('settingsDialog'), settingsProvider: $('settingsProvider'), apiFields: $('apiFields'), localSettingsHint: $('localSettingsHint'),
+    autoDetectFields: $('autoDetectFields'), detectedModelList: $('detectedModelList'), refreshDetectedModels: $('refreshDetectedModels'), addDetectedModelFolder: $('addDetectedModelFolder'),
+    localRuntimeFields: $('localRuntimeFields'), downloadFields: $('downloadFields'),
+    apiKey: $('apiKey'), localApiFields: $('localApiFields'), localApiBaseUrl: $('localApiBaseUrl'), localApiAllowInsecureTls: $('localApiAllowInsecureTls'),
+    saveSettings: $('saveSettings'), newChat: $('newChat'), dropZone: $('dropZone'),
+    chatHistory: $('chatHistory'), refreshHistory: $('refreshHistory'), newProject: $('newProject'), selectHistory: $('selectHistory'),
+    deleteSelected: $('deleteSelected'), deleteAllHistory: $('deleteAllHistory'),
+    localDialogStatus: $('localDialogStatus'), localDialogStatusText: $('localDialogStatusText'), localDialogDetail: $('localDialogDetail'),
+    localModelPath: $('localModelPath'), localMmprojPath: $('localMmprojPath'), localServerPath: $('localServerPath'), localPort: $('localPort'), localContext: $('localContext'),
+    localGpuLayers: $('localGpuLayers'), localSplitMode: $('localSplitMode'), localTimeout: $('localTimeout'), localExtraArgs: $('localExtraArgs'), localCpuMoe: $('localCpuMoe'),
+    localThreadProfile: $('localThreadProfile'), localThreads: $('localThreads'),
+    localDevice: $('localDevice'), localGpuInfo: $('localGpuInfo'),
+    localNoMmap: $('localNoMmap'), chooseLocalModel: $('chooseLocalModel'), chooseMmproj: $('chooseMmproj'), chooseLlamaServer: $('chooseLlamaServer'), startLocalModel: $('settingsTestConnection'),
+    stopLocalModel: $('stopLocalModel'), localLogs: $('localLogs'), localModelSearch: $('localModelSearch'), searchLocalModels: $('searchLocalModels'), chooseModelFolder: $('chooseModelFolder'), localModelResults: $('localModelResults'),
+    downloadModelHint: $('downloadModelHint'), downloadModelList: $('downloadModelList'),
+    downloadModelSearch: $('downloadModelSearch'), searchDownloadModels: $('searchDownloadModels'), downloadModelProgress: $('downloadModelProgress'),
+    stopDownloadModel: $('stopDownloadModel'), downloadDirectory: $('downloadDirectory'), chooseDownloadDirectory: $('chooseDownloadDirectory')
+  };
+
+  if (![...els.settingsProvider.options].some((option) => option.value === state.provider)) state.provider = 'openai';
+  els.settingsProvider.value = state.provider;
+  syncLocalFormFromState();
+  syncModelSelect();
+  updateProviderUi();
+  refreshLocalStatus().catch(() => {});
+  loadHistory().catch(() => {});
+  if (state.provider === 'localAuto') loadModels().catch(() => {});
+
+  els.newChat.addEventListener('click', () => newChat());
+  els.newProject.addEventListener('click', () => void createProject());
+  els.selectHistory.addEventListener('click', toggleHistorySelection);
+  els.deleteSelected.addEventListener('click', () => void deleteSelectedChats());
+  els.deleteAllHistory.addEventListener('click', () => void deleteAllHistory());
+  els.refreshHistory.addEventListener('click', () => loadHistory().catch((error) => alert(error.message)));
+  els.settings.addEventListener('click', openSettings);
+  els.themeToggle.addEventListener('click', () => applyTheme(document.documentElement.dataset.theme === 'gray' ? 'dark' : 'gray'));
+  applyTheme(document.documentElement.dataset.theme === 'gray' ? 'gray' : 'dark');
+  els.settingsProvider.addEventListener('change', () => {
+    const value = els.settingsProvider.value;
+    updateSettingsProviderUi();
+    if (value === 'llamaCpp') {
+      adoptActiveModelAsLocalPathIfNeeded();
+      syncLocalFormFromState();
+      void refreshLocalStatus().catch(() => {});
+      void refreshGpuInfo().catch(() => {});
+      void autoDiscoverLocalModels();
+    } else if (value === 'localAuto') {
+      void loadDetectedModelsForSettings();
+    } else if (value === 'download') {
+      void loadDownloadCatalog();
+    } else {
+      // state.apiKey/baseUrl/model are one flat slot shared across every
+      // cloud/local provider (pre-existing app design) — previewing a
+      // provider the session isn't actually using must not show whatever
+      // another provider (often a local GGUF path/URL) left in there.
+      els.apiKey.value = state.provider === value ? state.apiKey : '';
+      els.localApiBaseUrl.value = state.provider === value ? state.baseUrl : '';
+      els.localApiAllowInsecureTls.checked = state.provider === value && state.allowInsecureTls;
+    }
+  });
+  els.refreshDetectedModels.addEventListener('click', () => void loadDetectedModelsForSettings());
+  els.addDetectedModelFolder.addEventListener('click', async () => {
+    await runLocalAction(els.addDetectedModelFolder, 'Choosing…', async () => {
+      const selected = await api('/api/local/choose-model-directory', {});
+      if (!selected.cancelled) await loadDetectedModelsForSettings();
+    });
+  });
+  els.testConnection.addEventListener('click', testConnection);
+  els.startLocalModel.addEventListener('click', testSettingsConnection);
+  // For llamaCpp there is nothing to pick from a dropdown — the model comes
+  // from the Local Model dialog. Intercept the open attempt (mousedown fires
+  // before the native option list appears; Enter/Space open it from the
+  // keyboard) and send the user there instead of showing an empty picker.
+  els.model.addEventListener('mousedown', (event) => {
+    if (state.provider !== 'llamaCpp') return;
+    event.preventDefault();
+    void openLocalDialog();
+  });
+  els.model.addEventListener('keydown', (event) => {
+    if (state.provider !== 'llamaCpp') return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      void openLocalDialog();
+    }
+  });
+  els.model.addEventListener('change', () => {
+    state.model = els.model.value;
+    if (state.provider === 'localAuto') {
+      const runtime = state.detectedRuntimes.find((item) => item.models?.includes(state.model));
+      if (runtime) state.baseUrl = runtime.baseUrl;
+    }
+    persistSession();
+  });
+  els.attach.addEventListener('click', () => els.fileInput.click());
+  els.fileInput.addEventListener('change', async () => { await addFiles([...els.fileInput.files]); els.fileInput.value = ''; });
+  els.send.addEventListener('click', () => { if (state.busy) state.chatAbort?.abort(); else void send(); });
+  els.prompt.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void send(); }
+  });
+  els.prompt.addEventListener('input', autoGrow);
+  ['dragenter', 'dragover'].forEach((type) => els.dropZone.addEventListener(type, (event) => { event.preventDefault(); els.dropZone.classList.add('dragging'); }));
+  ['dragleave', 'drop'].forEach((type) => els.dropZone.addEventListener(type, (event) => { event.preventDefault(); els.dropZone.classList.remove('dragging'); }));
+  els.dropZone.addEventListener('drop', async (event) => { await addFiles([...event.dataTransfer.files]); });
+
+  els.saveSettings.addEventListener('click', () => {
+    const selectedSource = els.settingsProvider.value;
+    if (selectedSource === 'download') { persistSession(); els.dialog.close(); return; }
+    if (['openai', 'anthropic', 'gemini'].includes(selectedSource) && !els.apiKey.value.trim()) {
+      setSettingsConnectionResult('error', 'Not saved', 'Enter an API key.');
+      els.apiKey.focus();
+      return;
+    }
+    if (selectedSource === 'openaiCompatible') {
+      try {
+        const url = new URL(els.localApiBaseUrl.value.trim());
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      } catch {
+        setSettingsConnectionResult('error', 'Not saved', 'Enter a valid http:// or https:// remote host.');
+        els.localApiBaseUrl.focus();
+        return;
+      }
+      if (els.localApiAllowInsecureTls.checked && !confirm('Allowing a self-signed certificate disables TLS certificate verification for this Local API. Your API key could be intercepted. Continue?')) return;
+    }
+    const providerChanged = state.provider !== selectedSource;
+    const previousBaseUrl = state.baseUrl;
+    state.provider = selectedSource;
+    if (!['llamaCpp', 'localAuto'].includes(state.provider)) {
+      state.apiKey = els.apiKey.value.trim();
+      state.baseUrl = state.provider === 'openaiCompatible' ? els.localApiBaseUrl.value.trim().replace(/\/+$/, '') : '';
+      state.allowInsecureTls = state.provider === 'openaiCompatible' && els.localApiAllowInsecureTls.checked;
+      // A model ID belongs to its endpoint; never carry it into a different API.
+      const endpointChanged = state.provider === 'openaiCompatible' && previousBaseUrl !== state.baseUrl;
+      if (providerChanged || endpointChanged) state.model = '';
+    } else if (state.provider === 'localAuto') {
+      state.apiKey = '';
+      state.model = state.pendingDetectedModel || state.model;
+      state.baseUrl = state.pendingDetectedBaseUrl || state.baseUrl;
+    } else if (state.provider === 'llamaCpp') {
+      syncLocalStateFromForm();
+    }
+    persistSession();
+    updateProviderUi();
+    syncModelSelect();
+    if (state.provider === 'llamaCpp') {
+      void refreshLocalStatus().catch((error) => setLocalInlineError(error.message));
+    }
+    els.dialog.close();
+    // Populates the model dropdown from the newly saved key/endpoint right
+    // away, since the topbar no longer has a separate "Model" button to
+    // trigger this manually (that slot is now Test Connection).
+    if (state.provider !== 'llamaCpp') void loadModels().catch(() => {});
+  });
+
+  els.chooseLocalModel.addEventListener('click', async () => {
+    await runLocalAction(els.chooseLocalModel, 'Choosing…', async () => {
+      const data = await api('/api/local/choose-model', {});
+      if (!data.cancelled) {
+        state.local.modelPath = data.modelPath || '';
+        state.local.mmprojPath = data.mmprojPath || '';
+        saveLocalConfig();
+        syncLocalFormFromState();
+        renderLocalStatus();
+        await startLocalModel();
+      }
+    });
+  });
+  els.chooseMmproj.addEventListener('click', async () => {
+    await runLocalAction(els.chooseMmproj, 'Choosing…', async () => {
+      const data = await api('/api/local/choose-mmproj', {});
+      if (!data.cancelled) {
+        state.local.mmprojPath = data.mmprojPath || '';
+        saveLocalConfig(); syncLocalFormFromState();
+      }
+    });
+  });
+  els.searchLocalModels.addEventListener('click', async () => {
+    await runLocalAction(els.searchLocalModels, 'Searching…', async () => {
+      const data = await api('/api/local/search-models', { query: els.localModelSearch.value.trim(), limit: 1000 });
+      renderLocalModelResults(data.models || []);
+    });
+  });
+  els.chooseModelFolder.addEventListener('click', async () => {
+    await runLocalAction(els.chooseModelFolder, 'Choosing…', async () => {
+      const selected = await api('/api/local/choose-model-directory', {});
+      if (selected.cancelled) return;
+      const data = await api('/api/local/search-models', { query: els.localModelSearch.value.trim(), limit: 1000 });
+      renderLocalModelResults(data.models || []);
+    });
+  });
+  els.chooseDownloadDirectory.addEventListener('click', () => void chooseDownloadFolder());
+  els.stopDownloadModel.addEventListener('click', () => activeDownloadController?.abort());
+  els.searchDownloadModels.addEventListener('click', async () => {
+    await runLocalAction(els.searchDownloadModels, 'Searching…', async () => {
+      const query = els.downloadModelSearch.value.trim();
+      if (!query) { renderDownloadCandidates([], 'Type something to search Hugging Face for.'); return; }
+      const data = await api('/api/local/models/search', { query });
+      renderHfSearchResults(data.results || []);
+    });
+  });
+  els.chooseLlamaServer.addEventListener('click', async () => {
+    await runLocalAction(els.chooseLlamaServer, 'Choosing…', async () => {
+      const data = await api('/api/local/choose-server', {});
+      if (!data.cancelled) {
+        state.local.serverPath = data.serverPath || '';
+        saveLocalConfig(); syncLocalFormFromState();
+      }
+    });
+  });
+  els.stopLocalModel.addEventListener('click', stopLocalModel);
+  for (const input of [els.localModelPath, els.localMmprojPath, els.localServerPath, els.localPort, els.localContext, els.localGpuLayers, els.localSplitMode, els.localTimeout, els.localExtraArgs, els.localCpuMoe, els.localNoMmap, els.localDevice]) {
+    input.addEventListener('change', syncLocalStateFromForm);
+  }
+  els.localDevice.addEventListener('change', () => refreshGpuInfo().catch(() => {}));
+
+  setInterval(() => {
+    if (state.provider === 'llamaCpp' || els.dialog.open || ['starting', 'ready'].includes(state.localStatus.status)) void refreshLocalStatus().catch(() => {});
+  }, 2500);
+
+  // Theme: the light palette lives on html[data-theme="gray"]; index.html restores it before first paint.
+  function applyTheme(theme) {
+    if (theme === 'gray') document.documentElement.dataset.theme = 'gray'; else delete document.documentElement.dataset.theme;
+    els.themeToggle.textContent = theme === 'gray' ? '☾ Dark' : '☀ Light';
+    try { localStorage.setItem('vectra.theme', theme); } catch {}
+  }
+
+  const COLLAPSED_KEY = 'vectra.collapsedProjects';
+  function loadCollapsedProjects() { try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); } catch { return new Set(); } }
+  function toggleProjectCollapsed(id) {
+    state.collapsedProjects.has(id) ? state.collapsedProjects.delete(id) : state.collapsedProjects.add(id);
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...state.collapsedProjects])); } catch {}
+    renderHistory();
+  }
+
+  function newChat(projectId = null) {
+    if (state.busy) return;
+    state.currentChatId = '';
+    state.currentProjectId = projectId;
+    state.messages = [];
+    state.attachments = [];
+    state.savedAttachments = [];
+    state.editingIndex = -1;
+    els.prompt.value = '';
+    syncPromptPlaceholder();
+    autoGrow();
+    render();
+    renderHistory();
+  }
+
+  function syncPromptPlaceholder() {
+    const project=state.projects.find(p=>p.id===state.currentProjectId);
+    els.prompt.placeholder = project ? `Message Vectra in ${project.name}` : 'Message Vectra';
+  }
+
+  async function loadHistory() {
+    const [data,projectData] = await Promise.all([request('/api/chats'),request('/api/projects')]);
+    state.history = data.chats || [];
+    state.projects = projectData.projects || [];
+    state.selectedChats = new Set([...state.selectedChats].filter(id=>state.history.some(chat=>chat.id===id)));
+    renderHistory();
+  }
+
+  async function openChat(id) {
+    if (state.busy || id === state.currentChatId) return;
+    const chat = await request(`/api/chats/${encodeURIComponent(id)}`);
+    state.currentChatId = chat.id;
+    state.currentProjectId = chat.projectId || null;
+    syncPromptPlaceholder();
+    state.messages = Array.isArray(chat.messages) ? chat.messages : [];
+    state.savedAttachments = Array.isArray(chat.attachments) ? chat.attachments : [];
+    state.attachments = state.savedAttachments.map(file=>({...file}));
+    state.editingIndex = -1;
+    if (chat.provider) state.provider = chat.provider;
+    if (chat.model) state.model = chat.model;
+    persistSession();
+    syncModelSelect();
+    updateProviderUi();
+    render();
+    renderHistory();
+  }
+
+  async function deleteChat(id) {
+    if (state.busy || !confirm('Delete this local chat permanently?')) return;
+    await request(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (state.currentChatId === id) newChat();
+    await loadHistory();
+  }
+
+  async function deleteProject(id) {
+    if (state.busy) return;
+    const project=state.projects.find(p=>p.id===id);const count=state.history.filter(chat=>chat.projectId===id).length;
+    if (!confirm(`Delete project "${project?.name||''}" and its ${count} chat(s) permanently?`)) return;
+    await request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (state.currentProjectId === id) newChat();
+    await loadHistory();
+  }
+
+  async function createProject() {
+    if(state.busy)return;
+    const name=prompt('Project name');
+    if(!name?.trim())return;
+    const project=await request('/api/projects',{method:'POST',body:{name:name.trim()}});
+    await loadHistory();
+    newChat(project.id);
+  }
+
+  function toggleHistorySelection(){
+    state.selectingHistory=!state.selectingHistory;
+    if(!state.selectingHistory)state.selectedChats.clear();
+    els.selectHistory.textContent=state.selectingHistory?'Cancel':'Select';
+    els.deleteSelected.hidden=!state.selectingHistory;
+    renderHistory();
+  }
+
+  async function deleteSelectedChats(){
+    const ids=[...state.selectedChats];
+    if(!ids.length||!confirm(`Delete ${ids.length} selected chat${ids.length===1?'':'s'} permanently?`))return;
+    await request('/api/chats',{method:'DELETE',body:{ids}});
+    if(ids.includes(state.currentChatId))newChat();
+    state.selectedChats.clear();state.selectingHistory=false;
+    els.selectHistory.textContent='Select';els.deleteSelected.hidden=true;
+    await loadHistory();
+  }
+
+  async function deleteAllHistory(){
+    if(!state.history.length)return;
+    if(!confirm(`Delete all ${state.history.length} chats? This cannot be undone.`))return;
+    if(prompt('Type DELETE to permanently erase all chat history.')!=='DELETE')return;
+    await request('/api/chats',{method:'DELETE',body:{all:true}});
+    newChat();await loadHistory();
+  }
+
+  const PEN_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 20h9\"/><path d=\"M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z\"/></svg>";
+  const FOLDER_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"/></svg>";
+  const CHEVRON_ICON="<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 18 6-6-6-6\"/></svg>";
+
+  function renderHistory() {
+    els.chatHistory.replaceChildren();
+    const projectMap=new Map(state.projects.map(project=>[project.id,project]));
+    const section=(label)=>{const title=document.createElement('div');title.className='history-section';title.textContent=label;els.chatHistory.appendChild(title)};
+    const hint=(text)=>{const empty=document.createElement('div');empty.className='history-empty';empty.textContent=text;els.chatHistory.appendChild(empty)};
+    section('Projects');
+    if(!state.projects.length)hint('No projects yet. Create one above.');
+    for(const project of state.projects){
+      // Clicking the project name opens a chat screen scoped to that project; the pen starts another chat there; the chevron hides its chats.
+      const chats=state.history.filter(chat=>chat.projectId===project.id);const collapsed=state.collapsedProjects.has(project.id);
+      const row=document.createElement('div');row.className=`history-project${project.id===state.currentProjectId?' active':''}${collapsed?' collapsed':''}`;
+      const toggle=document.createElement('button');toggle.className='history-toggle';toggle.title=collapsed?'Show chats':'Hide chats';toggle.innerHTML=CHEVRON_ICON;toggle.addEventListener('click',()=>toggleProjectCollapsed(project.id));
+      const open=document.createElement('button');open.className='history-open';open.title=`Open ${project.name}`;open.innerHTML=FOLDER_ICON;open.append(project.name);if(collapsed&&chats.length){const count=document.createElement('span');count.className='history-count';count.textContent=chats.length;open.append(count)}open.addEventListener('click',()=>newChat(project.id));
+      const add=document.createElement('button');add.className='history-add';add.title=`New chat in ${project.name}`;add.innerHTML=PEN_ICON;add.addEventListener('click',()=>newChat(project.id));
+      const remove=document.createElement('button');remove.className='history-delete';remove.title=`Delete project ${project.name} and its chats`;remove.textContent='×';remove.addEventListener('click',()=>deleteProject(project.id).catch((error)=>alert(error.message)));
+      row.append(toggle,open,add,remove);els.chatHistory.appendChild(row);
+      if(!collapsed)for(const chat of chats)appendChatRow(chat,true);
+    }
+    section('Single chats');
+    const singles=state.history.filter(chat=>!chat.projectId||!projectMap.has(chat.projectId));
+    if(!singles.length)hint('Your local chats will appear here.');
+    for(const chat of singles)appendChatRow(chat,false);
+  }
+
+  function appendChatRow(chat,nested){
+    const row = document.createElement('div');
+    row.className = `history-item${nested?' nested':''}${chat.id === state.currentChatId ? ' active' : ''}${state.selectingHistory?' selecting':''}`;
+    if(state.selectingHistory){const check=document.createElement('input');check.type='checkbox';check.className='history-check';check.checked=state.selectedChats.has(chat.id);check.addEventListener('change',()=>{check.checked?state.selectedChats.add(chat.id):state.selectedChats.delete(chat.id)});row.appendChild(check)}
+    const open = document.createElement('button');
+    open.className = 'history-open';
+    open.title = chat.title;
+    open.textContent = chat.title || 'New chat';
+    open.addEventListener('click', () => openChat(chat.id).catch((error) => alert(error.message)));
+    const remove = document.createElement('button');
+    remove.className = 'history-delete';
+    remove.title = 'Delete chat';
+    remove.textContent = '×';
+    remove.addEventListener('click', () => deleteChat(chat.id).catch((error) => alert(error.message)));
+    row.append(open);
+    if(!state.selectingHistory)row.append(remove);
+    els.chatHistory.appendChild(row);
+  }
+
+  async function persistChat() {
+    const cleanMessages = state.messages.filter((message) => !message.pending).map(({ role, content, artifacts, files, createdAt }) => ({ role, content, artifacts: artifacts || [], ...(files?.length ? { files } : {}), createdAt }));
+    const payload = { provider: state.provider, model: state.model, projectId: state.currentProjectId, messages: cleanMessages, attachments: state.savedAttachments };
+    const saved = state.currentChatId
+      ? await request(`/api/chats/${encodeURIComponent(state.currentChatId)}`, { method: 'PUT', body: payload })
+      : await request('/api/chats', { method: 'POST', body: payload });
+    state.currentChatId = saved.id;
+    await loadHistory();
+  }
+
+  function openSettings() {
+    syncSettingsFromState();
+    updateSettingsProviderUi();
+    if (!els.dialog.open) els.dialog.showModal();
+    if (state.provider === 'localAuto') void loadDetectedModelsForSettings();
+    if (state.provider === 'llamaCpp') void autoDiscoverLocalModels();
+  }
+  /** Opens the unified settings dialog pre-focused on local llama.cpp — used wherever the old separate Local Model dialog used to open. */
+  async function openLocalDialog() {
+    els.settingsProvider.value = 'llamaCpp';
+    adoptActiveModelAsLocalPathIfNeeded();
+    syncLocalFormFromState();
+    updateSettingsProviderUi();
+    if (!els.dialog.open) els.dialog.showModal();
+    void autoDiscoverLocalModels();
+    await refreshLocalStatus().catch((error) => setLocalInlineError(error.message));
+    await refreshGpuInfo().catch(() => {});
+  }
+
+  /**
+   * A model can already be active as a full filesystem path in state.model
+   * (e.g. reported back by an OpenAI-compatible/llama.cpp endpoint the user
+   * pointed at directly, or a local server started outside this dialog's own
+   * Choose GGUF/Download flow) without ever having been written into
+   * state.local.modelPath. Left alone, the local section then looks blank
+   * for a model that is in fact running — adopt it once so the GGUF path
+   * field isn't empty for no reason.
+   */
+  function adoptActiveModelAsLocalPathIfNeeded() {
+    if (state.local.modelPath || !/[\\/]/.test(state.model || '')) return;
+    state.local.modelPath = state.model;
+    saveLocalConfig();
+  }
+
+  /** Lists every GGUF file already on this computer (with its full path) the moment the local section is shown, instead of waiting on a manual "Search computer" click — an empty query matches everything /api/local/search-models can find. */
+  async function autoDiscoverLocalModels() {
+    try {
+      const data = await api('/api/local/search-models', { query: '', limit: 1000 });
+      renderLocalModelResults(data.models || []);
+    } catch {
+      // Non-fatal: the manual search box and Choose GGUF picker still work.
+    }
+  }
+
+  /** Only probes hardware when the user is actually looking at the local runtime dialog. */
+  async function refreshGpuInfo() {
+    if (els.localDevice.value === 'cpu') { els.localGpuInfo.textContent = '—'; return; }
+    const response = await fetch('/api/local/gpu-info', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not detect GPUs.');
+    const gpus = data.gpus || [];
+    els.localGpuInfo.textContent = gpus.length
+      ? `${gpus.length} GPU${gpus.length > 1 ? 's' : ''}: ${gpus.map((gpu) => gpu.name).join(', ')}`
+      : 'No GPU detected — will use CPU.';
+  }
+  function syncSettingsFromState() {
+    els.settingsProvider.value = state.provider;
+    els.apiKey.value = state.apiKey;
+    els.localApiBaseUrl.value = state.provider === 'openaiCompatible' ? state.baseUrl : '';
+    els.localApiAllowInsecureTls.checked = state.provider === 'openaiCompatible' && state.allowInsecureTls;
+  }
+  function updateSettingsProviderUi() {
+    const value = els.settingsProvider.value;
+    const apiProvider = ['openai', 'anthropic', 'gemini', 'openaiCompatible'].includes(value);
+    els.apiFields.hidden = !apiProvider;
+    els.localApiFields.hidden = value !== 'openaiCompatible'; els.apiKey.placeholder = value === 'openaiCompatible' ? 'Optional for local servers that need no key' : 'Paste your API key';
+    els.autoDetectFields.hidden = value !== 'localAuto';
+    els.localRuntimeFields.hidden = value !== 'llamaCpp';
+    els.downloadFields.hidden = value !== 'download';
+    els.saveSettings.hidden = false;
+    if (value === 'llamaCpp') renderLocalStatus();
+    else setSettingsConnectionResult('stopped', 'Not tested');
+  }
+  function persistSession() {
+    sessionStorage.setItem('vectra.provider', state.provider);
+    sessionStorage.setItem('vectra.apiKey', state.apiKey);
+    sessionStorage.setItem('vectra.baseUrl', state.baseUrl);
+    sessionStorage.setItem('vectra.allowInsecureTls', String(state.allowInsecureTls));
+    sessionStorage.setItem('vectra.model', state.model);
+  }
+  function applyProviderDefaults() {
+    if (state.provider === 'llamaCpp') {
+      const status = state.localStatus;
+      state.baseUrl = status.baseUrl || state.baseUrl || 'http://127.0.0.1:8080/v1';
+      state.model = status.modelId || (status.status === 'ready' ? state.model : '');
+    } else if (state.baseUrl === 'http://127.0.0.1:8080/v1') {
+      state.baseUrl = '';
+      state.model = '';
+    }
+    persistSession();
+  }
+  function updateProviderUi() {
+    const local = state.provider === 'llamaCpp';
+    els.localStatusPill.hidden = !local;
+    renderLocalStatus();
+  }
+
+  async function testConnection() {
+    if (state.provider === 'llamaCpp' && !(state.localStatus.running && state.localStatus.status === 'ready') && state.local.modelPath) {
+      if (!confirm(`The selected model is not running. Start ${fileName(state.local.modelPath)} now?`)) return;
+      await startLocalModel();
+      if (!(state.localStatus.running && state.localStatus.status === 'ready')) return;
+    }
+    const previous = els.testConnection.textContent;
+    els.testConnection.textContent = 'Testing…';
+    els.testConnection.disabled = true;
+    try {
+      const data = await api('/api/test-connection', {
+        provider: state.provider,
+        apiKey: state.apiKey,
+        baseUrl: state.baseUrl,
+        allowInsecureTls: state.allowInsecureTls,
+        model: state.model
+      });
+      alert(data.message);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      els.testConnection.textContent = previous;
+      els.testConnection.disabled = false;
+    }
+  }
+
+  async function testSettingsConnection() {
+    const source = els.settingsProvider.value;
+    const previous = els.startLocalModel.textContent;
+    els.startLocalModel.disabled = true;
+    els.startLocalModel.textContent = 'Testing…';
+    setSettingsConnectionResult('testing', 'Testing…');
+    try {
+      if (source === 'download') {
+        setSettingsConnectionResult('error', 'Not connected', 'Choose and download a model first.');
+        return;
+      }
+      if (source === 'llamaCpp') {
+        syncLocalStateFromForm();
+        const runningSelectedModel = state.localStatus.running && state.localStatus.status === 'ready' &&
+          (!state.localStatus.modelPath || state.localStatus.modelPath === state.local.modelPath);
+        if (!runningSelectedModel) await startLocalModel();
+        if (!(state.localStatus.running && state.localStatus.status === 'ready')) {
+          setSettingsConnectionResult('error', 'Not connected', state.localStatus.lastError || 'The selected local model could not be started.');
+          return;
+        }
+        const data = await api('/api/test-connection', {
+          provider: 'llamaCpp', apiKey: '', baseUrl: state.localStatus.baseUrl || '', model: state.localStatus.modelId || ''
+        });
+        setSettingsConnectionResult(data.ok ? 'ready' : 'error', data.ok ? 'Connected' : 'Not connected', data.message);
+        return;
+      }
+      if (source === 'localAuto') {
+        const data = await api('/api/test-connection', { provider: 'localAuto', apiKey: '', baseUrl: '', model: state.pendingDetectedModel || '' });
+        setSettingsConnectionResult(data.ok ? 'ready' : 'error', data.ok ? 'Connected' : 'Not connected', data.message);
+        return;
+      }
+      const data = await api('/api/test-connection', {
+        provider: source,
+        apiKey: els.apiKey.value.trim(),
+        baseUrl: source === 'openaiCompatible' ? els.localApiBaseUrl.value.trim() : '',
+        allowInsecureTls: source === 'openaiCompatible' && els.localApiAllowInsecureTls.checked,
+        model: ''
+      });
+      setSettingsConnectionResult(data.ok ? 'ready' : 'error', data.ok ? 'Connected' : 'Not connected', data.message);
+    } catch (error) {
+      setSettingsConnectionResult('error', 'Not connected', error.message);
+    } finally {
+      els.startLocalModel.disabled = false;
+      els.startLocalModel.textContent = previous;
+    }
+  }
+
+  function setSettingsConnectionResult(status, label, detail = '') {
+    els.localDialogStatus.dataset.status = status;
+    els.localDialogStatusText.dataset.status = status;
+    els.localDialogStatusText.textContent = label;
+    els.localDialogStatusText.title = detail || label;
+  }
+
+  async function loadModels() {
+    if (state.provider === 'llamaCpp' && !(state.localStatus.running && state.localStatus.status === 'ready')) {
+      await openLocalDialog();
+      return;
+    }
+    const previous = els.model.disabled;
+    els.model.disabled = true;
+    try {
+      const data = await api('/api/models', { provider: state.provider, apiKey: state.apiKey, baseUrl: state.baseUrl, allowInsecureTls: state.allowInsecureTls });
+      state.detectedRuntimes = data.runtimes || [];
+      if (state.provider === 'localAuto' && !(data.models || []).length) throw new Error('No local model server was detected. Start Ollama, LM Studio, llama.cpp, vLLM, or another OpenAI-compatible runtime, then try again.');
+      populateModels(data.models || []);
+      if (state.provider === 'localAuto') {
+        const runtime = state.detectedRuntimes.find((item) => item.models?.includes(state.model)) || state.detectedRuntimes[0];
+        if (runtime) { state.baseUrl = runtime.baseUrl; persistSession(); }
+      }
+    } catch (error) {
+      alert(error.message);
+      if (state.provider === 'llamaCpp') await openLocalDialog();
+      else if (state.provider !== 'localAuto') openSettings();
+    } finally {
+      els.model.disabled = previous;
+    }
+  }
+
+  async function loadDetectedModelsForSettings() {
+    els.detectedModelList.hidden = false;
+    els.detectedModelList.textContent = 'Scanning local runtimes and GGUF model folders…';
+    els.refreshDetectedModels.disabled = true;
+    try {
+      const data = await api('/api/local/discover', {}).catch(() => ({ runtimes: [], gguf: [], ollama: [] }));
+      state.detectedRuntimes = data.runtimes || [];
+      els.detectedModelList.replaceChildren();
+      const runtimeChoices = state.detectedRuntimes.flatMap((runtime) =>
+        (runtime.models || []).map((model) => ({ model, runtime }))
+      );
+      const fileChoices = (data.gguf || []).map((item) => item.id);
+      const runningNames = new Set(runtimeChoices.map((item) => item.model));
+      const offlineOllama = (data.ollama || []).filter((item) => !runningNames.has(item.id));
+      if (!runtimeChoices.length && !fileChoices.length && !offlineOllama.length) {
+        els.detectedModelList.textContent = 'No local models found. Start a local runtime, add a model folder under llama.cpp, or download a model.';
+        return;
+      }
+      for (const { model, runtime } of runtimeChoices) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `model-result${model === (state.pendingDetectedModel || state.model) ? ' selected' : ''}`;
+        button.textContent = `${model} — ${runtime.name}`;
+        button.addEventListener('click', () => {
+          state.pendingDetectedModel = model;
+          state.pendingDetectedBaseUrl = runtime.baseUrl;
+          els.detectedModelList.querySelectorAll('button').forEach((item) => item.classList.toggle('selected', item === button));
+        });
+        els.detectedModelList.appendChild(button);
+      }
+      for (const modelPath of fileChoices) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `model-result${state.local.modelPath === modelPath ? ' selected' : ''}`;
+        button.textContent = `${fileName(modelPath)} — GGUF on this PC`;
+        button.title = modelPath;
+        button.addEventListener('click', () => {
+          state.local.modelPath = modelPath;
+          state.local.mmprojPath = '';
+          saveLocalConfig();
+          syncLocalFormFromState();
+          els.settingsProvider.value = 'llamaCpp';
+          updateSettingsProviderUi();
+          void autoDiscoverLocalModels();
+          void startLocalModel();
+        });
+        els.detectedModelList.appendChild(button);
+      }
+      for (const model of offlineOllama) {
+        const item = document.createElement('div');
+        item.className = 'model-result disabled';
+        item.textContent = `${model.label} — Ollama installed (server not running)`;
+        item.title = 'Start Ollama to use this installed model.';
+        els.detectedModelList.appendChild(item);
+      }
+    } catch (error) {
+      els.detectedModelList.textContent = error.message;
+    } finally {
+      els.refreshDetectedModels.disabled = false;
+    }
+  }
+
+  function populateModels(models) {
+    const uniqueModels = [...new Set(models.filter(Boolean))];
+    // Keep the selection only when the current endpoint actually advertises it.
+    if (uniqueModels.length) state.model = uniqueModels.includes(state.model) ? state.model : uniqueModels[0];
+    els.model.replaceChildren(new Option('Select model', ''));
+    for (const id of uniqueModels) els.model.appendChild(new Option(id, id));
+    // Some compatible APIs cannot list models; preserve manual input only then.
+    if (!uniqueModels.length && state.model) els.model.appendChild(new Option(state.model, state.model));
+    els.model.value = state.model;
+    persistSession();
+  }
+
+  async function startLocalModel() {
+    if (state.localBusy) return;
+    syncLocalStateFromForm();
+    if (!state.local.modelPath) { setLocalInlineError('Choose a .gguf model first.'); return; }
+    state.localBusy = true;
+    state.localStatus = { ...state.localStatus, status: 'starting', lastError: '' };
+    renderLocalStatus();
+    els.startLocalModel.disabled = true;
+    els.startLocalModel.textContent = 'Loading model…';
+    try {
+      let data;
+      try {
+        data = await api('/api/local/start', state.local);
+      } catch (error) {
+        if (error.code !== 'LLAMA_SERVER_MISSING' || !confirm(`${error.message}\n\nDownload and install llama.cpp automatically now?`)) throw error;
+        await installLlamaCpp();
+        els.startLocalModel.textContent = 'Loading model…';
+        data = await api('/api/local/start', state.local);
+      }
+      state.localStatus = data;
+      state.provider = 'llamaCpp';
+      if (data.port) state.local.port = data.port;
+      state.baseUrl = data.baseUrl || `http://127.0.0.1:${state.local.port}/v1`;
+      state.model = data.modelId || state.model || fileName(state.local.modelPath);
+      persistSession(); saveLocalConfig(); syncLocalFormFromState(); updateProviderUi();
+      await loadModels();
+    } catch (error) {
+      setLocalInlineError(error.message);
+      await refreshLocalStatus().catch(() => {});
+    } finally {
+      state.localBusy = false;
+      els.startLocalModel.disabled = false;
+      els.startLocalModel.textContent = 'Test';
+      renderLocalStatus();
+    }
+  }
+
+  /** Downloads the llama.cpp build matching this machine (CPU or CUDA) and verifies it runs, mirroring the VS Code extension's "Install llama.cpp automatically" prompt. Only runs once per machine: the resolved path is saved into the local config, so every later start finds it immediately. */
+  async function installLlamaCpp() {
+    els.startLocalModel.disabled = true;
+    els.startLocalModel.textContent = 'Installing llama.cpp…';
+    try {
+      const data = await streamProgressRequest('/api/local/llama-cpp/install', {}, (event) => {
+        if (typeof event.bytesDone !== 'number') return;
+        els.startLocalModel.textContent = `Installing llama.cpp: ${progressText(event.bytesDone, event.totalBytes)}`;
+      });
+      state.local.serverPath = data.serverPath;
+      saveLocalConfig();
+      syncLocalFormFromState();
+      setLocalInlineError(data.fellBackToCpu
+        ? `Installed llama.cpp (${data.name}). The CUDA build did not run on this machine, so the CPU build was installed instead.`
+        : `Installed llama.cpp (${data.name}). Starting the model…`);
+    } catch (error) {
+      setLocalInlineError(`Could not install llama.cpp automatically: ${error.message}`);
+      throw error;
+    } finally {
+      els.startLocalModel.disabled = false;
+      els.startLocalModel.textContent = 'Test';
+    }
+  }
+
+  async function stopLocalModel() {
+    if (state.localBusy) return;
+    state.localBusy = true; renderLocalStatus();
+    try {
+      state.localStatus = await api('/api/local/stop', {});
+      if (state.provider === 'llamaCpp') { state.model = ''; syncModelSelect(); persistSession(); }
+    } catch (error) { setLocalInlineError(error.message); }
+    finally { state.localBusy = false; renderLocalStatus(); }
+  }
+
+  async function refreshLocalStatus() {
+    const response = await fetch('/api/local/status', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not read local runtime status.');
+    state.localStatus = data;
+    if (data.modelPath && !state.local.modelPath) state.local.modelPath = data.modelPath;
+    if (data.mmprojPath && !state.local.mmprojPath) state.local.mmprojPath = data.mmprojPath;
+    if (data.serverPath && !state.local.serverPath) state.local.serverPath = data.serverPath;
+    if (data.port) state.local.port = data.port;
+    if (state.provider === 'llamaCpp' && data.status === 'ready' && data.running) {
+      const modelChanged = data.modelId && state.model !== data.modelId;
+      state.baseUrl = data.baseUrl || state.baseUrl;
+      if (data.modelId) state.model = data.modelId;
+      persistSession();
+      if (modelChanged) syncModelSelect();
+    }
+    syncLocalFormFromState(false);
+    renderLocalStatus();
+    return data;
+  }
+
+  function renderLocalStatus() {
+    const status = state.localStatus.status || 'stopped';
+    const labels = { ready: 'Ready', starting: 'Loading…', stopping: 'Stopping…', stopped: 'Stopped', error: 'Error' };
+    const label = labels[status] || status;
+    els.localStatusPill.textContent = label;
+    els.localStatusPill.dataset.status = status;
+    if (els.settingsProvider.value === 'llamaCpp') setSettingsConnectionResult(status, label, state.localStatus.lastError || '');
+    let detail = 'Choose a GGUF model to begin.';
+    if (status === 'ready') detail = `${state.localStatus.modelId || fileName(state.localStatus.modelPath)} · ${state.localStatus.baseUrl || ''}`;
+    else if (status === 'starting') detail = `Loading ${fileName(state.local.modelPath) || 'local model'}… Large models can take several minutes.`;
+    else if (status === 'error') detail = state.localStatus.lastError || 'llama.cpp failed to start.';
+    else if (state.local.modelPath) detail = fileName(state.local.modelPath);
+    els.localDialogDetail.textContent = detail;
+    els.localLogs.textContent = (state.localStatus.logs || []).join('\n').trim() || 'No logs yet.';
+    els.localLogs.scrollTop = els.localLogs.scrollHeight;
+    els.stopLocalModel.disabled = state.localBusy || !state.localStatus.running;
+  }
+
+  function setLocalInlineError(message) {
+    state.localStatus = { ...state.localStatus, status: 'error', lastError: message };
+    renderLocalStatus();
+  }
+
+  function syncLocalStateFromForm() {
+    const modelPath = els.localModelPath.value.trim();
+    const modelChanged = modelPath !== state.local.modelPath;
+    if (modelChanged) els.localMmprojPath.value = '';
+    state.local = {
+      ...state.local,
+      modelPath,
+      mmprojPath: modelChanged ? '' : els.localMmprojPath.value.trim(),
+      serverPath: els.localServerPath.value.trim(),
+      port: Number(els.localPort.value || 8080),
+      contextSize: Number(els.localContext.value || 16384),
+      gpuLayers: els.localGpuLayers.value.trim() || 'auto',
+      splitMode: els.localSplitMode.value,
+      device: els.localDevice.value,
+      timeoutSeconds: Number(els.localTimeout.value || 3600),
+      extraArgs: els.localExtraArgs.value.trim(),
+      cpuMoe: els.localCpuMoe.checked,
+      noMmap: els.localNoMmap.checked,
+      threadProfile: els.localThreadProfile.value,
+      threads: Number(els.localThreads.value || 0)
+    };
+    saveLocalConfig();
+  }
+
+  function syncLocalFormFromState(overwriteFocused = true) {
+    const set = (element, value) => { if (overwriteFocused || document.activeElement !== element) element.value = value ?? ''; };
+    set(els.localModelPath, state.local.modelPath || '');
+    set(els.localMmprojPath, state.local.mmprojPath || '');
+    set(els.localServerPath, state.local.serverPath || '');
+    set(els.localPort, state.local.port || 8080);
+    set(els.localContext, state.local.contextSize || 16384);
+    set(els.localGpuLayers, state.local.gpuLayers || 'auto');
+    set(els.localSplitMode, state.local.splitMode || 'layer');
+    set(els.localDevice, state.local.device || 'auto');
+    set(els.localTimeout, state.local.timeoutSeconds || 3600);
+    set(els.localExtraArgs, state.local.extraArgs || '');
+    els.localCpuMoe.checked = Boolean(state.local.cpuMoe);
+    els.localNoMmap.checked = Boolean(state.local.noMmap);
+    set(els.localThreadProfile, state.local.threadProfile || 'auto');
+    set(els.localThreads, state.local.threads || 0);
+  }
+
+  async function addFiles(files) {
+    const allowed = files.slice(0, Math.max(0, 12 - state.attachments.length));
+    let currentBytes = state.attachments.reduce((sum, file) => sum + file.size, 0);
+    for (const file of allowed) {
+      if (file.size > 40 * 1024 * 1024) { alert(`${file.name} is larger than 40 MB and was skipped.`); continue; }
+      if (file.size > 64 * 1024 * 1024) { alert(`${file.name} is larger than the 64 MB per-file limit.`); continue; }
+      if (currentBytes + file.size > 180 * 1024 * 1024) { alert('Attachment total is limited to 180 MB per message.'); break; }
+      const textLike = isTextLike(file);
+      const mime = file.type || mimeFromName(file.name);
+      const documentLike = /\.(doc|docx|pptx|xlsx|rtf)$/i.test(file.name) || /msword|wordprocessingml|spreadsheetml|presentationml|rtf/.test(mime);
+      const kind = textLike ? 'text' : mime === 'application/pdf' ? 'pdf' : documentLike ? 'document' : mime.startsWith('image/') ? 'image' : 'binary';
+      const item = { name: file.name, mime, size: file.size, kind, text: '', base64: '', parseStatus: textLike ? 'ready' : 'pending' };
+      if (textLike) item.text = await file.text();
+      else item.base64 = await toBase64(file);
+      state.attachments.push(item); renderAttachments();
+      if (kind === 'pdf' || kind === 'document') {
+        try {
+          const parsed = await api('/api/attachments/inspect', { provider: state.provider, attachment: item });
+          item.text = parsed.text || '';
+          item.kind = parsed.kind || item.kind;
+          item.parseStatus = parsed.visualPages > 0
+            ? `${parsed.visualPages} page(s) need vision OCR`
+            : (parsed.parsedCharacters > 0 ? `native text ready · ${parsed.parsedCharacters.toLocaleString()} chars` : 'no readable content');
+        } catch (error) { item.parseStatus = `parse error: ${error.message}`; }
+      } else if (kind === 'image') {
+        item.parseStatus = 'Parsing... spectacles on, facts only!'; renderAttachments();
+        try {
+          const prepared = await prepareDocumentImage(file);
+          item.width = prepared.width; item.height = prepared.height;
+          item.sourceWidth = prepared.sourceWidth; item.sourceHeight = prepared.sourceHeight;
+          item.mime = prepared.mime; item.base64 = prepared.base64; item.ocrRequired = true;
+          item.text = `Original image: ${prepared.sourceWidth} x ${prepared.sourceHeight} px. Whole-image vision input: ${prepared.width} x ${prepared.height} px.`;
+          item.parseStatus = prepared.resized ? 'Vision ready · whole image optimized' : 'Vision ready · original resolution';
+        } catch (error) { item.ocrRequired = true; item.parseStatus = `vision input ready: ${error.message}`; }
+      }
+      else if (kind === 'binary') item.parseStatus = 'binary';
+      currentBytes += file.size; renderAttachments();
+    }
+  }
+
+  async function send(overrideText) {
+    const text = (typeof overrideText === 'string' ? overrideText : els.prompt.value).trim();
+    if ((!text && !state.attachments.length) || state.busy) return;
+    if (state.provider === 'llamaCpp') {
+      const local = await refreshLocalStatus().catch(() => state.localStatus);
+      if (!(local.running && local.status === 'ready')) { await openLocalDialog(); return; }
+      state.baseUrl = local.baseUrl;
+      state.model = local.modelId || state.model;
+      persistSession();
+    }
+    if (!state.model) { if (state.provider === 'llamaCpp') await openLocalDialog(); else if (state.provider === 'localAuto') await loadModels(); else openSettings(); return; }
+    if (!['llamaCpp', 'localAuto', 'openaiCompatible'].includes(state.provider) && !state.apiKey) { openSettings(); return; }
+    if (state.provider === 'openaiCompatible' && !state.baseUrl) { openSettings(); return; }
+
+    if (state.editingIndex >= 0) state.messages.splice(state.editingIndex);
+    state.editingIndex = -1;
+    // The user message remembers its uploads so the chat always shows which files were sent.
+    state.messages.push({ role: 'user', content: text || 'Please analyze the attached files.', createdAt: Date.now(),
+      ...(state.attachments.length ? { files: state.attachments.map((file) => ({ name: file.name, kind: file.kind, size: file.size })) } : {}) });
+    const payloadAttachments = state.attachments;
+    for(const file of payloadAttachments){const index=state.savedAttachments.findIndex(saved=>saved.name===file.name);if(index>=0)state.savedAttachments[index]=file;else state.savedAttachments.push(file)}
+    state.attachments = [];
+    els.prompt.value = ''; autoGrow(); renderAttachments();
+    syncPromptPlaceholder();
+    state.busy = true;
+    state.chatAbort = new AbortController();
+    // Keep real progress visible instead of showing a speculative assistant reply.
+    // Server and tool events update this log while the requested work continues.
+    const initialStep = 'Loading... tiny gears go brrr!';
+    const placeholder = { role: 'assistant', content: '', pending: true, activityLog: [{ text: initialStep }], artifacts: [], createdAt: Date.now() };
+    state.messages.push(placeholder); render();
+    await persistChat().catch((error) => console.warn('Could not save chat history:', error));
+    const activeSubagentRoles = [];
+
+    try {
+      const data = await streamChat({
+        provider: state.provider,
+        apiKey: state.apiKey,
+        baseUrl: state.baseUrl,
+        allowInsecureTls: state.allowInsecureTls,
+        model: state.model,
+        agentHarness: 'deepagents',
+        conversationId: state.currentChatId,
+        messages: state.messages.filter((message) => !message.pending),
+        attachments: payloadAttachments
+      }, state.chatAbort.signal, (text) => {
+        // Real streamed output replaces the "Generating…" activity line the
+        // moment the first token arrives, so a slow local model still shows
+        // visible progress instead of one long silent wait.
+        placeholder.content = text;
+        render();
+      }, (event) => {
+        if (!placeholder.pending) return;
+        if (event.type === 'progress') pushWebActivityStep(placeholder, activeSubagentRoles, event.message);
+        else if (event.type === 'subagent') handleWebSubagentEvent(placeholder, activeSubagentRoles, event.subagent || {});
+        else if (event.type === 'thinking') { // live <think> reasoning for the collapsible block
+          if (!placeholder.thinking) placeholder.thinkingStartedAt = Date.now();
+          placeholder.thinking = (placeholder.thinking || '') + event.delta;
+        }
+        render();
+      });
+      placeholder.content = data.text;
+      placeholder.artifacts = data.artifacts || [];
+      placeholder.pending = false;
+      // Every generated artifact can be inspected before download.
+      if (placeholder.artifacts.length) openArtifactViewer(placeholder.artifacts[placeholder.artifacts.length - 1]);
+    } catch (error) {
+      placeholder.content = error.name === 'AbortError' ? 'Generation stopped. Edit or resend your message whenever you are ready.' : `Error: ${error.message}`;
+      placeholder.pending = false;
+    } finally {
+      state.busy = false; state.chatAbort = null; render();
+      await persistChat().catch((error) => console.warn('Could not save chat history:', error));
+    }
+  }
+
+  // --- Universal artifact inspector: safe previews before download. Images open in a zoomable split viewer. ---
+  let viewerObjectUrl = '';
+  let viewerFrame,viewerImage,viewerScaleTarget,viewerZoom=1,viewerContentWidth=0,viewerContentHeight=0,viewerResetZoom=1;
+  function openArtifactViewer(artifact) {
+    if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
+    viewerFrame=viewerImage=viewerScaleTarget=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
+    els.viewerTitle.textContent = artifact.title || artifact.name;
+    els.viewerMeta.textContent = `${artifactTypeLabel(artifact)} · ${formatSize(base64ByteLength(artifact.base64))}`;
+    els.viewerDownload.download = artifact.name;
+    els.viewerDownload.href = `data:${artifact.mime};base64,${artifact.base64}`;
+    els.viewerDownload.onclick = null;
+    els.viewerStage.replaceChildren();
+    const isImage = artifact.view === 'image' || String(artifact.mime).startsWith('image/');
+    const isChart = artifact.view === 'chart' || artifact.mime === 'application/vnd.vectra.chart+json';
+    els.viewerZoomControls.hidden = !(isImage || isChart);
+    if (isImage) return openImageArtifact(artifact);
+    if(isChart){
+      try{const spec=JSON.parse(decodeArtifactText(artifact)),width=spec.width||960,height=spec.height||540,frame=document.createElement('div'),surface=document.createElement('div');frame.className='viewer-frame viewer-chart-viewport';surface.className='viewer-chart-frame viewer-chart-surface';surface.style.width=`${width}px`;surface.style.height=`${height}px`;frame.appendChild(surface);viewerFrame=frame;viewerScaleTarget=surface;viewerContentWidth=width;viewerContentHeight=height;els.viewerStage.appendChild(frame);window.renderVectraChart(surface,spec);els.viewerDownload.download=chartPngName(artifact);els.viewerDownload.removeAttribute('href');els.viewerDownload.onclick=async event=>{event.preventDefault();await downloadChartPng(surface,spec,els.viewerDownload.download)};showViewerPanel();requestAnimationFrame(()=>{viewerResetZoom=Math.min(1,els.viewerStage.clientWidth/width,els.viewerStage.clientHeight/height);setViewerZoom(viewerResetZoom)});return}catch(error){console.warn('Chart preview failed:',error)}
+    }
+    if (artifact.mime === 'application/pdf') {
+      const frame = document.createElement('iframe'); frame.className = 'viewer-document'; frame.title = `${artifact.name} PDF preview`;
+      viewerObjectUrl = URL.createObjectURL(base64Blob(artifact.base64, artifact.mime)); frame.src = viewerObjectUrl; els.viewerStage.appendChild(frame);
+    } else if (artifact.mime === 'text/markdown' || /\.md$/i.test(artifact.name)) {
+      const content = document.createElement('article'); content.className = 'viewer-markdown'; renderMarkdownInto(content, artifact.previewText || decodeArtifactText(artifact)); els.viewerStage.appendChild(content);
+    } else if (isTextArtifact(artifact)) {
+      els.viewerStage.appendChild(buildCodeViewer(artifact.previewText || decodeArtifactText(artifact), String(artifact.name || '').split('.').pop()));
+    } else if (artifact.previewText) {
+      const content = document.createElement('article'); content.className = 'viewer-markdown'; renderMarkdownInto(content, artifact.previewText); els.viewerStage.appendChild(content);
+    } else {
+      const empty = document.createElement('div'); empty.className = 'viewer-empty'; empty.innerHTML = '<div><strong>Preview unavailable</strong>This file can still be downloaded and opened in its native application.</div>'; els.viewerStage.appendChild(empty);
+    }
+    showViewerPanel();
+  }
+
+  function openImageArtifact(artifact) {
+    const frame = document.createElement('div'); frame.className = 'viewer-frame';
+    const img = document.createElement('img');
+    img.alt = artifact.title || artifact.name; img.draggable = false;
+    img.onload=()=>{viewerFrame=frame;viewerImage=img;viewerContentWidth=img.naturalWidth;viewerContentHeight=img.naturalHeight;viewerResetZoom=Math.min(1,els.viewerStage.clientWidth/Math.max(1,img.naturalWidth));setViewerZoom(viewerResetZoom)};
+    img.src = `data:${artifact.mime};base64,${artifact.base64}`;
+    frame.appendChild(img);
+    // Box coordinates are fractions of the image (0..1), so plain % positioning scales with it.
+    for (const box of artifact.boxes || []) {
+      const overlay = document.createElement('div'); overlay.className = 'viewer-box';
+      overlay.style.left = `${box.x * 100}%`; overlay.style.top = `${box.y * 100}%`;
+      overlay.style.width = `${box.w * 100}%`; overlay.style.height = `${box.h * 100}%`;
+      if (box.label) { const tag = document.createElement('span'); tag.className = 'viewer-box-label'; tag.textContent = box.label; overlay.appendChild(tag); }
+      frame.appendChild(overlay);
+    }
+    els.viewerStage.appendChild(frame);
+    showViewerPanel();
+  }
+
+  function showViewerPanel() {
+    els.viewerPanel.hidden = false;
+    document.querySelector('.app-shell').classList.add('viewer-open');
+  }
+
+  function setViewerZoom(value,clientX,clientY){
+    if(!viewerFrame||!viewerContentWidth)return;
+    const stage=els.viewerStage,old=viewerZoom,next=Math.max(.2,Math.min(8,value));
+    const rect=stage.getBoundingClientRect(),x=(clientX??rect.left+rect.width/2)-rect.left+stage.scrollLeft,y=(clientY??rect.top+rect.height/2)-rect.top+stage.scrollTop;
+    viewerZoom=next;viewerFrame.style.width=`${viewerContentWidth*next}px`;if(viewerContentHeight)viewerFrame.style.height=`${viewerContentHeight*next}px`;if(viewerScaleTarget)viewerScaleTarget.style.transform=`scale(${next})`;els.viewerZoomReset.textContent=`${Math.round(next*100)}%`;
+    stage.scrollLeft=x*(next/old)-((clientX??rect.left+rect.width/2)-rect.left);stage.scrollTop=y*(next/old)-((clientY??rect.top+rect.height/2)-rect.top);
+  }
+
+  els.viewerZoomIn.addEventListener('click',()=>setViewerZoom(viewerZoom*1.25));
+  els.viewerZoomOut.addEventListener('click',()=>setViewerZoom(viewerZoom/1.25));
+  els.viewerZoomReset.addEventListener('click',()=>setViewerZoom(viewerResetZoom));
+  els.viewerStage.addEventListener('wheel',(event)=>{if(!viewerFrame)return;event.preventDefault();setViewerZoom(viewerZoom*(event.deltaY<0?1.12:1/1.12),event.clientX,event.clientY)},{passive:false});
+  // Drag to pan: hold the left button and move to scroll a zoomed image in any direction.
+  let viewerPan=null;
+  els.viewerStage.addEventListener('pointerdown',(event)=>{if(!viewerFrame||event.button!==0)return;const stage=els.viewerStage;viewerPan={x:event.clientX,y:event.clientY,left:stage.scrollLeft,top:stage.scrollTop};stage.setPointerCapture(event.pointerId);stage.classList.add('panning');event.preventDefault()});
+  els.viewerStage.addEventListener('pointermove',(event)=>{if(!viewerPan)return;els.viewerStage.scrollLeft=viewerPan.left-(event.clientX-viewerPan.x);els.viewerStage.scrollTop=viewerPan.top-(event.clientY-viewerPan.y)});
+  for(const type of ['pointerup','pointercancel'])els.viewerStage.addEventListener(type,()=>{viewerPan=null;els.viewerStage.classList.remove('panning')});
+
+  // Drag the viewer's left edge to resize it; the CSS clamps the width and the value persists across reloads.
+  const VIEWER_WIDTH_KEY='vectra.viewerWidth';const appShell=document.querySelector('.app-shell');
+  try{const saved=Number(localStorage.getItem(VIEWER_WIDTH_KEY));if(saved>0)appShell.style.setProperty('--viewer-width',`${saved}px`)}catch{}
+  let viewerResizing=false;
+  els.viewerResize.addEventListener('pointerdown',(event)=>{if(event.button!==0)return;viewerResizing=true;els.viewerResize.setPointerCapture(event.pointerId);els.viewerResize.classList.add('dragging');document.body.classList.add('resizing');event.preventDefault()});
+  els.viewerResize.addEventListener('pointermove',(event)=>{if(!viewerResizing)return;appShell.style.setProperty('--viewer-width',`${Math.round(appShell.getBoundingClientRect().right-event.clientX)}px`)});
+  for(const type of ['pointerup','pointercancel'])els.viewerResize.addEventListener(type,()=>{if(!viewerResizing)return;viewerResizing=false;els.viewerResize.classList.remove('dragging');document.body.classList.remove('resizing');try{localStorage.setItem(VIEWER_WIDTH_KEY,String(parseInt(appShell.style.getPropertyValue('--viewer-width'))||''))}catch{}});
+
+  function closeImageViewer() {
+    viewerFrame=viewerImage=viewerScaleTarget=null;viewerZoom=1;viewerContentWidth=viewerContentHeight=0;viewerResetZoom=1;
+    if (viewerObjectUrl) { URL.revokeObjectURL(viewerObjectUrl); viewerObjectUrl = ''; }
+    els.viewerPanel.hidden = true;
+    document.querySelector('.app-shell').classList.remove('viewer-open');
+  }
+  els.viewerClose.addEventListener('click', closeImageViewer);
+
+  // --- Lightweight syntax highlighter: token classes mirror editor scopes; the colors live in the theme CSS (.tok-*). ---
+  const HL_FAMILY={js:'js',javascript:'js',jsx:'js',ts:'js',typescript:'js',tsx:'js',mjs:'js',cjs:'js',json:'js',py:'py',python:'py',c:'c',h:'c',cpp:'c','c++':'c',cc:'c',cxx:'c',hpp:'c',cs:'c',csharp:'c',java:'c',go:'c',golang:'c',rs:'c',rust:'c',kt:'c',kotlin:'c',swift:'c',scala:'c',dart:'c',php:'c',sh:'sh',bash:'sh',shell:'sh',zsh:'sh',console:'sh',ps1:'sh',powershell:'sh',bat:'sh',cmd:'sh',sql:'sql',css:'css',scss:'css',less:'css',html:'html',htm:'html',xml:'html',svg:'html',vue:'html',yaml:'yaml',yml:'yaml',toml:'yaml',ini:'yaml'};
+  const HL_KEYWORDS={
+    js:'abstract as async await break case catch class const continue debugger default delete do else enum export extends false finally for from function get if implements import in instanceof interface let new null of package private protected public return set static super switch this throw true try typeof undefined var void while with yield type declare readonly namespace keyof never unknown any number string boolean symbol bigint object',
+    py:'False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield self cls',
+    c:'auto break case char const continue default do double else enum extern float for goto if inline int long register return short signed sizeof static struct switch typedef union unsigned void volatile while bool true false class namespace using template typename public private protected virtual override new delete this nullptr null try catch throw finally constexpr friend operator explicit import package interface extends implements final abstract synchronized instanceof var val fun let mut impl trait pub crate mod use match loop where dyn ref self Self unsafe async await move fn func chan defer map range select type string int64 int32 float64 uint byte rune error nil decimal object out readonly sealed',
+    sh:'if then else elif fi for while until do done case esac in function select time return exit export local readonly declare unset shift source alias set echo cd sudo param begin process end foreach try catch finally throw switch break continue',
+    sql:'select from where and or not null insert into values update set delete create table drop alter add column primary key foreign references index view as join inner left right outer full on group by order having limit offset union all distinct case when then else end exists between like in is asc desc count sum avg min max begin commit rollback with true false',
+    css:'',html:'',yaml:'true false null yes no on off'
+  };
+  const HL_RULES={
+    js:/(?<cmt>\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(?<str>"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|(?<num>\b0[xXbBoO][\da-fA-F_]+n?\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?n?\b)|(?<dec>@[\w$]+)|(?<fn>\b[a-zA-Z_$][\w$]*(?=\s*\())|(?<id>\b[a-zA-Z_$][\w$]*\b)|(?<op>[+\-*\/%=<>!&|^~?:]+)/g,
+    py:/(?<cmt>#[^\n]*)|(?<str>[rRbBfFuU]{0,2}(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'))|(?<num>\b0[xXbBoO][\da-fA-F_]+\b|\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?j?\b)|(?<dec>@[\w.]+)|(?<fn>\b[a-zA-Z_]\w*(?=\s*\())|(?<id>\b[a-zA-Z_]\w*\b)|(?<op>[+\-*\/%=<>!&|^~:]+)/g,
+    c:/(?<cmt>\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(?<dec>^[ \t]*#[ \t]*\w+|#\[[^\]\n]*\]|@\w+)|(?<str>"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`)|(?<num>\b0[xXbB][\da-fA-F_']+[uUlL]*\b|\b\d[\d_']*(?:\.\d+)?(?:[eE][+-]?\d+)?[fFuUlLdD]*\b)|(?<fn>\b[a-zA-Z_]\w*(?=\s*\())|(?<id>\b[a-zA-Z_]\w*\b)|(?<op>[+\-*\/%=<>!&|^~?:]+)/gm,
+    sh:/(?<cmt>#[^\n]*)|(?<str>"(?:[^"\\]|\\.)*"|'[^']*')|(?<dec>\$\{[^}\n]*\}|\$[\w@#?*!-]+)|(?<attr>(?<![\w-])--?[a-zA-Z][\w-]*)|(?<num>\b\d+\b)|(?<id>\b[a-zA-Z_][\w-]*\b)|(?<op>[|&;<>=]+)/g,
+    sql:/(?<cmt>--[^\n]*|\/\*[\s\S]*?\*\/)|(?<str>'(?:[^'\\]|\\.|'')*'|"[^"\n]*"|`[^`\n]*`)|(?<num>\b\d+(?:\.\d+)?\b)|(?<fn>\b[a-zA-Z_]\w*(?=\s*\())|(?<id>\b[a-zA-Z_]\w*\b)|(?<op>[+\-*\/%=<>!|]+)/g,
+    css:/(?<cmt>\/\*[\s\S]*?\*\/)|(?<str>"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(?<dec>@[\w-]+)|(?<prop>(?<=^|[{;\s(])[a-zA-Z-]+(?=\s*:))|(?<tag>(?:[.#]?[a-zA-Z_-][\w-]*|::?[\w-]+(?:\([^)\n]*\))?|\*)(?=[^{};]*\{))|(?<num>#[\da-fA-F]{3,8}\b|-?\b\d[\d.]*(?:px|em|rem|%|vh|vw|vmin|vmax|s|ms|deg|fr|ch)?\b)|(?<fn>\b[a-zA-Z-]+(?=\())|(?<op>[:;{}>,~+*]+)/gm,
+    html:/(?<cmt><!--[\s\S]*?-->)|(?<dec><![^>]*>|<\?[\s\S]*?\?>)|(?<tag><\/?[a-zA-Z][\w:-]*|\/?>)|(?<attr>[a-zA-Z_:][\w:.@-]*(?=\s*=))|(?<str>"[^"]*"|'[^']*')|(?<op>=)/g,
+    yaml:/(?<cmt>#[^\n]*)|(?<str>"(?:[^"\\]|\\.)*"|'[^']*')|(?<prop>(?<=^[ \t]*(?:-[ \t]+)?)[\w.\/-]+(?=[ \t]*:(?:[ \t]|$)))|(?<dec>[&*][\w-]+|!!?[\w-]+|^---|^\.\.\.)|(?<num>\b\d[\d_]*(?:\.\d+)?\b)|(?<id>\b[a-zA-Z_][\w-]*\b)|(?<op>^[ \t]*-(?=[ \t])|:(?=[ \t]|$)|[>|])/gm
+  };
+  function hlFamily(lang) { return HL_FAMILY[String(lang || '').toLowerCase().trim()] || null; }
+  function highlightCode(code, lang) {
+    const frag = document.createDocumentFragment(); const family = hlFamily(lang);
+    if (!family || code.length > 300000) { frag.append(code); return frag; }
+    const rules = HL_RULES[family], kw = new Set(HL_KEYWORDS[family].split(' ').filter(Boolean)), typed = family === 'js' || family === 'py' || family === 'c';
+    let last = 0, m; rules.lastIndex = 0;
+    while ((m = rules.exec(code))) {
+      if (!m[0]) { rules.lastIndex++; continue; }
+      if (m.index > last) frag.append(code.slice(last, m.index));
+      const g = m.groups, word = g.fn || g.id; let kind = '';
+      if (word) kind = kw.has(family === 'sql' ? word.toLowerCase() : word) ? 'kw' : g.fn ? 'fn' : typed && /^[A-Z]/.test(word) ? 'type' : '';
+      else kind = ['cmt', 'str', 'num', 'dec', 'tag', 'attr', 'prop', 'op'].find((name) => g[name]) || '';
+      if (kind) { const span = document.createElement('span'); span.className = `tok-${kind}`; span.textContent = m[0]; frag.append(span); } else frag.append(m[0]);
+      last = rules.lastIndex;
+    }
+    if (last < code.length) frag.append(code.slice(last));
+    return frag;
+  }
+  // Editor-style code preview: line-number gutter plus theme-aware syntax colors.
+  function buildCodeViewer(text, lang) {
+    const wrap = document.createElement('div'); wrap.className = 'viewer-code';
+    const gutter = document.createElement('pre'); gutter.className = 'viewer-gutter'; gutter.textContent = Array.from({ length: text.split('\n').length }, (_, i) => i + 1).join('\n');
+    const pre = document.createElement('pre'); pre.className = 'viewer-text'; const codeEl = document.createElement('code'); codeEl.appendChild(highlightCode(text, lang)); pre.appendChild(codeEl);
+    wrap.append(gutter, pre); return wrap;
+  }
+
+  function base64Blob(base64, mime) { const bytes=Uint8Array.from(atob(base64), char=>char.charCodeAt(0)); return new Blob([bytes], { type:mime }); }
+  function base64ByteLength(base64) { return Math.max(0, Math.floor(String(base64||'').length * .75) - ((String(base64||'').match(/=*$/)||[''])[0].length)); }
+  function decodeArtifactText(artifact) { try { return new TextDecoder().decode(Uint8Array.from(atob(artifact.base64), char=>char.charCodeAt(0))); } catch { return 'This text preview could not be decoded.'; } }
+  function isTextArtifact(artifact) { return /^text\//i.test(artifact.mime) || /\.(?:txt|json|csv|html?|py|js|mjs|cjs|ts|tsx|jsx|cs|cpp|cc|cxx|c|h|hpp|java|go|rs|rb|php|sh|sql|ya?ml|xml)$/i.test(artifact.name); }
+  function artifactTypeLabel(artifact) { if (artifact.view==='chart') return 'Interactive chart'; if (artifact.mime==='application/pdf') return 'PDF'; if (/wordprocessingml|\.docx$/i.test(`${artifact.mime} ${artifact.name}`)) return 'Word document'; if (artifact.mime==='text/markdown') return 'Markdown'; if (String(artifact.mime).startsWith('image/')) return 'Image'; const ext = String(artifact.name || '').split('.').pop().toLowerCase(); if (hlFamily(ext)) return `${ext.toUpperCase()} code`; return artifact.mime || 'File'; }
+
+  // Rasterize an SVG artifact to PNG in the browser and trigger the download.
+  function downloadSvgAsPng(artifact) {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || 1200; canvas.height = img.naturalHeight || 800;
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const a = document.createElement('a');
+      a.download = artifact.name.replace(/\.svg$/i, '') + '.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    };
+    img.src = `data:${artifact.mime};base64,${artifact.base64}`;
+  }
+
+  async function downloadChartPng(host,spec,name) {
+    const href=await window.exportVectraChartPng(host,spec),link=document.createElement('a');link.download=name;link.href=href;link.click();
+  }
+
+  function chartPngName(artifact) { return String(artifact.name||artifact.title||'chart').replace(/\.vectra-chart\.json$/i,'').replace(/\.[^.]+$/,'')+'.png'; }
+
+  async function downloadChartArtifact(artifact) {
+    const spec=JSON.parse(decodeArtifactText(artifact)),host=document.createElement('div');host.className='viewer-chart-frame chart-export-host';host.style.width=`${spec.width||960}px`;host.style.height=`${spec.height||540}px`;document.body.appendChild(host);window.renderVectraChart(host,spec);await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));try{await downloadChartPng(host,spec,chartPngName(artifact))}finally{host.remove()}
+  }
+
+  function pushWebActivityStep(placeholder, activeRoles, text) {
+    if (typeof text !== 'string' || !text) return;
+    const role = activeRoles[activeRoles.length - 1];
+    const last = placeholder.activityLog[placeholder.activityLog.length - 1];
+    if (last && last.text === text && last.role === role) return;
+    placeholder.activityLog.push({ text, role });
+  }
+
+  /** Tracks which role subagent (if any) is currently active so subsequent
+   * progress lines land inside its collapsible group until it finishes. */
+  function handleWebSubagentEvent(placeholder, activeRoles, subagent) {
+    const role = subagent.role || 'general-purpose';
+    if (subagent.event === 'started') {
+      activeRoles.push(role);
+      placeholder.activityLog.push({ text: `${webRoleLabel(role)}…`, role });
+    } else {
+      const index = activeRoles.lastIndexOf(role);
+      if (index !== -1) activeRoles.splice(index, 1);
+    }
+  }
+
+  function webRoleLabel(role) {
+    const known = {
+      planner: 'Planner', researcher: 'Researcher', coder: 'Coder', tester: 'Tester',
+      reviewer: 'Reviewer', security: 'Security', documentation: 'Documentation'
+    };
+    return known[role] || (role.charAt(0).toUpperCase() + role.slice(1));
+  }
+
+  function renderLocalModelResults(models) {
+    els.localModelResults.replaceChildren();
+    els.localModelResults.hidden = false;
+    if (!models.length) {
+      els.localModelResults.textContent = 'No GGUF models were found in common model folders.';
+      return;
+    }
+    for (const path of models) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'model-result';
+      button.textContent = path;
+      button.title = path;
+      button.addEventListener('click', () => {
+        state.local.modelPath = path;
+        state.local.mmprojPath = '';
+        saveLocalConfig();
+        syncLocalFormFromState();
+        els.localModelResults.hidden = true;
+        void startLocalModel();
+      });
+      els.localModelResults.appendChild(button);
+    }
+  }
+
+  /** Hardware-aware shortlist first (same catalog/recommend logic as the VS Code extension's Download Model flow), Hugging Face search as a fallback. Loaded once per settings-dialog open — cheap and cached server-side. */
+  let downloadCatalogLoaded = false;
+  let activeDownloadController = null;
+  async function loadDownloadCatalog() {
+    if (downloadCatalogLoaded) return;
+    els.downloadModelHint.textContent = 'Loading recommendations for your hardware…';
+    try {
+      const data = await api('/api/local/models/catalog', {});
+      const recommended = data.recommended || [];
+      els.downloadModelHint.textContent = recommended.length
+        ? 'Recommended for your hardware:'
+        : 'No curated model fits your detected hardware — search Hugging Face instead.';
+      renderDownloadCandidates(recommended);
+      downloadCatalogLoaded = true;
+    } catch (error) {
+      els.downloadModelHint.textContent = error.message;
+    }
+  }
+
+  function renderDownloadCandidates(entries, emptyText) {
+    els.downloadModelList.replaceChildren();
+    els.downloadModelList.hidden = false;
+    if (!entries.length) {
+      els.downloadModelList.textContent = emptyText || 'Nothing to show yet.';
+      return;
+    }
+    for (const entry of entries) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'model-result';
+      const sizeText = entry.sizeBytes ? formatSize(entry.sizeBytes) : 'unknown size';
+      const kindText = entry.kind === 'vlm' ? ' · vision' : '';
+      button.textContent = `${entry.label}  —  ${sizeText}${kindText}`;
+      button.title = entry.label;
+      button.addEventListener('click', () => void downloadModel(entry));
+      els.downloadModelList.appendChild(button);
+    }
+  }
+
+  function renderHfSearchResults(results) {
+    els.downloadModelList.replaceChildren();
+    els.downloadModelList.hidden = false;
+    if (!results.length) {
+      els.downloadModelList.textContent = 'No Hugging Face GGUF results found.';
+      return;
+    }
+    for (const result of results) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'model-result';
+      button.textContent = `${result.label}  —  ${result.downloads.toLocaleString()} downloads`;
+      button.title = result.id;
+      button.addEventListener('click', async () => {
+        els.downloadModelProgress.hidden = false;
+        els.downloadModelProgress.textContent = `Resolving ${result.id}…`;
+        try {
+          const resolved = await api('/api/local/models/resolve', { repoId: result.id });
+          await downloadModel({ id: result.id, label: `${result.id} (${resolved.filename})`, ...resolved });
+        } catch (error) {
+          els.downloadModelProgress.textContent = `${error.message} Opening the Hugging Face page instead…`;
+          window.open(`https://huggingface.co/${result.id}`, '_blank', 'noopener');
+        }
+      });
+      els.downloadModelList.appendChild(button);
+    }
+  }
+
+  async function downloadModel(entry) {
+    if (!state.downloadDirectory && !(await chooseDownloadFolder())) return;
+    const sizeText = entry.sizeBytes ? ` (${formatSize(entry.sizeBytes)})` : '';
+    if (!confirm(`Download ${entry.label}${sizeText}?\n\nFolder: ${state.downloadDirectory}\n\nThe download will only begin after you confirm.`)) return;
+    els.downloadModelProgress.hidden = false;
+    els.downloadModelProgress.textContent = `Downloading ${entry.label}… this can take a while for multi-GB models.`;
+    els.downloadModelList.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    const controller = new AbortController();
+    activeDownloadController = controller;
+    els.stopDownloadModel.hidden = false;
+    els.stopDownloadModel.disabled = false;
+    try {
+      const data = await streamProgressRequest('/api/local/models/download', {
+        downloadUrl: entry.downloadUrl,
+        filename: entry.filename,
+        mmprojUrl: entry.mmprojUrl,
+        mmprojFilename: entry.mmprojFilename
+      }, (event) => {
+        if (typeof event.bytesDone !== 'number') return;
+        const part = event.phase === 'mmproj' ? 'vision projector' : 'model';
+        els.downloadModelProgress.textContent = `Downloading ${entry.label} — ${part}: ${progressText(event.bytesDone, event.totalBytes)}`;
+      }, controller.signal);
+      state.local.modelPath = data.modelPath;
+      state.local.mmprojPath = data.mmprojPath || '';
+      saveLocalConfig();
+      syncLocalFormFromState();
+      els.downloadModelProgress.textContent = 'Download complete. The model is selected and ready to start.';
+      els.settingsProvider.value = 'llamaCpp';
+      updateSettingsProviderUi();
+      void autoDiscoverLocalModels();
+    } catch (error) {
+      els.downloadModelProgress.textContent = error.name === 'AbortError' ? 'Download stopped.' : `Download failed: ${error.message}`;
+    } finally {
+      els.downloadModelList.querySelectorAll('button').forEach((button) => { button.disabled = false; });
+      els.stopDownloadModel.hidden = true;
+      activeDownloadController = null;
+    }
+  }
+
+  async function chooseDownloadFolder() {
+    const previous = els.chooseDownloadDirectory.textContent;
+    els.chooseDownloadDirectory.disabled = true;
+    els.chooseDownloadDirectory.textContent = 'Choosing…';
+    try {
+      const data = await api('/api/local/choose-download-directory', {});
+      if (data.cancelled) return false;
+      state.downloadDirectory = data.directory || '';
+      els.downloadDirectory.value = state.downloadDirectory;
+      return Boolean(state.downloadDirectory);
+    } catch (error) {
+      alert(error.message);
+      return false;
+    } finally {
+      els.chooseDownloadDirectory.disabled = false;
+      els.chooseDownloadDirectory.textContent = previous;
+    }
+  }
+
+  function editMessage(index) {
+    if (state.busy) return;
+    const message = state.messages[index];
+    if (!message || message.role !== 'user') return;
+    state.editingIndex = index;
+    els.prompt.value = message.content;
+    els.prompt.placeholder = 'Edit your message, then send';
+    autoGrow();
+    els.prompt.focus();
+    render();
+  }
+
+  async function resendMessage(index) {
+    if (state.busy) return;
+    const message = state.messages[index];
+    if (!message || message.role !== 'user') return;
+    state.editingIndex = index;
+    await send(message.content);
+  }
+
+  function render() {
+    els.messages.replaceChildren();
+    if (!state.messages.length) {
+      const welcome = document.createElement('div'); welcome.className = 'welcome';
+      welcome.innerHTML = '<img class="hero-mark" src="/VectraLogo.png" alt="Vectra logo" /><h1>How can Vectra help?</h1><p>Chat, analyze code and documents, or run a local GGUF model with llama.cpp.</p>';
+      const project=state.projects.find(p=>p.id===state.currentProjectId);
+      if(project){const tag=document.createElement('div');tag.className='welcome-project';tag.innerHTML=FOLDER_ICON;tag.append('Working on ');const name=document.createElement('strong');name.textContent=project.name;tag.append(name,' project');welcome.appendChild(tag)}
+      els.messages.appendChild(welcome);
+    } else {
+      state.messages.forEach((message, index) => {
+        const wrap = document.createElement('article'); wrap.className = `web-message ${message.role}${message.pending ? ' pending' : ''}`;
+        const avatar = document.createElement('div'); avatar.className = `avatar ${message.role === 'assistant' ? 'vectra-avatar' : 'user-avatar'}`;
+        if (message.role === 'assistant') {
+          const logo = document.createElement('img');
+          logo.src = '/VectraLogo.png';
+          logo.alt = 'Vectra';
+          avatar.appendChild(logo);
+        } else {
+          avatar.textContent = 'Y';
+        }
+        const body = document.createElement('div'); body.className = 'web-message-body';
+        const name = document.createElement('div'); name.className = 'web-message-name'; name.textContent = message.role === 'assistant' ? 'Vectra' : 'You';
+        const content = document.createElement('div'); content.className = 'web-message-content';
+        if (message.pending && !message.content) {
+          if (message.thinking) content.appendChild(buildWebThinkingBlock(message));
+          content.appendChild(buildWebActivityLog(message.activityLog));
+        } else if (message.role === 'assistant') {
+          if (message.pending && message.thinking) content.appendChild(buildWebThinkingBlock(message));
+          renderMarkdownInto(content, message.content);
+          if (message.pending) { const cursor = document.createElement('span'); cursor.className = 'stream-cursor'; content.appendChild(cursor); }
+        } else {
+          content.textContent = message.content;
+          // Uploaded files stay visible on the user's message for the whole chat.
+          if (message.files?.length) {
+            const filesRow = document.createElement('div'); filesRow.className = 'message-files';
+            for (const file of message.files) {
+              const saved=state.savedAttachments.find(item=>item.name===file.name),chip=document.createElement(saved?.base64?'button':'span'); chip.className = 'attachment-chip';
+              chip.textContent = `📎 ${file.name} · ${formatSize(file.size)}`;
+              if(saved?.base64){chip.title=saved.mime?.startsWith('image/')?'Open saved image':'Download saved file';chip.addEventListener('click',()=>{if(saved.mime?.startsWith('image/'))openArtifactViewer({name:saved.name,title:saved.name,mime:saved.mime,base64:saved.base64,view:'image'});else{const link=document.createElement('a');link.download=saved.name;link.href=`data:${saved.mime};base64,${saved.base64}`;link.click()}})}
+              filesRow.appendChild(chip);
+            }
+            content.appendChild(filesRow);
+          }
+        }
+        body.append(name, content);
+        if (message.role === 'user' && !message.pending) {
+          const actions = document.createElement('div'); actions.className = 'message-actions';
+          const edit = document.createElement('button'); edit.textContent = state.editingIndex === index ? 'Editing' : 'Edit'; edit.disabled = state.busy; edit.addEventListener('click', () => editMessage(index));
+          const resend = document.createElement('button'); resend.textContent = 'Resend'; resend.disabled = state.busy; resend.addEventListener('click', () => void resendMessage(index));
+          actions.append(edit, resend); body.appendChild(actions);
+        }
+        if (message.artifacts?.length) { const row=document.createElement('div'); row.className='artifact-row'; for (const artifact of message.artifacts) {
+          // Every artifact stays previewable after the automatic viewer opening.
+          const a=document.createElement('a'); a.className='artifact-download'; a.download=artifact.name; a.href=`data:${artifact.mime};base64,${artifact.base64}`; a.textContent=`Download ${artifact.name}`;if(artifact.view==='chart'){a.download=chartPngName(artifact);a.textContent=`Download ${a.download}`;a.href='#';a.addEventListener('click',event=>{event.preventDefault();void downloadChartArtifact(artifact)})} row.appendChild(a);
+          const view=document.createElement('button'); view.className='artifact-view'; view.textContent='Preview'; view.addEventListener('click', () => openArtifactViewer(artifact)); row.prepend(view);
+          // Drawn SVG figures also download as PNG, rasterized in the browser.
+          if (artifact.mime === 'image/svg+xml') { const png=document.createElement('button'); png.className='artifact-view'; png.textContent='Download PNG'; png.addEventListener('click', () => downloadSvgAsPng(artifact)); row.appendChild(png); } } body.appendChild(row); }
+        wrap.append(avatar, body); els.messages.appendChild(wrap);
+      });
+      requestAnimationFrame(() => { els.messages.scrollTop = els.messages.scrollHeight; });
+    }
+    els.send.disabled = false;
+    els.send.textContent = state.busy ? '■' : '↑';
+    els.send.title = state.busy ? 'Stop generating' : 'Send';
+    renderAttachments();
+  }
+
+  /**
+   * Mirrors the VS Code extension's step log: earlier phases get a check,
+   * the newest gets a spinner. Consecutive entries sharing the same
+   * subagent role (planner/researcher/coder/tester/reviewer/security/
+   * documentation) collapse into one collapsible group instead of flat
+   * lines, same idiom as the extension's activity log.
+   */
+  // Collapsible live "Thinking..." block streaming the model's <think> reasoning.
+  let webThinkingCollapsed = false;
+  function buildWebThinkingBlock(message) {
+    const details = document.createElement('details');
+    details.className = 'thinking-block';
+    details.open = !webThinkingCollapsed;
+    details.addEventListener('toggle', () => { webThinkingCollapsed = !details.open; });
+    const summary = document.createElement('summary');
+    const label = document.createElement('span'); label.textContent = 'Thinking';
+    const time = document.createElement('span');
+    time.className = 'thinking-time live';
+    time.dataset.start = String(message.thinkingStartedAt || Date.now());
+    summary.append(label, time);
+    const body = document.createElement('div');
+    body.className = 'thinking-text';
+    body.textContent = message.thinking;
+    details.append(summary, body);
+    requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+    return details;
+  }
+
+  // One shared ticker keeps every live thinking timer counting between renders.
+  setInterval(() => {
+    for (const el of document.querySelectorAll('.thinking-time.live')) {
+      const seconds = Math.round((Date.now() - Number(el.dataset.start)) / 1000);
+      el.textContent = seconds < 1 ? '' : seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    }
+  }, 1000);
+
+  function buildWebActivityLog(steps) {
+    const log = document.createElement('div'); log.className = 'web-activity-log';
+    const list = steps && steps.length ? steps : [{ text: "Wakin' up…" }];
+    let index = 0;
+    while (index < list.length) {
+      const role = list[index].role;
+      let end = index + 1;
+      if (role) while (end < list.length && list[end].role === role) end++;
+      const group = list.slice(index, end);
+      const isLastGroup = end === list.length;
+      if (role) log.appendChild(buildWebActivityGroup(role, group, isLastGroup));
+      else group.forEach((step, i) => log.appendChild(webActivityStepRow(step.text, isLastGroup && i === group.length - 1)));
+      index = end;
+    }
+    return log;
+  }
+
+  function buildWebActivityGroup(role, steps, isLastGroup) {
+    const details = document.createElement('details'); details.className = 'web-activity-group'; details.open = isLastGroup;
+    const summary = document.createElement('summary'); summary.textContent = webRoleLabel(role);
+    details.appendChild(summary);
+    steps.forEach((step, i) => details.appendChild(webActivityStepRow(step.text, isLastGroup && i === steps.length - 1)));
+    return details;
+  }
+
+  function webActivityStepRow(text, isActive) {
+    const row = document.createElement('div'); row.className = `web-activity-step${isActive ? '' : ' done'}`;
+    const icon = document.createElement('span');
+    if (isActive) { icon.className = 'web-spinner'; }
+    else { icon.className = 'web-activity-check'; icon.textContent = '✓'; }
+    const label = document.createElement('span'); label.textContent = text;
+    row.append(icon, label);
+    return row;
+  }
+
+  function renderAttachments() {
+    els.attachments.replaceChildren();
+    state.attachments.forEach((file, index) => {
+      const chip = document.createElement('div'); chip.className = 'attachment-chip';
+      const label = document.createElement('span'); label.textContent = `${file.name} · ${formatSize(file.size)}${file.parseStatus ? ` · ${file.parseStatus}` : ''}`;
+      const remove = document.createElement('button'); remove.textContent = '×'; remove.title = 'Remove';
+      remove.addEventListener('click', () => { state.attachments.splice(index, 1); renderAttachments(); });
+      chip.append(label, remove); els.attachments.appendChild(chip);
+    });
+  }
+
+  function syncModelSelect() {
+    const placeholder = state.provider === 'llamaCpp' && !state.model ? 'Configure local model…' : 'Select model';
+    els.model.replaceChildren(new Option(state.model || placeholder, state.model || ''));
+    els.model.value = state.model || '';
+  }
+  function autoGrow() { els.prompt.style.height = 'auto'; els.prompt.style.height = `${Math.min(180, Math.max(28, els.prompt.scrollHeight))}px`; }
+  function isTextLike(file) { return file.type.startsWith('text/') || /\.(txt|md|json|jsonl|ya?ml|xml|csv|tsv|js|mjs|cjs|ts|tsx|jsx|py|java|c|cc|cpp|h|hpp|cs|go|rs|rb|php|swift|kt|kts|sql|sh|bash|zsh|ps1|html?|css|scss|less|vue|svelte|toml|ini|cfg|conf|log|tex)$/i.test(file.name); }
+  function mimeFromName(name) { if (/\.docx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'; if (/\.pptx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'; if (/\.xlsx$/i.test(name)) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; if (/\.rtf$/i.test(name)) return 'application/rtf'; if (/\.doc$/i.test(name)) return 'application/msword'; if (/\.pdf$/i.test(name)) return 'application/pdf'; if (/\.png$/i.test(name)) return 'image/png'; if (/\.jpe?g$/i.test(name)) return 'image/jpeg'; if (/\.webp$/i.test(name)) return 'image/webp'; if (/\.gif$/i.test(name)) return 'image/gif'; if (/\.bmp$/i.test(name)) return 'image/bmp'; if (/\.svg$/i.test(name)) return 'image/svg+xml'; return 'application/octet-stream'; }
+  function toBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1] || ''); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }); }
+  async function prepareDocumentImage(file) {
+    const image = await decodeImage(file);
+    const sourceWidth = image.width; const sourceHeight = image.height;
+    if (!sourceWidth || !sourceHeight) throw new Error('image dimensions could not be read');
+    // Preserve the complete image while bounding vision cost and browser memory.
+    const maxEdge = 3072; const maxPixels = 8_000_000;
+    const scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight), Math.sqrt(maxPixels / (sourceWidth * sourceHeight)));
+    const width = Math.max(1, Math.round(sourceWidth * scale)); const height = Math.max(1, Math.round(sourceHeight * scale));
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new Error('canvas is unavailable');
+    context.fillStyle = '#fff'; context.fillRect(0, 0, width, height);
+    context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
+    context.drawImage(image, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
+    // Lossless PNG protects hard edges in drawings and document screenshots.
+    const mime = /png|gif|bmp|tiff|svg/i.test(file.type || file.name) ? 'image/png' : 'image/jpeg';
+    const blob = await canvasBlob(canvas, mime, .95);
+    image.close?.();
+    return { sourceWidth, sourceHeight, width, height, mime, base64: await toBase64(blob), resized: scale < 1 };
+  }
+  async function decodeImage(file) {
+    if ('createImageBitmap' in window) return createImageBitmap(file, { imageOrientation: 'from-image' });
+    return await new Promise((resolve, reject) => { const url = URL.createObjectURL(file); const image = new Image(); image.onload = () => { URL.revokeObjectURL(url); resolve(image); }; image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image decode failed')); }; image.src = url; });
+  }
+  function canvasBlob(canvas, type, quality) { return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('image encoding failed')), type, quality)); }
+  function formatSize(size) { if (size < 1024) return `${size} B`; if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`; return `${(size / 1024 / 1024).toFixed(1)} MB`; }
+  function fileName(path) { return String(path || '').split(/[\\/]/).pop() || ''; }
+
+  function loadLocalConfig() {
+    const defaults = { modelPath: '', mmprojPath: '', serverPath: '', port: 8080, contextSize: 16384, gpuLayers: 'auto', splitMode: 'layer', device: 'auto', timeoutSeconds: 3600, extraArgs: '', cpuMoe: false, noMmap: false };
+    try { return { ...defaults, ...JSON.parse(localStorage.getItem(LOCAL_CONFIG_KEY) || '{}') }; }
+    catch { return defaults; }
+  }
+  function saveLocalConfig() { localStorage.setItem(LOCAL_CONFIG_KEY, JSON.stringify(state.local)); }
+  async function request(path, options = {}) {
+    const init = { method: options.method || 'GET', headers: {}, signal: options.signal };
+    if (options.body !== undefined) {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(options.body);
+    }
+    const response = await fetch(path, init);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.error || `Request failed: HTTP ${response.status}`);
+      error.code = data.code;
+      throw error;
+    }
+    return data;
+  }
+  async function api(path, body) {
+    return request(path, { method: 'POST', body: body || {} });
+  }
+
+  /**
+   * `/api/chat` responds as an SSE stream: `{delta}` events append text as
+   * the model produces it, `{replace}` swaps in a corrected full answer (the
+   * rare false-attachment-refusal retry), and `{done}` carries the final
+   * artifacts. Consuming it this way — rather than waiting for one JSON body
+   * — is what makes a slow local generation show visible progress.
+   */
+  async function streamChat(body, signal, onDelta, onProgress) {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal
+    });
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Request failed: HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const result = { text: '', artifacts: [], attachments: [] };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let event;
+        try { event = JSON.parse(payload); } catch { continue; }
+        if (event.error) throw new Error(event.error);
+        if (typeof event.progress === 'string') onProgress?.({ type: 'progress', message: event.progress });
+        if (event.subagent) onProgress?.({ type: 'subagent', subagent: event.subagent });
+        if (typeof event.thinking === 'string') onProgress?.({ type: 'thinking', delta: event.thinking });
+        if (typeof event.delta === 'string') { result.text += event.delta; onDelta?.(result.text); }
+        if (typeof event.replace === 'string') { result.text = event.replace; onDelta?.(result.text); }
+        if (event.done) { result.artifacts = event.artifacts || []; result.attachments = event.attachments || []; }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Same SSE contract as streamChat() but for a long-running download: the
+   * server sends {bytesDone,totalBytes} progress events instead of text
+   * deltas, and a final event carrying whatever the operation returns
+   * (modelPath/mmprojPath, or serverPath for a llama.cpp install).
+   */
+  async function streamProgressRequest(url, body, onProgress, signal) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal
+    });
+    if (!response.ok || !response.body) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Request failed: HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        let event;
+        try { event = JSON.parse(payload); } catch { continue; }
+        if (event.error) throw new Error(event.error);
+        if (event.done) result = event;
+        else onProgress?.(event);
+      }
+    }
+    if (!result) throw new Error('The server closed the connection before finishing.');
+    return result;
+  }
+
+  function progressText(bytesDone, totalBytes) {
+    if (!totalBytes) return formatSize(bytesDone);
+    const percent = Math.min(100, Math.floor((bytesDone / totalBytes) * 100));
+    return `${percent}% (${formatSize(bytesDone)} / ${formatSize(totalBytes)})`;
+  }
+
+  /**
+   * Small dependency-free markdown-lite renderer (no CDN dependency, keeps
+   * the page self-contained): fenced code with a copy button, inline code,
+   * bold/italic, headings, lists, and links.
+   */
+  function renderMarkdownInto(container, text) {
+    const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+    let i = 0;
+    let listEl = null;
+    const closeList = () => { listEl = null; };
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      const fence = line.match(/^```\s*([\w+-]*)\s*$/);
+      if (fence) {
+        closeList();
+        const lang = fence[1] || '';
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !/^```\s*$/.test(lines[i])) { codeLines.push(lines[i]); i++; }
+        i++;
+        container.appendChild(buildCodeBlock(codeLines.join('\n'), lang));
+        continue;
+      }
+
+      if (!line.trim()) { closeList(); i++; continue; }
+
+      if (isMarkdownTable(lines, i)) {
+        closeList();
+        const tableLines = [line];
+        i += 2; // The divider controls alignment but has no visible row.
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { tableLines.push(lines[i]); i++; }
+        container.appendChild(buildMarkdownTable(tableLines));
+        continue;
+      }
+
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        closeList();
+        const h = document.createElement('div');
+        h.className = 'md-heading';
+        applyInline(h, heading[2]);
+        container.appendChild(h);
+        i++; continue;
+      }
+
+      const ordered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      const unordered = !ordered && line.match(/^\s*[-*]\s+(.*)$/);
+      if (ordered || unordered) {
+        const tag = ordered ? 'ol' : 'ul';
+        if (!listEl || listEl.tagName.toLowerCase() !== tag) {
+          listEl = document.createElement(tag);
+          listEl.className = 'md-list';
+          container.appendChild(listEl);
+        }
+        const li = document.createElement('li');
+        applyInline(li, (ordered || unordered)[1]);
+        listEl.appendChild(li);
+        i++; continue;
+      }
+      closeList();
+
+      const paraLines = [line];
+      i++;
+      while (
+        i < lines.length && lines[i].trim() &&
+        !/^```/.test(lines[i]) && !/^#{1,6}\s+/.test(lines[i]) && !/^\s*(\d+[.)]|[-*])\s+/.test(lines[i]) && !isMarkdownTable(lines, i)
+      ) {
+        paraLines.push(lines[i]); i++;
+      }
+      const p = document.createElement('div');
+      p.className = 'md-paragraph';
+      applyInline(p, paraLines.join('\n'));
+      container.appendChild(p);
+    }
+  }
+
+  function isMarkdownTable(lines, index) {
+    if (!/^\s*\|.*\|\s*$/.test(lines[index] || '')) return false;
+    const divider = splitMarkdownTableRow(lines[index + 1] || '');
+    return divider.length > 0 && divider.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  }
+
+  function buildMarkdownTable(lines) {
+    const scroll = document.createElement('div');
+    scroll.className = 'md-table-scroll';
+    const table = document.createElement('table');
+    table.className = 'md-table';
+    const head = document.createElement('thead');
+    const body = document.createElement('tbody');
+    lines.forEach((line, rowIndex) => {
+      const tr = document.createElement('tr');
+      splitMarkdownTableRow(line).forEach((value) => {
+        const cell = document.createElement(rowIndex === 0 ? 'th' : 'td');
+        applyInline(cell, value);
+        tr.appendChild(cell);
+      });
+      (rowIndex === 0 ? head : body).appendChild(tr);
+    });
+    table.append(head, body);
+    scroll.appendChild(table);
+    return scroll;
+  }
+
+  function splitMarkdownTableRow(line) {
+    const cells = [];
+    let current = '';
+    let escaped = false;
+    for (const character of String(line).trim().replace(/^\|/, '').replace(/\|$/, '')) {
+      if (escaped) { current += character; escaped = false; continue; }
+      if (character === '\\') { escaped = true; continue; }
+      if (character === '|') { cells.push(current.trim()); current = ''; continue; }
+      current += character;
+    }
+    cells.push(current.trim());
+    return cells;
+  }
+
+  function applyInline(el, raw) {
+    const text = String(raw);
+    const tokenRe = /(`[^`\n]+`)|(\[[^\]]+\]\(\S+\))|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(\n)/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = tokenRe.exec(text))) {
+      if (match.index > lastIndex) el.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      const token = match[0];
+      if (token === '\n') {
+        el.appendChild(document.createElement('br'));
+      } else if (token[0] === '`') {
+        const code = document.createElement('code');
+        code.className = 'md-inline-code';
+        code.textContent = token.slice(1, -1);
+        el.appendChild(code);
+      } else if (token[0] === '[') {
+        const linkMatch = token.match(/^\[([^\]]+)\]\((\S+)\)$/);
+        if (linkMatch) el.appendChild(buildLink(linkMatch[1], linkMatch[2]));
+        else el.appendChild(document.createTextNode(token));
+      } else if (token.startsWith('**') || token.startsWith('__')) {
+        const strong = document.createElement('strong');
+        strong.textContent = token.slice(2, -2);
+        el.appendChild(strong);
+      } else {
+        const em = document.createElement('em');
+        em.textContent = token.slice(1, -1);
+        el.appendChild(em);
+      }
+      lastIndex = tokenRe.lastIndex;
+    }
+    if (lastIndex < text.length) el.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+
+  function buildLink(label, url) {
+    const safeUrl = /^https?:\/\//i.test(url) ? url : '';
+    const span = document.createElement('span');
+    if (safeUrl) {
+      span.className = 'md-link';
+      span.title = safeUrl;
+      span.addEventListener('click', () => window.open(safeUrl, '_blank', 'noopener,noreferrer'));
+    } else {
+      span.className = 'md-inline-code';
+    }
+    span.textContent = label;
+    return span;
+  }
+
+  function buildCodeBlock(code, lang) {
+    const wrap = document.createElement('div');
+    wrap.className = 'md-code-block';
+    const bar = document.createElement('div');
+    bar.className = 'md-code-bar';
+    const label = document.createElement('span');
+    label.className = 'md-code-lang';
+    label.textContent = lang || 'text';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'md-copy-button';
+    copy.textContent = 'Copy';
+    copy.addEventListener('click', () => {
+      copyToClipboard(code);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1500);
+    });
+    bar.append(label, copy);
+    const pre = document.createElement('pre');
+    const codeEl = document.createElement('code');
+    codeEl.appendChild(highlightCode(code, lang));
+    pre.appendChild(codeEl);
+    wrap.append(bar, pre);
+    return wrap;
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch { /* clipboard unavailable */ }
+    document.body.removeChild(ta);
+  }
+  async function runLocalAction(button, label, action) {
+    const old = button.textContent; button.disabled = true; button.textContent = label;
+    try { await action(); } catch (error) { setLocalInlineError(error.message); }
+    finally { button.disabled = false; button.textContent = old; }
+  }
+
+  render();
+})();

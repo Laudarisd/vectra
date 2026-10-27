@@ -1,0 +1,1031 @@
+// Coordinates one user request across context collection, models, tools, approvals, and final reporting.
+import { randomUUID } from 'node:crypto';
+import * as vscode from 'vscode';
+import { AgentAction, AgentMode, AgentRunRequest, AgentRunResult, Attachment, ChatMessage, EditProposal, Plan, SubagentEvent, TextProvider, TodoItem, WorkspaceContext } from '../../core/types';
+import { ProviderManager } from '../../core/providers/ProviderManager';
+import { AgentConfiguration, getConfig } from '../../core/utils/config';
+import { truncateMiddle, estimateContextCharBudget, safeJson } from '../../core/utils/text';
+import { normalizeAgentPath } from '../../core/utils/path';
+import { ContextCollector } from '../tools/workspace/ContextCollector';
+import { EditProposalManager } from '../tools/workspace/EditProposalManager';
+import { PlanManager } from '../state/PlanManager';
+import { WorkspacePathOperations } from '../tools/workspace/WorkspacePathOperations';
+import { TodoManager } from '../state/TodoManager';
+import { WebTools } from '../tools/web/WebTools';
+import { WorkspaceTools } from '../tools/workspace/WorkspaceTools';
+import { CommandRunner } from '../tools/workspace/CommandRunner';
+import { GitTools } from '../tools/workspace/GitTools';
+import { renderPdfPagesFromBuffer } from '../../core/documents/DocumentExtractor';
+import { ExtensionToolExecutor } from '../tools/ExtensionToolExecutor';
+import { buildChatSystemPrompt, buildSystemPrompt, parseAgentEnvelope } from './Protocol';
+import { classifyTurn, formatRecentHistory, isStatusOnlyReply, parseSimpleDirectoryCreation } from './ConversationContext';
+import { AGENT_TOOL_DEFINITIONS } from '../tools/ExtensionToolCatalog';
+import { AgentEventStream } from './AgentSession';
+import { VectraDeepAgentRuntime } from './DeepAgentRuntime';
+import { buildVectraSubagentSpecs } from '../skills/SubagentSkills';
+import { createVectraDiscoveryTools, createVectraHostTools } from '../tools/DeepAgentTools';
+import { describeDeepAgentTool } from '../tools/DeepAgentBuiltins';
+import { Semaphore } from '../../core/utils/concurrency';
+
+const MAX_DELEGATIONS_PER_RUN = 3;
+
+interface RunLoopOptions {
+  task: string;
+  mode: AgentMode;
+  history: ChatMessage[];
+  workspaceContext: WorkspaceContext;
+  observations: string[];
+  mediaAttachments: Attachment[];
+  proposalIds: Set<string>;
+  maxSteps: number;
+  /** True for a delegated sub-run: read-only, no history, no plan/todo involvement, cannot delegate further. */
+  subagent: boolean;
+  /** Human-readable log of path mutations already applied this run (folders created, renames, moves…), shown in the final summary. */
+  workspaceMutations: string[];
+  preload: boolean;
+  provider: TextProvider;
+  config: AgentConfiguration;
+  contextCharBudget: number;
+  signal?: AbortSignal;
+  onProgress?: (message: string) => void;
+  /** Live <think> reasoning from the model, streamed to the "Thinking..." UI. */
+  onThinking?: (delta: string) => void;
+  onTodosChanged?: (todos: TodoItem[]) => void;
+  onPlanChanged?: (plan: Plan) => void;
+  onProposalsChanged?: () => void;
+  /** Only fires on the Deep Agents harness -- classic runLoop's delegate_task is unaffected. */
+  onSubagentEvent?: (event: SubagentEvent) => void;
+}
+
+/**
+ * Runs the model/tool loop for one user request.
+ *
+ * Unlike the previous single-edit flow, a write no longer ends the request.
+ * The model can inspect, prepare a complete multi-file project, read its own
+ * pending files through the virtual overlay, refine them, and then return one
+ * coherent batch for the user to review.
+ */
+export class AgentController {
+  private readonly toolRegistry: ExtensionToolExecutor;
+
+  constructor(
+    private readonly providers: ProviderManager,
+    private readonly contextCollector: ContextCollector,
+    tools: WorkspaceTools,
+    private readonly patches: EditProposalManager,
+    commands: CommandRunner,
+    private readonly todos: TodoManager,
+    private readonly plans: PlanManager,
+    git: GitTools = new GitTools(),
+    web: WebTools = new WebTools(),
+    private readonly pathOperations: WorkspacePathOperations = new WorkspacePathOperations()
+  ) {
+    this.toolRegistry = new ExtensionToolExecutor(tools, patches, commands, git, todos, plans, web, this.pathOperations);
+  }
+
+  /**
+   * Handle an unambiguous single-folder request without loading a model or
+   * constructing the full agent graph. WorkspacePathOperations still performs
+   * path validation and asks for confirmation before touching the filesystem.
+   */
+  async runFastWorkspaceAction(mode: AgentMode, task: string, signal?: AbortSignal): Promise<string | undefined> {
+    if (mode !== 'agent') return undefined;
+    const directory = parseSimpleDirectoryCreation(task);
+    if (!directory) return undefined;
+    return this.pathOperations.createDirectory(directory, 'Explicit one-step folder creation requested in chat.', signal);
+  }
+
+  async run(request: AgentRunRequest): Promise<AgentRunResult> {
+    if (!vscode.workspace.isTrusted) {
+      throw new Error('This workspace is not trusted. Trust it before using Vectra.');
+    }
+
+    const config = getConfig();
+    if (!config.model) throw new Error('No model selected. Choose API Key or Local Model first.');
+
+    const provider = await this.providers.getProvider();
+
+    // A greeting or a question about Vectra is answered as conversation, before
+    // any workspace I/O. Routing small talk through the tool loop is what made
+    // it trigger a repository scan and come back as invented tasks or bare
+    // status lines.
+    const hasAttachments = (request.attachments ?? []).length > 0;
+    if (classifyTurn(request.userText, request.mode, hasAttachments) === 'chat') {
+      return { text: await this.converse(provider, request, config), proposals: [] };
+    }
+
+    const contextCharBudget = effectiveCharBudget(config);
+
+    // A plan approved for a previous task must not silently authorize writes
+    // for an unrelated new one — each agent-mode run starts needing its own.
+    if (request.mode === 'agent') this.plans.reset();
+
+    const workspaceContext = await this.contextCollector.collect(request.mode);
+    const preloadWorkspace = shouldPreloadWorkspace(request.userText, request.mode, workspaceContext);
+    const mediaAttachments: Attachment[] = [...(request.attachments ?? [])];
+    if (config.provider === 'llamaCpp' && config.llamaCppMmprojPath) {
+      await addLocalVisionPdfPages(mediaAttachments);
+    }
+
+    // Proposals from an earlier turn stay pending (unwritten) until the user
+    // accepts or rejects them in the review panel. Seeding with them here is
+    // what lets this run's prompt and final summary stay honest about that
+    // state instead of the model guessing from its own past chat claims.
+    const proposalIds = new Set<string>(
+      this.patches.list().filter((proposal) => proposal.status === 'pending').map((proposal) => proposal.id)
+    );
+
+    // Folder/path operations apply immediately (no review step), so the only
+    // honest record of them is collected as they succeed and replayed in the
+    // final summary — the model's own prose is not trusted for this.
+    const workspaceMutations: string[] = [];
+
+    if (config.agentHarness === 'deepagents') {
+      const message = await this.runDeepAgent({
+        task: request.userText,
+        mode: request.mode,
+        history: request.history,
+        workspaceContext,
+        observations: [],
+        mediaAttachments,
+        proposalIds,
+        maxSteps: config.maxAgentSteps,
+        subagent: false,
+        workspaceMutations,
+        preload: preloadWorkspace,
+        provider,
+        config,
+        contextCharBudget,
+        signal: request.signal,
+        onProgress: request.onProgress,
+        onThinking: request.onThinking,
+        onTodosChanged: request.onTodosChanged,
+        onPlanChanged: request.onPlanChanged,
+        onProposalsChanged: request.onProposalsChanged,
+        onSubagentEvent: request.onSubagentEvent
+      });
+      return this.finish(message, [...proposalIds], workspaceMutations);
+    }
+
+    const message = await this.runLoop({
+      task: request.userText,
+      mode: request.mode,
+      history: request.history,
+      workspaceContext,
+      observations: [],
+      mediaAttachments,
+      proposalIds,
+      maxSteps: config.maxAgentSteps,
+      subagent: false,
+      workspaceMutations,
+      preload: preloadWorkspace,
+      provider,
+      config,
+      contextCharBudget,
+      signal: request.signal,
+      onProgress: request.onProgress,
+      onTodosChanged: request.onTodosChanged,
+      onPlanChanged: request.onPlanChanged,
+      onProposalsChanged: request.onProposalsChanged
+    });
+
+    return this.finish(message, [...proposalIds], workspaceMutations);
+  }
+
+  /** Run LangChain Deep Agents while keeping every real capability behind Vectra's tool registry. */
+  private async runDeepAgent(opts: RunLoopOptions): Promise<string> {
+    const events = new AgentEventStream();
+    events.subscribe((event) => {
+      if (event.type === 'deepagent.tool.started' && typeof event.tool === 'string' && !event.tool.startsWith('vectra_')) {
+        opts.onProgress?.(describeDeepAgentTool(event.tool));
+        // Deep Agents writes its checklist through the built-in write_todos
+        // middleware. Mirror the tool input immediately instead of waiting for
+        // the entire agent run to finish, so the extension shows live progress.
+        if (event.tool === 'write_todos') this.syncDeepTodos(event.input, opts.onTodosChanged);
+      }
+      if (event.type === 'deepagent.delta' && typeof event.delta === 'string') opts.onProgress?.('Generating response…');
+      if (event.type === 'deepagent.thinking' && typeof event.delta === 'string') opts.onThinking?.(event.delta);
+      if (event.type === 'deepagent.stalled_narration') opts.onProgress?.('That turn described an action without running it; asking again…');
+      if (event.type === 'deepagent.closing_answer.requested') opts.onProgress?.('Writing the final answer…');
+      if (event.type === 'deepagent.subagent.started' && typeof event.role === 'string') {
+        opts.onSubagentEvent?.({ event: 'started', role: event.role, description: typeof event.description === 'string' ? event.description : undefined });
+      }
+      if (event.type === 'deepagent.subagent.finished' && typeof event.role === 'string') {
+        opts.onSubagentEvent?.({ event: 'finished', role: event.role });
+      }
+      if (event.type === 'deepagent.subagent.failed' && typeof event.role === 'string') {
+        opts.onSubagentEvent?.({ event: 'failed', role: event.role, error: typeof event.error === 'string' ? event.error : undefined });
+      }
+    });
+    const executionContext = {
+      mode: opts.mode,
+      mediaAttachments: opts.mediaAttachments,
+      signal: opts.signal,
+      subagent: false
+    };
+    let hostToolCalls = 0;
+    let successfulWorkspaceMutations = 0;
+    let researchSearchCalls = 0;
+    let researchFetchCalls = 0;
+    // Deep Agents already owns read_file/write_file names for scratch space,
+    // so the shared factory namespaces real project tools as vectra_*.
+    const hostDefinitions = AGENT_TOOL_DEFINITIONS.filter((definition) => definition.name !== 'delegate_task');
+    const executeHostTool = async (toolName: string, input: Record<string, unknown>, context: typeof executionContext) => {
+          const envelope = parseAgentEnvelope(JSON.stringify({
+            message: '',
+            actions: [{ type: toolName, ...input }],
+            done: false
+          }));
+          const action = envelope.actions[0];
+          if (!action || envelope.actionError) {
+            throw new Error(envelope.actionError || `Invalid ${toolName} arguments.`);
+          }
+          hostToolCalls++;
+          if (action.type === 'web_search') researchSearchCalls++;
+          if (action.type === 'web_fetch') researchFetchCalls++;
+          opts.onProgress?.(this.toolRegistry.describe(action));
+          const result = await this.toolRegistry.execute(action, context);
+          if (result.effect === 'workspace' && !/\b(?:ERROR|Denied):/i.test(result.observation)) {
+            successfulWorkspaceMutations++;
+            opts.workspaceMutations.push(describeWorkspaceMutation(action));
+          }
+          for (const id of result.proposalIds) opts.proposalIds.add(id);
+          if (result.proposalIds.length) opts.onProposalsChanged?.();
+          opts.onTodosChanged?.(this.todos.list());
+          const plan = this.plans.get();
+          if (plan?.status === 'pending') opts.onPlanChanged?.(plan);
+          if (action.type === 'propose_plan' && plan?.status === 'pending') {
+            opts.onProgress?.('Waiting for you to approve the plan…');
+            const decision = await this.plans.waitForDecision(plan.id, opts.signal);
+            if (decision === 'approved') {
+              this.todos.set(plan.steps.map((step) => ({ id: step.id, content: step.text, status: 'pending' as const })));
+              opts.onTodosChanged?.(this.todos.list());
+              return `${result.observation}\nPLAN APPROVED: proceed now using the real Vectra workspace tools.`;
+            }
+            return `${result.observation}\nPLAN REJECTED: do not make workspace changes; ask what should be revised.`;
+          }
+          return result.observation;
+      };
+    // Native llama.cpp tool calling gets a small, model-driven discovery pair
+    // instead of embedding every host capability in every agent turn. Other
+    // providers retain the complete direct-tool compatibility path.
+    const tools = opts.provider.completeWithTools
+      ? createVectraDiscoveryTools(hostDefinitions, executeHostTool)
+      : createVectraHostTools(hostDefinitions, executeHostTool);
+
+    // Role subagents (planner/researcher/coder/tester/reviewer/security/documentation)
+    // share the same host-tool executor as the top-level agent, but every call they
+    // make is gated by this semaphore -- it exists to stop several subagents from
+    // hammering the single local llama.cpp process or spawning concurrent commands
+    // at once, not to claim true parallel inference.
+    const subagentSemaphore = new Semaphore(opts.config.maxConcurrentSubagents);
+    const gatedExecuteHostTool = async (toolName: string, input: Record<string, unknown>, context: typeof executionContext) => {
+      await subagentSemaphore.acquire();
+      try {
+        return await executeHostTool(toolName, input, context);
+      } finally {
+        subagentSemaphore.release();
+      }
+    };
+    const subagentSpecs = buildVectraSubagentSpecs(hostDefinitions, gatedExecuteHostTool, !!opts.provider.completeWithTools);
+
+    const prompt = buildUserPrompt(
+      opts.task,
+      [],
+      opts.workspaceContext,
+      [],
+      opts.mediaAttachments,
+      this.resolveProposals([...opts.proposalIds]),
+      this.todos.list(),
+      this.plans.get(),
+      opts.contextCharBudget
+    );
+    const runtime = new VectraDeepAgentRuntime({
+      provider: opts.provider,
+      model: opts.config.model,
+      tools,
+      context: executionContext,
+      events,
+      maxSteps: opts.maxSteps,
+      recursionLimit: opts.config.deepAgentRecursionLimit,
+      systemPrompt: buildSystemPrompt(opts.mode),
+      reasoning: agentReasoning(opts.config),
+      subagentSpecs
+    });
+
+    try {
+      opts.onProgress?.('Starting Deep Agents orchestration…');
+      let result = await runtime.run({
+        task: prompt,
+        history: opts.history.map((message) => ({ role: message.role, content: message.content })),
+        signal: opts.signal
+      });
+      // Deep research is iterative: a model-generated draft is not necessarily
+      // evidence-complete. For explicitly research-shaped requests, audit the
+      // tool coverage and re-enter the same guarded agent loop when it stopped
+      // after too little searching/fetching. This is intentionally bounded and
+      // does not affect simple live facts, ordinary chat, or workspace tasks.
+      for (let auditPass = 1; auditPass <= 2 && !result.stopReason && needsMoreResearch(opts.task, researchSearchCalls, researchFetchCalls); auditPass++) {
+        if (opts.signal?.aborted) throw new Error('Request cancelled.');
+        opts.onProgress?.(`Checking research coverage and filling evidence gaps (${auditPass}/2)…`);
+        const previousDraft = truncateMiddle(result.text || '', 18_000);
+        result = await runtime.run({
+          task:
+            'RESEARCH COVERAGE AUDIT: Continue the original request; do not merely rewrite the draft. ' +
+            'The evidence collected so far is insufficient. Run additional focused web searches with meaningfully different queries, ' +
+            'open credible primary or authoritative sources, resolve contradictions and freshness dates, then return one complete answer ' +
+            'with source URLs. Do not stop at search snippets when readable sources are available.',
+          history: [
+            ...opts.history.map((message) => ({ role: message.role, content: message.content })),
+            { role: 'assistant' as const, content: previousDraft }
+          ],
+          signal: opts.signal
+        });
+      }
+      this.syncDeepTodos(result.state, opts.onTodosChanged);
+      // Deep Agents' built-in write_file targets an ephemeral scratch backend,
+      // and a small model regularly puts the actual deliverable there — the
+      // folder gets created through a real host tool, but the README dies in
+      // scratch and never reaches disk. Re-propose those files for review.
+      if (opts.mode === 'agent' && (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))) {
+        await this.rescueScratchFiles(result.state, opts);
+      }
+      // A run ended by a harness guard (step budget, identical-tool-call loop)
+      // already carries its own explanation and, by definition, never reached a
+      // final answer. Running the fabricated-creation checks on it would only
+      // bury that behind a fallback plan the user never asked for.
+      if (result.stopReason) return result.text;
+      if (
+        successfulWorkspaceMutations === 0 &&
+        this.resolveProposals([...opts.proposalIds]).length === 0 &&
+        opts.mode === 'agent' &&
+        (requestsWorkspaceMutation(opts.task) || claimsUnverifiedCreation(result.text))
+      ) {
+        const existingPlan = this.plans.get();
+        if (existingPlan?.status === 'rejected') {
+          return 'I did not make any workspace changes because the plan was rejected.';
+        }
+        if (existingPlan?.status === 'approved') {
+          opts.onProgress?.('The approved change was not executed; continuing with the real workspace tools…');
+          return this.runLoop({
+            ...opts,
+            observations: ['PLAN APPROVED: use real workspace tools now; do not merely describe the requested changes.']
+          });
+        }
+        opts.onProgress?.('No real workspace action was called; preparing a safe approval plan…');
+        const fallbackPlan = this.plans.propose(
+          [
+            'Inspect the requested destination and relevant existing files',
+            'Apply the requested folder and file changes with real workspace tools',
+            'Verify the resulting structure and generated content'
+          ],
+          `Complete the requested workspace change safely: ${truncateMiddle(opts.task, 180)}`
+        );
+        opts.onPlanChanged?.(fallbackPlan);
+        opts.onProgress?.('Waiting for you to approve the plan…');
+        const decision = await this.plans.waitForDecision(fallbackPlan.id, opts.signal);
+        if (decision !== 'approved') {
+          return 'I did not make any workspace changes because the fallback plan was rejected.';
+        }
+        this.todos.set(fallbackPlan.steps.map((step) => ({ id: step.id, content: step.text, status: 'pending' as const })));
+        opts.onTodosChanged?.(this.todos.list());
+        return this.runLoop({
+          ...opts,
+          observations: ['PLAN APPROVED: use real workspace tools now; do not merely describe the requested changes.']
+        });
+      }
+      return result.text ||
+        'I finished the run but the model returned no usable answer text. ' +
+        'Nothing was written to your workspace by this message. Ask me to continue, or rephrase the request.';
+    } catch (error) {
+      // If the harness/model fails before any capability ran, the compact
+      // Vectra loop is a safe compatibility fallback. Never replay after a
+      // host tool ran because that could duplicate proposals or commands.
+      if (hostToolCalls === 0 && !opts.signal?.aborted) {
+        opts.onProgress?.('Deep Agents unavailable for this model; using Vectra compatibility mode…');
+        return this.runLoop(opts);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Turns files left in Deep Agents' scratch state into real reviewed
+   * proposals. Only runs when the model produced no real file proposal itself:
+   * a model that used the real tools was using scratch deliberately for notes,
+   * and those must not be pushed at the user as project files.
+   */
+  private async rescueScratchFiles(state: unknown, opts: RunLoopOptions): Promise<void> {
+    if (this.resolveProposals([...opts.proposalIds]).length > 0) return;
+    const files = (state as { files?: Record<string, unknown> } | undefined)?.files;
+    if (!files || typeof files !== 'object' || Array.isArray(files)) return;
+    let rescued = 0;
+    for (const [scratchPath, entry] of Object.entries(files).slice(0, 20)) {
+      const content = scratchFileContent(entry);
+      if (!content?.trim()) continue;
+      try {
+        const proposal = await this.patches.proposeFile(
+          scratchWorkspacePath(scratchPath),
+          content,
+          'Recovered from agent scratch space: the model wrote this file internally instead of proposing it to the real workspace.'
+        );
+        opts.proposalIds.add(proposal.id);
+        rescued++;
+      } catch {
+        // Outside the workspace, sensitive, or otherwise unproposable — skip it.
+      }
+    }
+    if (rescued) {
+      opts.onProposalsChanged?.();
+      opts.onProgress?.(`Rescued ${rescued} file${rescued === 1 ? '' : 's'} the agent left in scratch — added to the review batch…`);
+    }
+  }
+
+  private syncDeepTodos(state: unknown, callback?: (todos: TodoItem[]) => void): void {
+    const raw = (state as { todos?: unknown[] } | undefined)?.todos;
+    if (!Array.isArray(raw) || !raw.length) return;
+    const todos: TodoItem[] = raw.slice(0, 100).flatMap((item, index) => {
+      if (!item || typeof item !== 'object') return [];
+      const record = item as Record<string, unknown>;
+      const content = String(record.content ?? '').trim();
+      const status = record.status;
+      if (!content || !['pending', 'in_progress', 'completed'].includes(String(status))) return [];
+      return [{ id: String(record.id ?? index + 1), content, status: status as TodoItem['status'] }];
+    });
+    if (!todos.length) return;
+    this.todos.set(todos);
+    callback?.(this.todos.list());
+  }
+
+  /**
+   * The shared step loop. The top-level run() and a delegate_task sub-run both
+   * call this — a sub-run passes subagent: true, fresh empty history/
+   * observations/proposalIds, an independent (smaller) step budget, and no
+   * plan/todo callbacks, so it can never see or mutate the parent's plan or
+   * todo state. ExtensionToolExecutor additionally denies it any write, execution,
+   * plan, todo, or further-delegation action regardless of what it requests.
+   */
+  private async runLoop(opts: RunLoopOptions): Promise<string> {
+    const observations = opts.observations;
+    const attemptedActions = new Set<string>();
+    let duplicateOnlySteps = 0;
+    let verificationTurnUsed = false;
+    let delegateCallCount = 0;
+    let lastMessage = '';
+
+    // Ask and Agent begin with real workspace evidence. This makes a directory
+    // question answerable in one user prompt even when a small model forgets to
+    // request discovery on its first turn. A sub-run reuses the parent's
+    // already-collected workspaceContext instead of preloading again.
+    if (opts.preload) {
+      opts.onProgress?.("Snoopin' 'round the whole workspace, first peek!…");
+      const preload = await this.toolRegistry.execute(
+        { type: 'workspace_summary' },
+        { mode: opts.mode, mediaAttachments: opts.mediaAttachments, signal: opts.signal, subagent: opts.subagent }
+      );
+      observations.push(preload.observation);
+    }
+
+    for (let step = 1; step <= opts.maxSteps; step++) {
+      if (opts.signal?.aborted) throw new Error('Request cancelled.');
+      opts.onProgress?.(step === 1 ? "Snoopy-snoopin' at errythin'…" : "Makin' more stuff, yay!…");
+
+      const userPrompt = buildUserPrompt(
+        opts.task,
+        opts.history,
+        opts.workspaceContext,
+        observations,
+        opts.mediaAttachments,
+        this.resolveProposals([...opts.proposalIds]),
+        opts.subagent ? [] : this.todos.list(),
+        opts.subagent ? undefined : this.plans.get(),
+        opts.contextCharBudget
+      );
+
+      const raw = await opts.provider.complete({
+        systemPrompt: buildSystemPrompt(opts.mode),
+        userPrompt,
+        model: opts.config.model,
+        // Extracted text already lives in userPrompt. Providers only receive
+        // native visual/PDF bytes here, avoiding duplicate token-heavy text.
+        attachments: providerMediaAttachments(opts.mediaAttachments),
+        reasoning: agentReasoning(opts.config),
+        signal: opts.signal
+      });
+      const envelope = parseAgentEnvelope(raw);
+      lastMessage = envelope.message || lastMessage;
+
+      if (envelope.actionError) {
+        observations.push(
+          `ERROR: Invalid tool action format: ${envelope.actionError} ` +
+          'Return the same next step again using an action object that exactly matches the provided tool schema. ' +
+          'Do not describe a tool call as a string.'
+        );
+        continue;
+      }
+
+      if (!envelope.actions.length) {
+        opts.onProgress?.("Wrappin' it all up…");
+        const answer = envelope.message || lastMessage;
+
+        // A model can skip tools entirely and just narrate success in prose.
+        // Any creation claim reaching here without a real workspace action is
+        // fabricated by definition. Give it one chance to call the tool or
+        // retract the claim instead of forwarding an unsupported assertion.
+        if (
+          opts.mode === 'agent' &&
+          !this.resolveProposals([...opts.proposalIds]).length &&
+          !verificationTurnUsed &&
+          claimsUnverifiedCreation(answer)
+        ) {
+          verificationTurnUsed = true;
+          opts.onProgress?.("Checky-checky my own work…");
+          observations.push(
+            'GROUNDING CHECK: Your last reply claimed file or folder creation, but no real workspace write action ' +
+            'was executed this run and no proposal is pending. Call the appropriate tool now ' +
+            '(create_directory, propose_files, create_file, etc.) to actually do this, or reply with actions=[] and an honest ' +
+            'message that does not claim anything was created, written, or saved.'
+          );
+          continue;
+        }
+
+        return isStatusOnlyReply(answer)
+          ? 'I finished, but I do not have a useful summary to show for it. Could you rephrase what you need?'
+          : answer;
+      }
+
+      let allActionsChangedWorkspace = true;
+      let executedActionCount = 0;
+      const requestedActions = envelope.actions.slice(0, 40);
+      const proposedPlanAction = requestedActions.find((action) => action.type === 'propose_plan');
+      // Plan approval is a hard boundary. Small/tool-tuned models sometimes
+      // place the plan and the writes it describes in the same response. If
+      // those writes are dispatched now they are (correctly) denied, but the
+      // duplicate guard would then suppress the model's legitimate retry
+      // after approval. Execute only the plan here; this same run resumes with
+      // a clean chance to perform every approved action.
+      const actionsToExecute = proposedPlanAction ? [proposedPlanAction] : requestedActions;
+      for (const action of actionsToExecute) {
+        if (opts.signal?.aborted) throw new Error('Request cancelled.');
+        const fingerprint = actionFingerprint(action);
+        if (attemptedActions.has(fingerprint)) {
+          observations.push(
+            `ERROR: Repeated tool action suppressed: ${action.type}. ` +
+            'Do not retry it. Follow the CURRENT USER TASK and either choose a different evidence-gathering action or finish with actions=[].'
+          );
+          allActionsChangedWorkspace = false;
+          continue;
+        }
+        attemptedActions.add(fingerprint);
+        executedActionCount++;
+
+        // A legitimate (non-subagent) delegation runs a nested, bounded,
+        // read-only step loop and folds its summary back in as one
+        // observation. A subagent requesting this itself falls through to
+        // the normal dispatch below, where ExtensionToolExecutor denies it —
+        // recursion is never allowed, not even once.
+        if (action.type === 'delegate_task' && !opts.subagent) {
+          if (delegateCallCount >= MAX_DELEGATIONS_PER_RUN) {
+            observations.push(
+              `ACTION ${safeJson({ type: 'delegate_task', task: action.task })}\n` +
+              `RESULT\nERROR: delegate_task call limit (${MAX_DELEGATIONS_PER_RUN}) reached this run. Proceed directly instead of delegating further.`
+            );
+            allActionsChangedWorkspace = false;
+            continue;
+          }
+          delegateCallCount++;
+          opts.onProgress?.(`Delegatin' a sub-task: "${truncateMiddle(action.task, 80)}"…`);
+          const subBudget = Math.max(1, Math.min(opts.config.maxAgentSteps, opts.config.maxSubagentSteps));
+          const summary = await this.runLoop({
+            task: buildSubagentTask(action.task),
+            mode: 'agent',
+            history: [],
+            workspaceContext: opts.workspaceContext,
+            observations: [],
+            mediaAttachments: [],
+            proposalIds: new Set<string>(),
+            maxSteps: subBudget,
+            subagent: true,
+            workspaceMutations: [],
+            preload: false,
+            provider: opts.provider,
+            config: opts.config,
+            contextCharBudget: opts.contextCharBudget,
+            signal: opts.signal,
+            onProgress: (message) => opts.onProgress?.(`Sub-task: ${message}`)
+          });
+          observations.push(`ACTION ${safeJson({ type: 'delegate_task', task: action.task })}\nRESULT\n${summary}`);
+          // A delegation is exploration, not a write — it must not make the
+          // step look like a completed write batch to the done-check below.
+          allActionsChangedWorkspace = false;
+          continue;
+        }
+
+        opts.onProgress?.(this.toolRegistry.describe(action));
+        const result = await this.toolRegistry.execute(action, {
+          mode: opts.mode,
+          mediaAttachments: opts.mediaAttachments,
+          signal: opts.signal,
+          subagent: opts.subagent
+        });
+        observations.push(result.observation);
+        for (const id of result.proposalIds) opts.proposalIds.add(id);
+        if (result.proposalIds.length) opts.onProposalsChanged?.();
+        if (result.effect !== 'workspace' || /\b(?:ERROR|Denied):/i.test(result.observation)) {
+          allActionsChangedWorkspace = false;
+        } else {
+          opts.workspaceMutations.push(describeWorkspaceMutation(action));
+        }
+        if (action.type === 'todo_write') opts.onTodosChanged?.(this.todos.list());
+      }
+
+      // A freshly proposed plan suspends this run in place until the user
+      // decides in the chat panel. No synthetic turn or resend is needed:
+      // execution resumes in the same run with the same step budget. A
+      // subagent can never propose a plan (denied by the registry), so this
+      // never applies to one — it also must never react to the parent's plan.
+      if (!opts.subagent) {
+        const activePlan = this.plans.get();
+        if (activePlan && activePlan.status === 'pending') {
+          opts.onPlanChanged?.(activePlan);
+          opts.onProgress?.('Waiting for you to approve the plan…');
+          const decision = await this.plans.waitForDecision(activePlan.id, opts.signal);
+          if (decision === 'approved') {
+            this.todos.set(activePlan.steps.map((planStep) => ({ id: planStep.id, content: planStep.text, status: 'pending' as const })));
+            opts.onTodosChanged?.(this.todos.list());
+            observations.push('PLAN APPROVED: proceed to execute it now, step by step, using real tools.');
+          } else {
+            observations.push(
+              'PLAN REJECTED: ask what to change, or propose a revised plan with propose_plan before attempting any write/execution action.'
+            );
+          }
+          continue;
+        }
+      }
+
+      duplicateOnlySteps = executedActionCount === 0 ? duplicateOnlySteps + 1 : 0;
+      if (duplicateOnlySteps >= 2) {
+        // The loop guard is an engine detail. The user gets a plain explanation
+        // and a way forward instead of the internal reason.
+        const progress = isStatusOnlyReply(lastMessage) ? '' : `${lastMessage}\n\n`;
+        return `${progress}I stopped because I kept repeating the same step without making progress. ` +
+          'Could you tell me a bit more about what you need, or point me at the file or folder to start from?';
+      }
+
+      // A model may submit a complete batch and explicitly mark it done. Before
+      // accepting that, give it exactly one turn to check its own work against
+      // the real filesystem, so the final summary is evidence-based rather than
+      // an assertion. Read and error results always get another turn anyway.
+      if (envelope.done && allActionsChangedWorkspace) {
+        if (verificationTurnUsed) {
+          return lastMessage || 'The workspace change was applied.';
+        }
+        verificationTurnUsed = true;
+        opts.onProgress?.("Checky-checky my own work…");
+        observations.push(
+          'VERIFICATION STEP: A real workspace path operation was applied. ' +
+          'Check the real workspace now: use list_directory to confirm the layout, read_file for existing files, ' +
+          'and search_text when relevant to confirm names and references line up. ' +
+          'Fix anything wrong with a new action. If everything is correct, reply with actions=[] and a final summary that ' +
+          'states what you created or changed and what you verified. Do not repeat an unchanged proposal.'
+        );
+        continue;
+      }
+    }
+
+    const progress = isStatusOnlyReply(lastMessage) ? '' : `${lastMessage}\n\n`;
+    return `${progress}I reached my limit of ${opts.maxSteps} steps for this request, so this is as far as I got. ` +
+      'Ask me to continue, or narrow the request and I will pick it up from here.';
+  }
+
+  /**
+   * Single plain-prose completion for a conversational turn. No tools, no
+   * workspace context, and no forced JSON schema.
+   */
+  private async converse(
+    provider: TextProvider,
+    request: AgentRunRequest,
+    config: AgentConfiguration
+  ): Promise<string> {
+    request.onProgress?.("Thinky-thinkin' real hard…");
+    const history = formatRecentHistory(request.history);
+    const charBudget = Math.min(effectiveCharBudget(config), 24_000);
+    // A retry (see below) must not re-stream: the first attempt's partial
+    // text is already shown, and a second stream would visibly duplicate it.
+    let streamingClaimed = false;
+    const ask = (nudge = '') => {
+      const onDelta = streamingClaimed ? undefined : request.onDelta;
+      streamingClaimed = true;
+      return provider.complete({
+        systemPrompt: buildChatSystemPrompt(),
+        userPrompt: truncateMiddle(
+          `${history ? `RECENT CHAT (finished history, for reference only)\n${history}\n\n` : ''}` +
+          `THE USER JUST SAID\n${request.userText}\n\n` +
+          `Reply to them directly and naturally.${nudge}`,
+          charBudget
+        ),
+        model: config.model,
+        structured: false,
+        // Small talk gets no extended thinking pass. Without this a
+        // thinking-capable local model answered "hello" with a long hidden
+        // deliberation followed by an essay.
+        reasoning: 'minimal',
+        signal: request.signal,
+        onDelta
+      });
+    };
+
+    // Tool-tuned local models sometimes answer a greeting with an envelope or a
+    // status line anyway. Unwrap it, then retry once with an explicit nudge.
+    let reply = parseAgentEnvelope(await ask()).message.trim();
+    if (isStatusOnlyReply(reply)) {
+      if (request.signal?.aborted) throw new Error('Request cancelled.');
+      reply = parseAgentEnvelope(
+        await ask(' Do not reply with a status line such as "task completed" — the user asked you a question, so answer it in a friendly sentence.')
+      ).message.trim();
+    }
+    return isStatusOnlyReply(reply)
+      ? 'Hi! I am Vectra, your coding assistant in VS Code. What would you like to work on?'
+      : reply;
+  }
+
+  /**
+   * The model's `message` is free text it writes about its own turn, and a
+   * weak or local model will sometimes narrate file/folder creation it never
+   * actually attempted through a tool call. When there ARE pending proposals,
+   * EditProposalManager — the one source of truth for what is written vs. pending —
+   * still gets the final word, appended as a plain, useful next step. When
+   * there is nothing pending, the model's own natural reply is left alone: a
+   * conversational answer (e.g. "I can't generate images, but I could write
+   * a script for that") does not need a disk-write disclaimer bolted onto it.
+   */
+  private finish(message: string, ids: string[], workspaceMutations: string[] = []): AgentRunResult {
+    const proposals = this.resolveProposals(ids);
+    // The duplicate-action guard already suppresses most repeats, but a run
+    // that retried a path operation must still report it exactly once.
+    const applied = [...new Set(workspaceMutations)];
+    const appliedLog = applied.length
+      ? `\n\nModified in your workspace this run:\n${applied.map((entry) => `- ${entry}`).join('\n')}`
+      : '';
+    if (proposals.length) {
+      const noun = proposals.length === 1 ? 'change' : 'changes';
+      const paths = proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}${describeProposalLines(proposal)}`).join('\n');
+      return {
+        text: `Prepared ${proposals.length} proposed ${noun} for review. Nothing in this batch has been written to disk yet.\n\n${paths}\n\nUse Accept or Accept all below to apply ${proposals.length === 1 ? 'it' : 'them'}.${appliedLog}`,
+        proposals
+      };
+    }
+
+    return { text: `${message}${appliedLog}`, proposals };
+  }
+
+  private resolveProposals(ids: string[]): AgentRunResult['proposals'] {
+    // Only 'pending' survives here: once a proposal is accepted, rejected, or
+    // goes stale mid-run (e.g. the user actioned it from the panel while this
+    // run was still going), it must stop being announced as awaiting review.
+    return ids
+      .map((id) => this.patches.get(id))
+      .filter((proposal): proposal is NonNullable<typeof proposal> => proposal?.status === 'pending');
+  }
+}
+
+function buildUserPrompt(
+  task: string,
+  history: ChatMessage[],
+  context: WorkspaceContext,
+  observations: string[],
+  attachments: Attachment[],
+  proposals: AgentRunResult['proposals'],
+  todos: TodoItem[],
+  plan: Plan | undefined,
+  maxCharacters: number
+): string {
+  const recentHistory = formatRecentHistory(history);
+  const observationsText = observations.length
+    ? observations.slice(-32).map((observation, index) => `OBSERVATION ${index + 1}\n${observation}`).join('\n\n')
+    : 'No tool observations yet.';
+  const pendingText = proposals.length
+    ? `These exist only as reviewed proposals, NOT yet written to disk. Do not tell the user they were created, ` +
+      `saved, or now present until the user accepts them.\n` +
+      proposals.map((proposal) => `- ${proposal.kind}: ${proposal.path}`).join('\n')
+    : 'No proposals are pending. Nothing has been written or is queued for review right now.';
+  const todoText = todos.length
+    ? todos.map((item) => `- [${item.status === 'completed' ? 'x' : item.status === 'in_progress' ? '~' : ' '}] ${item.content} (${item.status})`).join('\n')
+    : 'No todo list yet.';
+  const planText = plan
+    ? `Plan (${plan.status}):\n${plan.steps.map((step) => `- ${step.text}`).join('\n')}`
+    : 'No plan proposed yet. Propose one with propose_plan before any write or execution action.';
+
+  // The task stays at the beginning and recent evidence stays at the end. If a
+  // very large session must be truncated, these are the two highest-value areas.
+  return truncateMiddle(
+    `CURRENT USER TASK\n${task}\n\n` +
+    `WORKSPACE CONTEXT\n${formatWorkspaceContext(context)}\n\n` +
+    `PARSED ATTACHMENTS\n${formatAttachmentContext(attachments)}\n\n` +
+    `RECENT CHAT\n${recentHistory || 'No previous chat.'}\n\n` +
+    `PENDING REVIEW BATCH\n${pendingText}\n\n` +
+    `PLAN\n${planText}\n\n` +
+    `TODO LIST\n${todoText}\n\n` +
+    `TOOL OBSERVATIONS\n${observationsText}\n\n` +
+    `ACTIVE TASK REMINDER\n${task}\n` +
+    'This task replaces any conflicting or unfinished request in RECENT CHAT. Never repeat an old tool action unless this task explicitly requests it.\n\n' +
+    'Return the next JSON action envelope. Finish the complete task in this run.',
+    maxCharacters
+  );
+}
+
+/**
+ * Cloud providers advertise large (100K+ token) context windows, so
+ * `maxContextCharacters` applies unmodified. Local providers run whatever
+ * context size the user actually configured for the server process, which is
+ * very often much smaller — sending more than that gets the request rejected
+ * outright (HTTP 400) instead of gracefully truncated.
+ */
+function effectiveCharBudget(config: AgentConfiguration): number {
+  if (config.provider === 'llamaCpp') {
+    return estimateContextCharBudget(config.llamaCppContextSize, config.maxContextCharacters);
+  }
+  if (config.provider === 'ollama') {
+    return estimateContextCharBudget(config.ollamaContextSize, config.maxContextCharacters);
+  }
+  return config.maxContextCharacters;
+}
+
+function actionFingerprint(action: unknown): string {
+  return JSON.stringify(action);
+}
+
+/** Thinking-capable local models deliberate before every tool call unless told not to (measured 63 s vs 18 s for a one-folder request). */
+function agentReasoning(config: AgentConfiguration): 'minimal' | undefined {
+  return config.localReasoning === 'fast' ? 'minimal' : undefined;
+}
+
+/** One final-summary line per already-applied path operation, from the validated action itself. */
+function describeWorkspaceMutation(action: AgentAction): string {
+  switch (action.type) {
+    case 'create_directory': return `created folder ${action.path}`;
+    case 'delete_directory': return `deleted folder ${action.path}`;
+    case 'rename_path': return `renamed ${action.path} to ${action.destinationPath}`;
+    case 'move_path': return `moved ${action.path} to ${action.destinationPath}`;
+    case 'copy_path': return `copied ${action.path} to ${action.destinationPath}`;
+    default: return `changed ${'path' in action && typeof action.path === 'string' ? action.path : action.type}`;
+  }
+}
+
+/** Only substantial external-research requests trigger automatic evidence
+ * audits. A single current fact should remain fast; explicit research,
+ * comparison, literature, due-diligence, and multi-source requests continue. */
+export function needsMoreResearch(task: string, searchCalls: number, fetchCalls: number): boolean {
+  const researchShaped = /\b(?:deep\s+research|research|investigat(?:e|ion)|compare|comparison|literature|papers?|studies|systematic|evidence|sources?|citations?|due\s+diligence|market\s+analysis|competitive\s+analysis|latest\s+developments?|comprehensive|in[- ]depth)\b/i.test(task);
+  if (!researchShaped) return false;
+  return searchCalls < 2 || fetchCalls < 2;
+}
+
+/**
+ * " (line 3 - line 42)" for a proposal, from the real base/proposed content
+ * rather than the model's narration. For a modify this is the smallest edited
+ * region (common prefix/suffix lines stripped); a create spans the whole file.
+ */
+function describeProposalLines(proposal: EditProposal): string {
+  if (proposal.kind === 'delete') return '';
+  const proposedLines = proposal.proposedContent.split(/\r?\n/);
+  if (proposal.kind === 'create' || !proposal.baseContent) {
+    return proposedLines.length <= 1 ? ' (line 1)' : ` (line 1 - line ${proposedLines.length})`;
+  }
+  const baseLines = proposal.baseContent.split(/\r?\n/);
+  const maxOverlap = Math.min(baseLines.length, proposedLines.length);
+  let prefix = 0;
+  while (prefix < maxOverlap && baseLines[prefix] === proposedLines[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < maxOverlap - prefix &&
+    baseLines[baseLines.length - 1 - suffix] === proposedLines[proposedLines.length - 1 - suffix]
+  ) suffix++;
+  const first = prefix + 1;
+  // A pure deletion leaves no new lines; anchor it to the edit position.
+  const last = Math.max(first, proposedLines.length - suffix);
+  return first === last ? ` (line ${first})` : ` (line ${first} - line ${last})`;
+}
+
+/**
+ * Loose net for "I just did file/folder work" narration, used only to decide
+ * whether a zero-action reply deserves one grounding challenge before it
+ * reaches the user. False positives cost one extra turn; false negatives let
+ * a fabricated claim straight through, so this stays deliberately broad.
+ */
+const CREATION_CLAIM_PATTERN =
+  /\b(?:created|creating|generated|generating|built|building|wrote|written|writing|saved|saving|added|adding|implemented|implementing|set up|setting up|prepared|preparing|made|making)\b[\s\S]{0,80}\b(?:file|files|folder|folders|directory|directories|pipeline|pipelines|project|script|scripts|module|modules|component|components)\b/i;
+
+function claimsUnverifiedCreation(message: string): boolean {
+  return CREATION_CLAIM_PATTERN.test(message);
+}
+
+/** Concrete mutation requests must never finish as a zero-tool Deep Agent narration. */
+const WORKSPACE_MUTATION_REQUEST_PATTERN =
+  /\b(?:create|make|generate|add|write|rename|move|copy|delete|remove|edit|update|change|fix)\b[\s\S]{0,120}\b(?:file|files|folder|folders|directory|directories|readme|document|documents|project|script|scripts|module|modules|component|components)\b/i;
+
+function requestsWorkspaceMutation(task: string): boolean {
+  return WORKSPACE_MUTATION_REQUEST_PATTERN.test(task);
+}
+
+/** Content of one Deep scratch file entry across deepagents versions (plain string, {content}, or line array). */
+function scratchFileContent(entry: unknown): string | undefined {
+  if (typeof entry === 'string') return entry;
+  if (Array.isArray(entry)) {
+    return entry.every((line) => typeof line === 'string') ? entry.join('\n') : undefined;
+  }
+  if (entry && typeof entry === 'object') {
+    const content = (entry as { content?: unknown }).content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content) && content.every((line) => typeof line === 'string')) return content.join('\n');
+  }
+  return undefined;
+}
+
+/** Models address scratch with container-style absolute paths ("/workspace/…"); map them onto the real workspace. */
+function scratchWorkspacePath(scratchPath: string): string {
+  return normalizeAgentPath(scratchPath).replace(/^\/+/, '').replace(/^workspace\//i, '');
+}
+
+/** Framing prepended to a delegated task: the sub-agent has no memory of the parent conversation and a hard-restricted tool set. */
+function buildSubagentTask(task: string): string {
+  return 'You are a bounded, read-only sub-agent helping with one focused exploration task delegated by the main agent. ' +
+    'You have no memory of the main conversation — the task below is everything you know. ' +
+    'You cannot write files, run commands, propose a plan, edit the todo list, or delegate further; investigate and report back precisely.\n\n' +
+    `TASK\n${task}`;
+}
+
+function formatWorkspaceContext(context: WorkspaceContext): string {
+  const sections: string[] = [
+    `Workspace folders: ${context.workspaceFolders.join(', ') || 'none'}`,
+    `Open files: ${context.openFiles.join(', ') || 'none'}`
+  ];
+  if (context.projectInstructions) {
+    sections.push(`PROJECT INSTRUCTIONS (from VECTRA.md, follow these for this workspace):\n${context.projectInstructions}`);
+  }
+  if (context.workspaceOverview) sections.push(`Workspace overview:\n${context.workspaceOverview}`);
+  if (context.activeFile) {
+    sections.push(`Active file: ${context.activeFile}${context.activeLanguage ? ` (${context.activeLanguage})` : ''}`);
+  }
+  if (context.selectionText) {
+    sections.push(
+      `EXACT CURRENT SELECTION lines ${context.selectionStartLine}-${context.selectionEndLine}:\n${context.selectionText}`
+    );
+  }
+  if (context.cursorLine) sections.push(`Cursor: line ${context.cursorLine}, column ${context.cursorColumn ?? 1}`);
+  if (context.activeFileContent) sections.push(`Active file content snapshot:\n${context.activeFileContent}`);
+  if (context.diagnostics.length) sections.push(`Active diagnostics:\n${context.diagnostics.join('\n')}`);
+  return sections.join('\n\n');
+}
+
+/**
+ * Targeted questions already have the active editor snapshot, so eagerly
+ * scanning the whole repository only adds latency. Broad project questions
+ * still receive a fast workspace snapshot before the first model call.
+ */
+function shouldPreloadWorkspace(task: string, mode: AgentMode, context: WorkspaceContext): boolean {
+  if (mode === 'selection' || mode === 'lineSuggestion') return false;
+  if (!context.activeFile) return true;
+  return /\b(?:workspace|repository|repo|project structure|folder structure|directory structure|codebase overview|all files)\b/i.test(task);
+}
+
+function formatAttachmentContext(attachments: Attachment[]): string {
+  if (!attachments.length) return 'No user or tool attachments.';
+  const selected = attachments.slice(-12);
+  const perAttachmentBudget = Math.max(4_000, Math.floor(80_000 / selected.length));
+  return selected.map((attachment) => {
+    const extracted = attachment.text?.trim();
+    const content = extracted
+      ? `\nParsed content:\n${truncateMiddle(extracted, Math.min(40_000, perAttachmentBudget))}`
+      : '\nParsed content: unavailable; use visual inspection when supported.';
+    return `- ${attachment.name} (${attachment.kind}, ${attachment.mime}, ${attachment.size} bytes)${content}`;
+  }).join('\n\n');
+}
+
+function providerMediaAttachments(attachments: Attachment[]): Attachment[] {
+  return attachments
+    .filter((attachment) => attachment.kind === 'image' || attachment.kind === 'pdf')
+    .map((attachment) => ({ ...attachment, text: undefined }));
+}
+
+async function addLocalVisionPdfPages(attachments: Attachment[]): Promise<void> {
+  const pdfs = attachments.filter((attachment) => attachment.kind === 'pdf' && attachment.base64).slice(0, 3);
+  for (const pdf of pdfs) {
+    try {
+      const pages = await renderPdfPagesFromBuffer(Buffer.from(pdf.base64!, 'base64'), pdf.name, 6);
+      for (const page of pages) {
+        attachments.push({
+          id: randomUUID(),
+          name: page.name,
+          mime: page.mime,
+          size: page.size,
+          kind: 'image',
+          source: pdf.source,
+          base64: page.base64
+        });
+      }
+    } catch {
+      // Embedded PDF text remains available when optional rendering tools are absent.
+    }
+  }
+}

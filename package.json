@@ -1,0 +1,26 @@
+{
+  "name": "vectra",
+  "version": "1.1.9",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "clean": "npm run clean --workspaces --if-present",
+    "build": "npm run build -w @vectra/local-runtime && npm run build -w @vectra/agent-core && npm run build -w vectra-ai && npm run build -w @vectra/web",
+    "test": "npm test -w @vectra/local-runtime --if-present && npm test -w @vectra/agent-core --if-present && npm test -w vectra-ai && npm test -w @vectra/web",
+    "check": "npm run check -w @vectra/local-runtime && npm run build -w @vectra/local-runtime && npm run check -w @vectra/agent-core && npm run check -w vectra-ai",
+    "package:extension": "npm run package -w vectra-ai",
+    "start:web": "npm start -w @vectra/web"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "allowScripts": {
+    "keytar@7.9.0": true,
+    "@vscode/vsce-sign@2.1.0": true,
+    "esbuild@0.25.12": true
+  }
+}

@@ -1,0 +1,17 @@
+# Security
+
+Vectra supports local CPU/GPU models and configured cloud providers. It sends selected context externally only when a cloud provider is active.
+
+- VS Code workspace writes are review-before-apply.
+- File proposals use stale-content hashes.
+- Commands/tests require explicit confirmation.
+- Sensitive files are blocked by default.
+- Extension API keys are stored with VS Code SecretStorage rather than in settings or plaintext files.
+- Older plaintext Vectra credential files are migrated and removed only after secure storage succeeds.
+- Workspace Trust is enforced for inspection/mutation/tool execution.
+- Local GGUF files stay on the local computer.
+- Vectra Web binds to localhost by default and blocks cross-origin API requests.
+- Vectra Web API keys are accepted per browser request/session and are not persisted by the Node server.
+- PDF/DOCX parsing happens locally before text-model requests.
+- Raw binary PDF/DOCX bytes are never decoded as arbitrary UTF-8 model text.
+- Web local-model file pickers/process APIs are available only while bound to localhost.

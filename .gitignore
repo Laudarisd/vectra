@@ -1,0 +1,26 @@
+# Packaged archives
+*.zip
+*.vsix
+
+# Installed JavaScript dependencies
+**/node_modules/
+
+# macOS metadata
+.DS_Store
+
+# Crash noise written by the VS Code host, not by Vectra
+debug.log
+
+# ingnore .vscode settings folder
+.vscode/
+
+# Local Vectra Web chat databases
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Generated extension bundles
+apps/vscode-extension/generated/
+apps/vscode-extension/build/
+apps/web/tools/dist/
+packages/*/dist/

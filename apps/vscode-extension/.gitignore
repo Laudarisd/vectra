@@ -1,0 +1,7 @@
+node_modules/
+build/
+generated/
+*.vsix
+*.zip
+.DS_Store
+web/.cache/

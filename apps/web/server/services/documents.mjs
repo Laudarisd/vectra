@@ -1,0 +1,202 @@
+// Beginner guide: Handles d oc um en ts responsibilities for Vectra.
+import { execFile } from 'node:child_process';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { inflateRawSync, inflateSync, deflateRawSync } from 'node:zlib';
+const execFileAsync=promisify(execFile);
+
+export async function extractPdfText(bytes){
+  const native=await withTemp('.pdf',bytes,async file=>{try{const {stdout}=await execFileAsync('pdftotext',['-layout','-enc','UTF-8',file,'-'],{timeout:120000,maxBuffer:64*1024*1024});return stdout||''}catch{return''}});
+  if(isMeaningful(native))return formatPdfPages(native);
+  const latin=Buffer.from(bytes).toString('latin1'),chunks=[];collect(latin,chunks);const r=/<<(.*?)>>\s*stream\r?\n([\s\S]*?)\r?\nendstream/g;let m;
+  while((m=r.exec(latin))){if(/\/FlateDecode\b/.test(m[1])){try{collect(inflateSync(Buffer.from(m[2],'latin1')).toString('latin1'),chunks)}catch{}}else collect(m[2],chunks)}
+  const fallback=normalize(chunks.join('\n'));return isMeaningful(fallback)?fallback:'';
+}
+
+// Preserve page boundaries so citations, tables, and drawing notes remain traceable.
+function formatPdfPages(text){
+  const pages=String(text||'').split('\f');
+  return pages.map((page,index)=>normalize(page)?`[PDF PAGE ${index+1}]\n${normalize(page)}`:'').filter(Boolean).join('\n\n');
+}
+
+export function extractPptxText(bytes){
+  try{
+    const entries=extractZipEntriesMatching(Buffer.from(bytes),/^ppt\/slides\/slide\d+\.xml$/i).sort((a,b)=>natural(a.name,b.name));
+    const chunks=[];
+    for(const entry of entries){
+      const text=officeXmlToLayout(entry.data.toString('utf8'));
+      if(text)chunks.push(`[${entry.name.split('/').pop()}]\n${text}`);
+    }
+    return normalize(chunks.join('\n\n'));
+  }catch{return''}
+}
+export function extractXlsxText(bytes){
+  try{
+    const zip=Buffer.from(bytes);let shared=[];
+    try{shared=[...extractZipEntry(zip,'xl/sharedStrings.xml').toString('utf8').matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(m=>decodeXml(m[1]))}catch{}
+    const sheets=extractZipEntriesMatching(zip,/^xl\/worksheets\/sheet\d+\.xml$/i).sort((a,b)=>natural(a.name,b.name));
+    const out=[];
+    for(const sheet of sheets){
+      const xml=sheet.data.toString('utf8'),rows=[];
+      for(const rowMatch of xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)){
+        const values=[];
+        for(const cellMatch of rowMatch[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)){
+          const attrs=cellMatch[1],body=cellMatch[2],ref=attrs.match(/\br=["']([A-Z]+\d+)["']/i)?.[1]||'';
+          const column=spreadsheetColumnIndex(ref);
+          while(values.length<column)values.push('');
+          const inline=body.match(/<t[^>]*>([\s\S]*?)<\/t>/),raw=body.match(/<v[^>]*>([\s\S]*?)<\/v>/),formula=body.match(/<f[^>]*>([\s\S]*?)<\/f>/);
+          let value=inline?decodeXml(inline[1]):raw?decodeXml(raw[1]):'';
+          if(raw&&/\bt=["']s["']/.test(attrs))value=shared[Number(value)]??value;
+          if(formula)value=`=${decodeXml(formula[1])}${value?` => ${value}`:''}`;
+          values[column]=value;
+        }
+        if(values.some(Boolean))rows.push(values.join('\t'));
+      }
+      if(rows.length)out.push(`[${sheet.name.split('/').pop()}]\n${rows.join('\n')}`);
+    }
+    return normalize(out.join('\n\n'));
+  }catch{return''}
+}
+export function extractRtfText(bytes){return normalize(Buffer.from(bytes).toString('utf8').replace(/\\par[d]?\b/g,'\n').replace(/\\'[0-9a-fA-F]{2}/g,m=>String.fromCharCode(parseInt(m.slice(2),16))).replace(/\\[a-zA-Z]+-?\d* ?/g,'').replace(/[{}]/g,''))}
+export function extractStructuredDocumentText(name,bytes){const lower=String(name||'').toLowerCase();if(lower.endsWith('.docx'))return extractDocxText(bytes);if(lower.endsWith('.pptx'))return extractPptxText(bytes);if(lower.endsWith('.xlsx'))return extractXlsxText(bytes);if(lower.endsWith('.rtf'))return extractRtfText(bytes);return''}
+export async function extractDocumentText(name,bytes){
+  const structured=extractStructuredDocumentText(name,bytes);if(structured)return structured;
+  if(!/\.doc$/i.test(String(name||'')))return'';
+  const native=await withTemp('.doc',bytes,async file=>{
+    for(const command of [['antiword',[file]],['catdoc',[file]]]){
+      try{const{stdout}=await execFileAsync(command[0],command[1],{timeout:45000,maxBuffer:20*1024*1024});if(isMeaningful(stdout))return stdout}catch{}
+    }
+    return'';
+  });
+  if(isMeaningful(native))return normalize(native);
+  return extractLegacyDocFallback(bytes);
+}
+
+// Expose embedded Office images as first-class vision inputs for the web parser.
+export function extractEmbeddedDocumentImages(name,bytes){
+  const lower=String(name||'').toLowerCase();
+  const pattern=lower.endsWith('.docx')?/^word\/media\//i:lower.endsWith('.pptx')?/^ppt\/media\//i:lower.endsWith('.xlsx')?/^xl\/media\//i:null;
+  if(!pattern)return[];
+  try{
+    return extractZipEntriesMatching(Buffer.from(bytes),pattern).flatMap((entry,index)=>{
+      const mime=imageMime(entry.name);if(!mime)return[];
+      const dimensions=imageDimensions(entry.data);
+      return[{name:`${name} · embedded image ${index+1} · ${entry.name.split('/').pop()}`,mime,kind:'image',size:entry.data.length,text:'',base64:entry.data.toString('base64'),...dimensions}];
+    });
+  }catch{return[]}
+}
+export function extractDocxText(bytes){
+  try{
+    const entries=extractZipEntriesMatching(Buffer.from(bytes),/^word\/(?:document|header\d+|footer\d+|footnotes|endnotes)\.xml$/i).sort((a,b)=>natural(a.name,b.name));
+    return normalize(entries.map(entry=>`[${entry.name}]\n${officeXmlToLayout(entry.data.toString('utf8'))}`).join('\n\n'));
+  }catch{return''}
+}
+export function buildDocx(content,title='Vectra Document'){const now=new Date().toISOString();const files=[['[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`],['_rels/.rels',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`],['word/_rels/document.xml.rels',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],['word/styles.xml',styles()],['word/document.xml',docXml(content,title)],['docProps/core.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xml(title)}</dc:title><dc:creator>Vectra</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`],['docProps/app.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Vectra</Application></Properties>`]];return buildZip(files.map(([name,text])=>({name,data:Buffer.from(text)})))}
+export function buildPdf(content,title='Vectra Document'){const lines=wrap(content.replace(/\r\n/g,'\n').split('\n'),92),pages=[];for(let i=0;i<lines.length;i+=52)pages.push(lines.slice(i,i+52));if(!pages.length)pages.push(['']);const objects=[];const add=b=>(objects.push(b),objects.length);const catalog=add(''),pagesObj=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),pageIds=[];for(const ls of pages){const stream=['BT','/F1 10 Tf','48 790 Td','12 TL',...ls.flatMap((l,i)=>i?[`T*`,`(${pdfText(l)}) Tj`]:[`(${pdfText(l)}) Tj`]),'ET'].join('\n');const c=add(`<< /Length ${Buffer.byteLength(stream,'latin1')} >>\nstream\n${stream}\nendstream`);pageIds.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${c} 0 R >>`))}objects[catalog-1]=`<< /Type /Catalog /Pages ${pagesObj} 0 R >>`;objects[pagesObj-1]=`<< /Type /Pages /Kids [${pageIds.map(i=>`${i} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;const info=add(`<< /Title (${pdfText(title)}) /Creator (Vectra) >>`);let out='%PDF-1.4\n%\xE2\xE3\xCF\xD3\n',offsets=[0];objects.forEach((b,i)=>{offsets[i+1]=Buffer.byteLength(out,'latin1');out+=`${i+1} 0 obj\n${b}\nendobj\n`});const xref=Buffer.byteLength(out,'latin1');out+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`;for(let i=1;i<=objects.length;i++)out+=`${String(offsets[i]).padStart(10,'0')} 00000 n \n`;out+=`trailer\n<< /Size ${objects.length+1} /Root ${catalog} 0 R /Info ${info} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;return Buffer.from(out,'latin1')}
+
+export function buildXlsx(columns,rows,sheetName='Sheet1'){
+  const cell=(value,reference,style='')=>typeof value==='number'&&Number.isFinite(value)?`<c r="${reference}"${style}><v>${value}</v></c>`:typeof value==='boolean'?`<c r="${reference}" t="b"${style}><v>${value?1:0}</v></c>`:`<c r="${reference}" t="inlineStr"${style}><is><t xml:space="preserve">${xml(String(value??''))}</t></is></c>`;
+  const header=`<row r="1">${columns.map((column,index)=>cell(column.header,`${columnName(index+1)}1`,' s="1"')).join('')}</row>`,body=rows.map((row,rowIndex)=>`<row r="${rowIndex+2}">${columns.map((column,index)=>cell(row?.[column.key],`${columnName(index+1)}${rowIndex+2}`)).join('')}</row>`).join('');
+  return buildZip([
+    ['[Content_Types].xml','<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'],
+    ['_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml',`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xml(sheetName.slice(0,31))}" sheetId="1" r:id="rId1"/></sheets></workbook>`],
+    ['xl/_rels/workbook.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+    ['xl/styles.xml','<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2563EB"/><bgColor indexed="64"/></patternFill></fill><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf fontId="0" fillId="0" borderId="0" xfId="0"/><xf fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs></styleSheet>'],
+    ['xl/worksheets/sheet1.xml',`<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultColWidth="16"/><sheetData>${header}${body}</sheetData><autoFilter ref="A1:${columnName(columns.length)}${rows.length+1}"/></worksheet>`]
+  ].map(([name,text])=>({name,data:Buffer.from(text)})));
+}
+
+export function buildPptx(slides,title='Vectra Presentation'){
+  const slideFiles=slides.map((slide,index)=>[`ppt/slides/slide${index+1}.xml`,pptSlide(slide)]),overrides=slides.map((_,index)=>`<Override PartName="/ppt/slides/slide${index+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`).join(''),ids=slides.map((_,index)=>`<p:sldId id="${256+index}" r:id="rId${index+2}"/>`).join(''),rels=slides.map((_,index)=>`<Relationship Id="rId${index+2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide${index+1}.xml"/>`).join('');
+  const files=[
+    ['[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>${overrides}</Types>`],
+    ['_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>'],
+    ['ppt/presentation.xml',`<?xml version="1.0" encoding="UTF-8"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>${ids}</p:sldIdLst><p:sldSz cx="12192000" cy="6858000" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`],
+    ['ppt/_rels/presentation.xml.rels',`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/>${rels}</Relationships>`],
+    ['ppt/slideMasters/slideMaster1.xml','<?xml version="1.0" encoding="UTF-8"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld><p:sldLayoutIdLst><p:sldLayoutId id="1" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>'],
+    ['ppt/slideMasters/_rels/slideMaster1.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>'],
+    ['ppt/slideLayouts/slideLayout1.xml','<?xml version="1.0" encoding="UTF-8"?><p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld></p:sldLayout>'],
+    ['ppt/slideLayouts/_rels/slideLayout1.xml.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>'],
+    ['ppt/theme/theme1.xml','<?xml version="1.0" encoding="UTF-8"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Vectra"><a:themeElements><a:clrScheme name="Vectra"><a:dk1><a:srgbClr val="111827"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:accent1><a:srgbClr val="2563EB"/></a:accent1><a:accent2><a:srgbClr val="14B8A6"/></a:accent2><a:accent3><a:srgbClr val="F59E0B"/></a:accent3><a:accent4><a:srgbClr val="8B5CF6"/></a:accent4><a:accent5><a:srgbClr val="EC4899"/></a:accent5><a:accent6><a:srgbClr val="64748B"/></a:accent6><a:hlink><a:srgbClr val="2563EB"/></a:hlink><a:folHlink><a:srgbClr val="7C3AED"/></a:folHlink></a:clrScheme><a:fontScheme name="Vectra"><a:majorFont><a:latin typeface="Aptos Display"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/></a:minorFont></a:fontScheme><a:fmtScheme name="Vectra"/></a:themeElements></a:theme>'],
+    ...slideFiles,
+    ...slides.map((_,index)=>[`ppt/slides/_rels/slide${index+1}.xml.rels`,'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>'])
+  ];
+  return buildZip(files.map(([name,text])=>({name,data:Buffer.from(text)})));
+}
+
+function columnName(count){let result='';for(let value=Math.max(1,count);value;value=Math.floor((value-1)/26))result=String.fromCharCode(65+(value-1)%26)+result;return result}
+function pptSlide(slide){
+  const shape=(id,name,x,y,cx,cy,paragraphs,size,color,bold=false)=>`<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${xml(name)}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>${paragraphs.map(text=>`<a:p><a:r><a:rPr lang="en-US" sz="${size}"${bold?' b="1"':''}><a:solidFill><a:srgbClr val="${color}"/></a:solidFill></a:rPr><a:t>${xml(text)}</a:t></a:r><a:endParaRPr lang="en-US" sz="${size}"/></a:p>`).join('')}</p:txBody></p:sp>`;
+  return`<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="F8FAFC"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${shape(2,'Title',700000,500000,10800000,900000,[slide.title],3000,'111827',true)}${shape(3,'Body',900000,1650000,10300000,4300000,(slide.bullets||[]).map(text=>`• ${text}`),1900,'334155')}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
+}
+export function artifactForRequest(userText,responseText,attachments=[]){
+  const lower=userText.toLowerCase();
+  const editVerb=/\b(create|generate|make|write|produce|export|edit|revise|update|rewrite|convert)\b/.test(lower);
+  if(!editVerb)return[];
+  const artifacts=[];
+  const sourceDoc=attachments.find(a=>/\.(docx|pdf)$/i.test(a.name||''));
+  let wanted=[...lower.matchAll(/\b([a-z0-9._-]+\.(?:pdf|docx|txt|md|json|csv|html|py|js|mjs|cjs|ts|tsx|jsx|cs|cpp|cc|cxx|c|h|hpp|java|go|rs|rb|php|sh|sql|yaml|yml|xml))\b/gi)].map(m=>m[1]);
+  if(/\bpdf\b/.test(lower)&&!wanted.some(n=>/\.pdf$/i.test(n)))wanted.push(sourceDoc&&/\.pdf$/i.test(sourceDoc.name)?`revised-${sourceDoc.name}`:'vectra-output.pdf');
+  if(/\b(docx|word document|word file)\b/.test(lower)&&!wanted.some(n=>/\.docx$/i.test(n)))wanted.push(sourceDoc&&/\.docx$/i.test(sourceDoc.name)?`revised-${sourceDoc.name}`:'vectra-output.docx');
+  if(!wanted.length&&sourceDoc&&/\b(edit|revise|update|rewrite)\b/.test(lower))wanted.push(`revised-${sourceDoc.name}`);
+  for(const requested of [...new Set(wanted)].slice(0,6)){
+    const name=requested.replace(/^.*[\/]/,'');const ext=(name.split('.').pop()||'').toLowerCase();
+    if(ext==='docx')artifacts.push({name,mime:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',base64:buildDocx(responseText,name.replace(/\.docx$/i,'')).toString('base64'),previewText:responseText});
+    else if(ext==='pdf')artifacts.push({name,mime:'application/pdf',base64:buildPdf(responseText,name.replace(/\.pdf$/i,'')).toString('base64'),previewText:responseText});
+    else {const content=extractBestFileContent(responseText,ext);if(content)artifacts.push({name,mime:textMime(ext),base64:Buffer.from(content,'utf8').toString('base64'),previewText:content})}
+  }
+  return artifacts;
+}
+
+function fileName(text,ext,fallback){const m=text.match(new RegExp(`([A-Za-z0-9._-]+\\.${ext})\\b`,'i'));if(m?.[1])return m[1];if(fallback)return `revised-${fallback}`;return `vectra-output.${ext}`}
+// A model asked for raw file content sometimes answers in prose instead of
+// fencing it (despite the system prompt asking for exactly one fenced
+// block). Dumping that chatty response into a .py/.cs/.cpp file — the old
+// behavior — produced a "file" that was actually the assistant's reply
+// text. When no fence exists, only trust the raw response if its opening
+// line reads like code rather than a sentence; otherwise return '' so the
+// caller skips creating a broken artifact instead of shipping a wrong one.
+const PROSE_OPENING = /^(here('|’)s|here is|below is|sure[,!.]|certainly|okay[,!.]|great[,!.]|i('|’)ve|i have|this (is|creates|generates)|the following|let me|note:|sorry)/i;
+function looksLikeSource(text){const firstLine=text.split(/\r?\n/,1)[0].trim();if(!firstLine)return false;return!PROSE_OPENING.test(firstLine)}
+function extractBestFileContent(text,ext){const blocks=[...String(text||'').matchAll(/```([A-Za-z0-9_+.-]*)\n([\s\S]*?)```/g)];if(blocks.length){const aliases={py:['python','py'],js:['javascript','js'],ts:['typescript','ts'],tsx:['tsx','typescript'],jsx:['jsx','javascript'],cs:['csharp','cs'],cpp:['cpp','c++'],cc:['cpp','c++'],c:['c'],java:['java'],go:['go'],rs:['rust','rs'],sh:['bash','sh','shell'],json:['json'],html:['html'],sql:['sql']};const wanted=aliases[ext]||[ext];const exact=blocks.find(b=>wanted.includes(String(b[1]||'').toLowerCase()));return(exact||blocks.reduce((a,b)=>(b[2].length>a[2].length?b:a),blocks[0]))[2].trim()}const raw=String(text||'').trim();return looksLikeSource(raw)?raw:''}
+function textMime(ext){return({txt:'text/plain',md:'text/markdown',json:'application/json',csv:'text/csv',html:'text/html',py:'text/x-python',js:'text/javascript',mjs:'text/javascript',cjs:'text/javascript',ts:'text/typescript',tsx:'text/typescript',jsx:'text/javascript',cs:'text/x-csharp',cpp:'text/x-c++src',cc:'text/x-c++src',cxx:'text/x-c++src',c:'text/x-csrc',h:'text/x-chdr',hpp:'text/x-c++hdr',java:'text/x-java-source',go:'text/x-go',rs:'text/x-rustsrc',rb:'text/x-ruby',php:'text/x-php',sh:'text/x-shellscript',sql:'application/sql',yaml:'application/yaml',yml:'application/yaml',xml:'application/xml'})[ext]||'text/plain'}
+function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'})}
+function decodeXml(v){return String(v||'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&apos;/g,"'")}
+
+// Convert Word/PowerPoint XML into readable lines while retaining table cells and rows.
+function officeXmlToLayout(xml){
+  return normalize(String(xml||'')
+    .replace(/<(?:w:tab|a:tab)\b[^>]*\/>/g,'\t')
+    .replace(/<(?:w:br|a:br)\b[^>]*\/>/g,'\n')
+    .replace(/<\/(?:w:tc|a:tc)>/g,'\t')
+    .replace(/<\/(?:w:tr|a:tr)>/g,'\n')
+    .replace(/<\/(?:w:p|a:p)>/g,'\n')
+    .replace(/<[^>]+>/g,'')
+    .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&apos;/g,"'"));
+}
+
+function spreadsheetColumnIndex(reference){const letters=String(reference).match(/^[A-Z]+/i)?.[0]?.toUpperCase()||'A';let value=0;for(const letter of letters)value=value*26+letter.charCodeAt(0)-64;return Math.max(0,value-1)}
+
+// Read common raster dimensions without decoding pixels or adding native dependencies.
+function imageDimensions(bytes){
+  const b=Buffer.from(bytes);
+  if(b.length>=24&&b.toString('ascii',1,4)==='PNG')return{width:b.readUInt32BE(16),height:b.readUInt32BE(20)};
+  if(b.length>=10&&(b.toString('ascii',0,3)==='GIF'))return{width:b.readUInt16LE(6),height:b.readUInt16LE(8)};
+  if(b.length>=4&&b[0]===0xff&&b[1]===0xd8){let offset=2;while(offset+9<b.length){if(b[offset]!==0xff){offset++;continue}const marker=b[offset+1],size=b.readUInt16BE(offset+2);if([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker))return{width:b.readUInt16BE(offset+7),height:b.readUInt16BE(offset+5)};if(size<2)break;offset+=2+size}}
+  return{};
+}
+
+function imageMime(name){const ext=String(name).split('.').pop()?.toLowerCase();return({png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',gif:'image/gif',bmp:'image/bmp',tif:'image/tiff',tiff:'image/tiff'})[ext]||''}
+function extractZipEntriesMatching(zip,pattern){let e=-1;for(let i=zip.length-22;i>=Math.max(0,zip.length-70000);i--)if(zip.readUInt32LE(i)===0x06054b50){e=i;break}if(e<0)throw new Error('Invalid ZIP');const total=zip.readUInt16LE(e+10);let off=zip.readUInt32LE(e+16),out=[];for(let i=0;i<total;i++){if(zip.readUInt32LE(off)!==0x02014b50)throw new Error('Invalid ZIP directory');const method=zip.readUInt16LE(off+10),size=zip.readUInt32LE(off+20),nl=zip.readUInt16LE(off+28),el=zip.readUInt16LE(off+30),cl=zip.readUInt16LE(off+32),lo=zip.readUInt32LE(off+42),name=zip.subarray(off+46,off+46+nl).toString('utf8');if(pattern.test(name)){const lnl=zip.readUInt16LE(lo+26),lel=zip.readUInt16LE(lo+28),begin=lo+30+lnl+lel,data=zip.subarray(begin,begin+size);out.push({name,data:method===0?Buffer.from(data):method===8?inflateRawSync(data):Buffer.alloc(0)})}off+=46+nl+el+cl}return out}
+function isMeaningful(text){const v=normalize(text||'');if(!v)return false;const s=v.slice(0,20000);let letters=0,suspicious=0;for(const ch of s){if(/\p{L}|\p{N}/u.test(ch))letters++;const c=ch.charCodeAt(0);if(ch==='\ufffd'||(c>=0x80&&c<=0x9f))suspicious++;}return letters/Math.max(1,s.length)>.08&&suspicious/Math.max(1,s.length)<.02}
+function extractLegacyDocFallback(bytes){const buffer=Buffer.from(bytes),parts=[];const ascii=buffer.toString('latin1').match(/[\x20-\x7e\r\n\t]{8,}/g)||[];parts.push(...ascii);if(buffer.length>1){const utf16=buffer.toString('utf16le').match(/[\p{L}\p{N}\p{P}\p{Zs}\r\n\t]{6,}/gu)||[];parts.push(...utf16)}const text=normalize(parts.join('\n'));return isMeaningful(text)?text:''}
+function normalize(t){return t.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').replace(/[ \t]+\n/g,'\n').replace(/\n{4,}/g,'\n\n\n').trim()}
+function collect(source,out){let m;const literal=/\(((?:\\.|[^\\)])*)\)\s*(?:Tj|'|")/g;while((m=literal.exec(source)))out.push(m[1].replace(/\\([nrt()\\])/g,(_,c)=>({n:'\n',r:'\r',t:'\t','(':'(',')':')','\\':'\\'}[c]||c)));const arrays=/\[((?:.|\n|\r)*?)\]\s*TJ/g;while((m=arrays.exec(source))){const inner=[],p=/\(((?:\\.|[^\\)])*)\)|<([0-9A-Fa-f\s]+)>/g;let x;while((x=p.exec(m[1])))inner.push(x[1]!==undefined?x[1]:Buffer.from((x[2]||'').replace(/\s+/g,''),'hex').toString('utf8'));if(inner.length)out.push(inner.join(''))}}
+async function withTemp(ext,bytes,fn){const dir=await mkdtemp(join(tmpdir(),'vectra-web-'));const f=join(dir,`file${ext}`);try{await writeFile(f,bytes);return await fn(f)}finally{await rm(dir,{recursive:true,force:true}).catch(()=>{})}}
+function extractZipEntry(zip,wanted){let e=-1;for(let i=zip.length-22;i>=Math.max(0,zip.length-70000);i--)if(zip.readUInt32LE(i)===0x06054b50){e=i;break}if(e<0)throw new Error('Invalid ZIP');const total=zip.readUInt16LE(e+10);let off=zip.readUInt32LE(e+16);for(let i=0;i<total;i++){if(zip.readUInt32LE(off)!==0x02014b50)throw new Error('Invalid ZIP directory');const method=zip.readUInt16LE(off+10),size=zip.readUInt32LE(off+20),nl=zip.readUInt16LE(off+28),el=zip.readUInt16LE(off+30),cl=zip.readUInt16LE(off+32),lo=zip.readUInt32LE(off+42),name=zip.subarray(off+46,off+46+nl).toString('utf8');if(name===wanted){const lnl=zip.readUInt16LE(lo+26),lel=zip.readUInt16LE(lo+28),start=lo+30+lnl+lel,data=zip.subarray(start,start+size);if(method===0)return Buffer.from(data);if(method===8)return inflateRawSync(data);throw new Error('Unsupported ZIP compression')}off+=46+nl+el+cl}throw new Error('ZIP entry not found')}
+function docXml(content,title){const body=[];if(title)body.push(p(title,'Title'));for(const raw of content.replace(/\r\n/g,'\n').split('\n'))body.push(raw.startsWith('## ')?p(raw.slice(3),'Heading2'):raw.startsWith('# ')?p(raw.slice(2),'Heading1'):p(raw));return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body.join('')}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>`}
+function p(t,s){return `<w:p>${s?`<w:pPr><w:pStyle w:val="${s}"/></w:pPr>`:''}<w:r><w:t xml:space="preserve">${xml(t)}</w:t></w:r></w:p>`}function styles(){return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="36"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="30"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style></w:styles>`}function xml(v){return v.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;')}function pdfText(v){return v.normalize('NFKD').replace(/[^\x20-\x7E\xA0-\xFF]/g,'?').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')}function wrap(lines,w){const out=[];for(const line of lines){if(!line){out.push('');continue}let r=line;while(r.length>w){let c=r.lastIndexOf(' ',w);if(c<Math.floor(w*.55))c=w;out.push(r.slice(0,c));r=r.slice(c).trimStart()}out.push(r)}return out}
+const table=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();function crc32(b){let c=0xffffffff;for(const x of b)c=table[(c^x)&255]^(c>>>8);return(c^0xffffffff)>>>0}function buildZip(files){const locals=[],centrals=[];let offset=0;for(const f of files){const name=Buffer.from(f.name),z=deflateRawSync(f.data),crc=crc32(f.data),l=Buffer.alloc(30);l.writeUInt32LE(0x04034b50);l.writeUInt16LE(20,4);l.writeUInt16LE(0x0800,6);l.writeUInt16LE(8,8);l.writeUInt32LE(crc,14);l.writeUInt32LE(z.length,18);l.writeUInt32LE(f.data.length,22);l.writeUInt16LE(name.length,26);locals.push(l,name,z);const c=Buffer.alloc(46);c.writeUInt32LE(0x02014b50);c.writeUInt16LE(20,4);c.writeUInt16LE(20,6);c.writeUInt16LE(0x0800,8);c.writeUInt16LE(8,10);c.writeUInt32LE(crc,16);c.writeUInt32LE(z.length,20);c.writeUInt32LE(f.data.length,24);c.writeUInt16LE(name.length,28);c.writeUInt32LE(offset,42);centrals.push(c,name);offset+=l.length+name.length+z.length}const co=offset,cs=centrals.reduce((n,b)=>n+b.length,0),e=Buffer.alloc(22);e.writeUInt32LE(0x06054b50);e.writeUInt16LE(files.length,8);e.writeUInt16LE(files.length,10);e.writeUInt32LE(cs,12);e.writeUInt32LE(co,16);return Buffer.concat([...locals,...centrals,e])}

@@ -1,0 +1,103 @@
+# Changelog
+
+## 1.2.0
+
+- Development release for the next set of Vectra extension improvements.
+
+## 1.1.9
+
+- Reorganized the extension source into clear `agent` and `core` domains, with agent skills and guarded tools grouped together.
+- Migrated API keys to VS Code SecretStorage, including safe one-time migration from older plaintext credential files.
+- Added VS Code language-intelligence tools for workspace symbols, definitions, and references.
+- Added project-owned skills through `.vectra/skills/<name>/SKILL.md`, loaded on demand without bypassing existing safety controls.
+- Improved Local API setup for keyless OpenAI-compatible model servers and strengthened clean-build and packaging verification.
+- Explicit single-folder requests in Agent mode now create the directory after one confirmation, without starting a model or the full agent runtime.
+
+## 1.1.8
+
+- Added persistent multi-source research runs in the VS Code extension so Vectra can continue searching, compare evidence, and recover from individual web-tool failures instead of stopping after the first result.
+- Strengthened live web access across the extension and web app with search-provider fallbacks, recoverable timeouts, reader fallbacks for blocked pages, and structured academic-paper discovery.
+- Fixed Vectra Web request cancellation so normal HTTP request completion no longer aborts ongoing weather, market, research, or other live-information work.
+- Added Vectra Web's universal artifact viewer for images and OCR regions, PDFs, rendered Markdown, code, text, and generated-document content before download, including saved-conversation previews.
+- Minified the extension's production bundle and added a 2.50 MiB bundle-size gate so future builds cannot silently grow beyond the release budget.
+- Expanded the main, extension, and web documentation with model discovery, CPU/GPU/hybrid execution, OpenAI-compatible local API setup, Marketplace installation, privacy, and troubleshooting guidance.
+
+## 1.1.7
+
+- Vectra Web: `show_image` now displays uploaded PDFs — pass the PDF name plus a 1-based `page` and the server rasterizes that page on demand from the original document (native-text pages included, which were never pre-rendered before). "x.pdf is not an image attachment" errors are gone, and OCR + image-view requests show the page with highlighted text regions.
+- Vectra Web: new `fetch_image` agent tool downloads a public web image (SSRF-guarded, size-capped, format-sniffed) and opens it in the split viewer; given a web page URL instead of an image file, it returns the page's referenced image URLs (og:image and `<img>` sources) so the agent can fetch the right one instead of just citing a link. Fetched images become attachments reusable with `show_image`.
+- Vectra Web: images transcribed by visual OCR keep display-only bytes, so an uploaded image or rendered PDF page can still be re-displayed and highlighted after OCR instead of failing with "No image bytes found".
+
+- Deep Agents runs are no longer cut off by a derived step budget: they now run until the agent finishes or you cancel. Long research runs no longer stop early with a "step budget (120 internal steps)" message. `vectra.deepAgentRecursionLimit` remains available as an opt-in cap (0 = unlimited).
+- The activity log now reads as a timeline: a rail connects the steps, finished steps show how long they took, and the current step ticks a live timer.
+- Live web access now works in both products: `web_search` and `web_fetch` moved into the shared core, Vectra Web gained working implementations of both (it previously only advertised them), and real-time questions (weather, time, news, prices) now route to the agent so those tools are actually used instead of a "I can't know that" chat reply.
+- The agent now knows the current date and time on every request and answers date questions directly instead of claiming no real-time access.
+- Vectra Web: new split image viewer with two agent tools — `show_image` re-displays an uploaded image with optional labeled bounding boxes (fractions of the image, so any resolution works), and `draw_image` renders a model-generated SVG figure (plot, chart, diagram). The viewer opens as a third panel automatically and every visual stays re-openable and downloadable from its message.
+- Live "Thinking…" display in both products: a reasoning model's `<think>` stream now renders in a collapsible block with a ticking timer instead of being discarded, so long analyses show what the model is working through. Also fixes Vectra Web briefly flashing raw think markup in streamed replies.
+
+## 1.1.6
+
+- Fixed file creation with local models: JSON tool envelopes broken by unescaped newlines in long file content are now repaired and executed, and OpenAI-style `tool_calls` (`write_file`, `file_path`, container-style `/workspace/…` paths) are accepted and mapped to Vectra's real tools instead of being dropped.
+- A tool envelope that still cannot be parsed is retried once with explicit escaping instructions and never shown to the user as raw JSON; turns that only narrate an action ("Creating README.md…") without calling a tool are re-asked to act.
+- Files a Deep Agents run leaves in its internal scratch space are now recovered as real reviewed proposals instead of silently vanishing.
+- The final answer now lists what changed: proposed file changes with their edited line ranges, plus folder/path operations applied during the run.
+- The todo checklist renders inline inside the active assistant message (with its close button) and disappears automatically when the run finishes, instead of lingering as a separate panel.
+
+## 1.1.5
+
+- Added remote/self-hosted OpenAI-compatible API configuration with optional self-signed TLS support.
+- Added shared local chat history for the web app and VS Code extension; reloads now begin with a fresh chat.
+
+## 1.1.4
+
+- Fixed plan approval as a hard execution boundary so approved file operations continue in the same request instead of requiring repeated prompts.
+- Moved plan review into the chat flow with checklist steps, duplicate-step cleanup, and automatic collapse after approval or rejection.
+
+## 1.1.3
+
+- Added a specialized Deep Agents subagent team — planner, researcher, coder, tester, reviewer, security, and documentation — each limited to only the host tools its role needs (coordination tools and further delegation are never available to any of them).
+- Delegated work now shows as a live, collapsible group in the activity log instead of interleaving with the main run, in both the extension sidebar and Vectra Web.
+- Added `vectra.maxConcurrentSubagents` to bound how many subagent tool calls run at once, protecting the single local llama.cpp process from being hammered by several delegated tasks together.
+- Fixed Vectra Web's activity log: it previously cycled a handful of canned strings on a timer instead of reflecting the agent's real progress; it now renders the same live events the extension does.
+
+## 1.1.2
+
+- Bounded local model detection with a wall-clock deadline, per-tier depth limits, and a per-directory read timeout, so a first scan finishes in seconds instead of crawling every drive letter to depth 12.
+- Rebuilt the Local Model flow as one live picker that appears before any scanning, streams results in, and no longer dismisses itself when focus returns to the chat view.
+- A chosen model folder is now remembered and scanned on its own, with "Change model folder" and "Scan whole computer" always available; selecting a model no longer narrows that folder to the file's own directory.
+- Resolved symlinked and junctioned directories by real path so self-referential Windows profile junctions can no longer stall a scan.
+
+## 1.1.1
+
+- Accelerated broad GGUF discovery with bounded concurrent directory reads and user cancellation.
+- Restored automatic `llama-server` detection for Vectra-managed installs, model-adjacent binaries, and Windows WinGet installs.
+
+## 1.1.0
+
+- Unified tool metadata, aliases, risk policy, progress wording, web-safe file generation, and installed-model discovery in the shared TypeScript core used by both the extension and Node.js web host.
+
+## 1.0.1
+
+- Added the shared Vectra agent core and Deep Agents orchestration while keeping workspace access behind Vectra's reviewed host tools.
+- Expanded the workspace toolset with explicit folder creation, rename, move, copy, and confirmed directory deletion.
+- Restored live generation progress, token streaming where supported, and the Stop control.
+- Fixed human-in-the-loop plan approval so agent runs pause for a decision and never report unexecuted file or folder creation as complete.
+- Automatically removes resolved plan and file-review cards from chat after approval or rejection.
+- Improved tool naming, local-model discovery, context handling, and extension/web capability parity.
+- Added adaptive llama.cpp launch profiles, native function calling with a compatibility fallback, model-driven tool discovery, prompt-cache reuse, and separate larger hybrid GPU/RAM model recommendations.
+
+## 1.0.0
+
+Initial public release, published on the VS Code Marketplace as **Vectra AI** (`laudarisd.vectra-ai`) — an upgraded, continued version of the previous Vectra agent, now released under a new Marketplace identifier.
+
+Vectra is a local AI coding agent for VS Code: point it at a GGUF model through llama.cpp (or your own OpenAI/Anthropic/Gemini/Ollama/OpenAI-compatible endpoint), and it reads your repository, proposes reviewed edits, and runs approved commands.
+
+- Local and cloud model providers: llama.cpp (GGUF), Ollama, OpenAI, Anthropic, Gemini, and any OpenAI-compatible endpoint.
+- Repo-aware Agent and Ask modes with read/search/edit tools, a mandatory reviewed-plan step before any write or execution action, and a live todo checklist for multi-step tasks.
+- Every file change is a reviewed diff (create, replace, line-level edit, or delete) — nothing is written until you accept it.
+- Command and test execution always requires explicit confirmation.
+- Document support: read PDF/DOCX/PPTX/XLSX/RTF, generate/edit PDF/DOCX, and inspect images or scanned pages with a vision-capable local model.
+- Git-aware context: read-only `git status`/`git diff` tools and automatic loading of project instructions from `VECTRA.md`.
+- Streaming conversational replies, persistent chat history across reloads, and markdown/fenced-code rendering with copy buttons.
+- Automatic context-window clamping and configurable idle timeouts so local CPU/GPU inference isn't cut off or rejected for exceeding `n_ctx`.
+- Shared engine and UI with Vectra Web, so the same agent runs in VS Code and in the browser.

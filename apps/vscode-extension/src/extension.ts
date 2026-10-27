@@ -10,6 +10,8 @@ import { LocalCredentialStore } from './core/providers/LocalCredentialStore';
 import { LlamaCppRuntime } from './core/runtime/llama/LlamaCppRuntime';
 import { WorkspaceTools } from './agent/tools/workspace/WorkspaceTools';
 import { CommandRunner } from './agent/tools/workspace/CommandRunner';
+import { TerminalRunner } from './agent/tools/workspace/TerminalRunner';
+import { InlineSuggestionProvider } from './core/inline/InlineSuggestionProvider';
 import { AttachmentService } from './core/documents/AttachmentService';
 import { ChatViewProvider } from './core/ui/ChatViewProvider';
 import { ModelInfo, ProviderId } from './core/types';
@@ -44,13 +46,15 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
   localLlama = new LlamaCppRuntime();
   const providers = new ProviderManager(credentials);
   const tools = new WorkspaceTools();
-  const commands = new CommandRunner();
+  const terminal = new TerminalRunner();
+  const commands = new CommandRunner(terminal);
   const attachments = new AttachmentService();
   const patches = new EditProposalManager(tools);
   const todos = new TodoManager();
   const plans = new PlanManager();
   const diffs = new DiffContentProvider(patches);
   const controller = new AgentController(providers, new ContextCollector(), tools, patches, commands, todos, plans);
+  const inline = new InlineSuggestionProvider(providers, output);
   const chat = new ChatViewProvider(
     context.extensionUri,
     controller,
@@ -74,8 +78,12 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
 
   context.subscriptions.push(
     localLlama,
+    terminal,
     commands,
+    inline,
     status,
+    vscode.languages.registerInlineCompletionItemProvider({ pattern: '**' }, inline),
+    vscode.commands.registerCommand('vectra.toggleInlineSuggestions', () => inline.toggle()),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffs),
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chat, {
       webviewOptions: { retainContextWhenHidden: true }
@@ -173,7 +181,7 @@ function activateVectra(context: vscode.ExtensionContext, output: vscode.OutputC
       await vscode.env.openExternal(uri);
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration('vectra')) void chat.refresh();
+      if (event.affectsConfiguration('vectra')) { void chat.refresh(); inline.refreshStatus(); }
     }),
     vscode.workspace.onDidGrantWorkspaceTrust(() => {
       output.appendLine('[Vectra] Workspace trust granted.');

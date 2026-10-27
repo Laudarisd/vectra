@@ -15,6 +15,9 @@ export interface AgentConfiguration {
   agentHarness: AgentHarness;
   /** 'fast' asks thinking-capable local models to skip hidden reasoning on agent tool turns. */
   localReasoning: 'fast' | 'full';
+  /** Where approved commands execute: the integrated terminal (with background fallback) or a hidden shell. */
+  commandExecution: 'terminal' | 'background';
+  inlineSuggestions: { enabled: boolean; debounceMs: number; maxLines: number; model: string };
   localModelPath: string;
   localModelDirectory: string;
   modelsDirectory: string;
@@ -60,6 +63,13 @@ export function getConfig(): AgentConfiguration {
     model: c.get<string>('model', '').trim(),
     agentHarness: c.get<AgentHarness>('agentHarness', 'deepagents'),
     localReasoning: c.get<AgentConfiguration['localReasoning']>('localReasoning', 'fast'),
+    commandExecution: c.get<AgentConfiguration['commandExecution']>('commandExecution', 'terminal'),
+    inlineSuggestions: {
+      enabled: c.get<boolean>('inlineSuggestions.enabled', false),
+      debounceMs: c.get<number>('inlineSuggestions.debounceMs', 350),
+      maxLines: c.get<number>('inlineSuggestions.maxLines', 6),
+      model: c.get<string>('inlineSuggestions.model', '').trim()
+    },
     localModelPath: c.get<string>('localModelPath', '').trim(),
     localModelDirectory: c.get<string>('localModelDirectory', '').trim(),
     modelsDirectory: c.get<string>('modelsDirectory', '').trim(),

@@ -273,4 +273,9 @@ dialog::backdrop{background:#0008}
 .md-code-block{margin:8px 0 12px;border:1px solid var(--border);border-radius:10px;overflow:hidden}
 .md-code-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 10px;background:var(--bg-elevated);font-size:11px;color:var(--fg-muted)}
 .md-code-lang{text-transform:uppercase;letter-spacing:.05em}
-.md-copy-button{border:0;background:transpa
+.md-copy-button{border:0;background:transparent;color:#8ab4f8;font-size:11px;padding:2px 6px;border-radius:5px;cursor:pointer}
+.md-copy-button:hover{background:var(--bg-elevated-hover)}
+.md-code-block pre{margin:0;padding:12px 14px;overflow-x:auto;background:var(--bg-elevated)}
+.md-code-block code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;white-space:pre;color:var(--fg)}
+.stream-cursor{display:inline-block;width:.5em;height:1em;margin-left:1px;vertical-align:text-bottom;background:var(--fg);opacity:.7;animation:web-blink 1s step-start infinite}
+@keyframes web-blink{50%{opacity:0}}

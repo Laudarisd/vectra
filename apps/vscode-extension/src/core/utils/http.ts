@@ -111,10 +111,11 @@ export async function streamSse(
     const payload = trimmed.slice(5).trim();
     if (!payload || payload === '[DONE]') return;
     try {
-      const json = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }> };
+      const json = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string; reasoning_content?: string; reasoning?: string } }> };
       const delta = json.choices?.[0]?.delta;
-      // vLLM-style servers with a reasoning parser stream thinking separately.
-      if (delta?.reasoning_content) onThinking?.(delta.reasoning_content);
+      // Servers with a reasoning parser (vLLM, newer llama.cpp) stream thinking separately.
+      const reasoning = delta?.reasoning_content ?? delta?.reasoning;
+      if (reasoning) onThinking?.(reasoning);
       if (delta?.content) onDelta(delta.content);
     } catch {
       // Ignore keep-alive/partial lines; the buffer carries the remainder to the next chunk.
@@ -163,4 +164,47 @@ async function consumeStream(
     const response = await fetchWithTls(url, { ...init, signal: controller.signal }, options.allowInsecureTls, idleTimeoutMs);
     if (!response.ok || !response.body) {
       const raw = await response.text().catch(() => '');
-      throw new Error(`HTTP ${response.status}
+      throw new Error(`HTTP ${response.status} ${response.statusText}: ${raw.slice(0, 2000)}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const visible = new VisibleModelTextStream(onDelta, options.onThinking);
+    const collect = (delta: string) => visible.push(delta);
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      resetIdle();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) handleLine(line, collect, options.onThinking);
+    }
+    if (buffer.trim()) handleLine(buffer, collect, options.onThinking);
+    return visible.finish();
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        externalSignal?.aborted
+          ? 'Request cancelled.'
+          : `Local model produced no output for ${Math.round(idleTimeoutMs / 1000)}s and was stopped.`
+      );
+    }
+    throw describeFetchError(error);
+  } finally {
+    clearTimeout(idleTimer!);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
+  }
+}
+
+/** undici hides the real failure behind "fetch failed"; surface its cause (ECONNREFUSED, other side closed, headers timeout…) so the chat error is actionable. */
+function describeFetchError(error: unknown): unknown {
+  const cause = (error as { cause?: { code?: string; message?: string } } | undefined)?.cause;
+  if (error instanceof Error && error.message === 'fetch failed' && cause) {
+    const detail = cause.message && cause.code && cause.message.includes(cause.code) ? cause.message : [cause.code, cause.message].filter(Boolean).join(' ');
+    return new Error(`fetch failed: ${detail}`);
+  }
+  return error;
+}

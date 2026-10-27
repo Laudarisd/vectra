@@ -5,9 +5,13 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { resolveWorkspacePath } from '../../../core/utils/path';
+import { getConfig } from '../../../core/utils/config';
+import { TerminalRunner } from './TerminalRunner';
 
 export class CommandRunner implements vscode.Disposable {
   private readonly output = vscode.window.createOutputChannel('Vectra · Commands');
+
+  constructor(private readonly terminal?: TerminalRunner) {}
 
   async run(command: string, cwdInput = '', timeoutMs = 120_000, reason = '', kind: 'command' | 'tests' | 'file' | 'project' = 'command', signal?: AbortSignal): Promise<string> {
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace before Vectra can run commands.');
@@ -19,9 +23,16 @@ export class CommandRunner implements vscode.Disposable {
     if (choice !== action) return 'DENIED BY USER: command was not run.';
     if (signal?.aborted) throw new Error('Request cancelled.');
     const limit = Math.min(Math.max(Number(timeoutMs) || 120_000, 1_000), 15 * 60_000);
-    this.output.show(true);
+    // Copilot-style: run where the user can watch and type, reading the output
+    // through shell integration; fall back to the background shell when the
+    // terminal cannot report output (no shell integration, e.g. cmd.exe).
     this.output.appendLine(`\n$ ${command}\n[cwd] ${cwd}`);
-    const result = await spawnShell(command, cwd, limit, chunk => this.output.append(chunk), signal);
+    const inTerminal = this.terminal && getConfig().commandExecution === 'terminal';
+    let result = inTerminal ? await this.terminal!.run(command, cwd, limit, chunk => this.output.append(chunk), signal) : undefined;
+    if (!result) {
+      this.output.show(true);
+      result = await spawnShell(command, cwd, limit, chunk => this.output.append(chunk), signal);
+    }
     this.output.appendLine(`\n[exit ${result.exitCode}${result.timedOut ? ', timed out' : ''}${result.cancelled ? ', stopped by user' : ''}]`);
     if (result.cancelled) throw new Error('Request cancelled.');
     const joined = `${result.stdout}${result.stderr ? `\nSTDERR\n${result.stderr}` : ''}`.trim();

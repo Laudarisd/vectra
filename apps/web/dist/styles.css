@@ -105,6 +105,12 @@ select,.ghost{border:1px solid var(--border);background:var(--bg);color:var(--fg
 .web-message-body,.web-message-content{min-width:0;max-width:100%}
 .web-message-content{width:100%;white-space:pre-wrap;line-height:1.65;overflow-wrap:anywhere;color:var(--fg)}
 .web-message.pending{opacity:.62}
+/* Messenger layout: the user's prompts sit on the right as bubbles, Vectra answers on the left. */
+.web-message.user{grid-template-columns:minmax(0,1fr) 30px;justify-items:end}
+.web-message.user .avatar{order:2}
+.web-message.user .web-message-body{order:1;max-width:78%;text-align:right}
+.web-message.user .web-message-content{display:inline-block;width:auto;text-align:left;background:var(--bg-elevated);border:1px solid var(--border);border-radius:16px 16px 4px 16px;padding:10px 14px}
+.web-message.user .message-actions,.web-message.user .message-files{justify-content:flex-end}
 .composer-zone{position:fixed;left:250px;right:0;bottom:0;padding:0 18px 13px;background:linear-gradient(0deg,var(--bg) 72%,rgba(var(--bg-rgb),0))}
 .composer,.attachments,.fineprint{max-width:780px;margin-left:auto;margin-right:auto}
 .composer{display:flex;align-items:flex-end;gap:8px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:24px;padding:10px 11px;box-shadow:0 10px 40px rgba(0,0,0,.18)}

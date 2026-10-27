@@ -101,6 +101,10 @@
         "category": "Vectra"
       },
       {
+        "command": "vectra.toggleInlineSuggestions",
+        "title": "Vectra: Toggle Inline Suggestions"
+      },
+      {
         "command": "vectra.showLogs",
         "title": "Show Vectra Logs",
         "category": "Vectra"
@@ -268,6 +272,42 @@
           ],
           "default": "fast",
           "description": "Hidden-reasoning policy for local and self-hosted models during agent runs. Cloud API providers ignore this."
+        },
+        "vectra.commandExecution": {
+          "type": "string",
+          "enum": [
+            "terminal",
+            "background"
+          ],
+          "enumDescriptions": [
+            "Run approved commands in the integrated terminal and read their output through shell integration; falls back to a background shell when the terminal cannot report output.",
+            "Run approved commands in a hidden background shell and log output to the Vectra · Commands channel."
+          ],
+          "default": "terminal",
+          "description": "Where approved run_command, run_tests, run_file, and run_project actions execute."
+        },
+        "vectra.inlineSuggestions.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show Copilot-style inline (ghost text) code suggestions from the configured model while typing. Preview: a small, fast coder model is recommended."
+        },
+        "vectra.inlineSuggestions.debounceMs": {
+          "type": "number",
+          "default": 350,
+          "minimum": 50,
+          "description": "Pause in typing before an inline suggestion is requested."
+        },
+        "vectra.inlineSuggestions.maxLines": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 40,
+          "description": "Maximum lines in one inline suggestion. A cursor in the middle of a line always gets a single line."
+        },
+        "vectra.inlineSuggestions.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model id used for inline suggestions, for example a 1.5B-3B coder model served by the current provider. Empty uses the chat model."
         },
         "vectra.maxAgentSteps": {
           "type": "number",

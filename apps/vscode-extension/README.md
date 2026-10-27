@@ -115,6 +115,11 @@ See the full [privacy policy](PRIVACY.md) and [security policy](SECURITY.md).
 - For local models: enough disk space and system memory for the selected GGUF model
 - For cloud models: a valid provider credential or compatible API endpoint
 
+## Terminal and inline suggestions (preview)
+
+- Approved commands run in the integrated terminal, where you can watch and type, while Vectra reads the output through shell integration. Set `vectra.commandExecution` to `background` to keep the hidden-shell behaviour.
+- Inline ghost-text suggestions (Copilot-style) are opt-in: enable `vectra.inlineSuggestions.enabled` or click "Vectra inline" in the status bar. Point `vectra.inlineSuggestions.model` at a small, fast coder model; a large chat model is too slow for keystroke-level suggestions.
+
 ## Commands
 
 Open the Command Palette and search for **Vectra** to:

@@ -2,7 +2,10 @@
 
 ## 1.2.0
 
-- Development release for the next set of Vectra extension improvements.
+- Faster local agent turns: lower per-request overhead when running GGUF models through llama.cpp.
+- Approved commands now run in the integrated terminal by default, so you can watch and type while Vectra reads the output. Set `vectra.commandExecution` to `background` for the previous hidden-shell behaviour.
+- Added opt-in inline ghost-text suggestions (`vectra.inlineSuggestions.*`) with a status-bar toggle and a separate small-model setting.
+- Rewrote the Marketplace README and fixed links that broke on the extension listing page.
 
 ## 1.1.9
 

@@ -1,3 +1,4 @@
+// Beginner guide: Re-exports Ollama and OpenAI-compatible model discovery helpers.
 export {
   discoverOllamaModels,
   discoverOpenAICompatibleModels,

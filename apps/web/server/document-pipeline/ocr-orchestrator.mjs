@@ -1,4 +1,4 @@
-// Beginner guide: Handles o cr o rc he st ra to r responsibilities for Vectra.
+// Beginner guide: Runs visual OCR over attachments and caches the resulting evidence.
 import { createHash } from 'node:crypto';
 import { OCR_CONCURRENCY } from './config.mjs';
 import { attachmentRootName, visualOcrEvidenceName } from './evidence.mjs';

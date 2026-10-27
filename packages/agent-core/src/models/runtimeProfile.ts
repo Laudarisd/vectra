@@ -1,4 +1,4 @@
-// Beginner guide: Handles r un ti me pr of il e responsibilities for Vectra.
+// Beginner guide: Chooses llama.cpp GPU layers, threads, and mode from a hardware snapshot.
 export type LlamaRuntimeMode = 'gpu-resident' | 'hybrid' | 'cpu';
 export type LlamaThreadProfile = 'auto' | 'performance' | 'efficiency';
 

@@ -1,3 +1,4 @@
+// Beginner guide: Tests that live web search and page fetch fall back gracefully on failures.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fetchWebPage, searchWeb } from '../tools/dist/liveWeb.js';

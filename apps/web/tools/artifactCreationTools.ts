@@ -1,3 +1,4 @@
+// Beginner guide: Agent tools that create downloadable documents and files in the web app.
 import { z } from 'zod';
 import { VectraDeepTool, VectraToolDefinition } from '@vectra/agent-core';
 

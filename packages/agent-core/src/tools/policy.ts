@@ -1,4 +1,4 @@
-// Beginner guide: Handles p ol ic y responsibilities for Vectra.
+// Beginner guide: Risk groups, subagent restrictions, and progress wording for tools.
 import { VECTRA_TOOL_DEFINITIONS } from './catalog';
 
 export const VECTRA_WRITE_OR_EXECUTE_TOOL_NAMES = new Set(

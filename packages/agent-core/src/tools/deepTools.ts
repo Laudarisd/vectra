@@ -1,4 +1,4 @@
-// Beginner guide: Handles d ee pt oo ls responsibilities for Vectra.
+// Beginner guide: Wraps Vectra host tools as Deep Agents tools and provides tool discovery.
 import { VectraDeepTool, VectraHostToolExecutor, VectraToolDefinition } from './contracts';
 import { z } from 'zod';
 

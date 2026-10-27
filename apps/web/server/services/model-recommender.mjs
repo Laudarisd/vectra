@@ -1,4 +1,4 @@
-// Beginner guide: Handles m od el r ec om me nd er responsibilities for Vectra.
+// Beginner guide: Picks catalog models that fit the detected RAM and VRAM budget.
 /**
  * A GPU with a known VRAM size sizes the recommendation directly (llama.cpp
  * offloads to it). Without one (no GPU, or a non-NVIDIA GPU the platform

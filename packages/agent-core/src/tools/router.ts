@@ -1,4 +1,4 @@
-// Beginner guide: Handles r ou te r responsibilities for Vectra.
+// Beginner guide: Routes a tool action to its registered handler.
 import type { AgentEventStream } from '../index';
 
 export type ToolHandler<TAction, TContext, TResult> = (action: TAction, context: TContext) => Promise<TResult> | TResult;

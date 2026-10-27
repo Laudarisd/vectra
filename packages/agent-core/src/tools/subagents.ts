@@ -1,4 +1,4 @@
-// Beginner guide: Handles s ub ag en ts responsibilities for Vectra.
+// Beginner guide: Specialist subagent roles and the tools each one may use.
 import { VectraDeepTool, VectraHostToolExecutor, VectraToolDefinition, VectraToolRisk } from './contracts';
 import { createVectraDiscoveryTools, createVectraHostTools } from './deepTools';
 

@@ -2,17 +2,19 @@
 
 <h1 align="center">Vectra</h1>
 
-<p align="center">A local-first AI workspace for VS Code and the web.</p>
+<p align="center">An AI workspace for VS Code and the web.</p>
 
 <p align="center">
   <a href="./apps/vscode-extension"><img src="https://img.shields.io/badge/VS_Code-Extension-007ACC?logo=visualstudiocode" alt="VS Code extension"></a>
   <a href="./apps/web"><img src="https://img.shields.io/badge/Web-AI_Workspace-4f46e5" alt="Web app"></a>
-  <a href="./apps/vscode-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.2.0-blue" alt="Extension version 1.2.0"></a>
+  <a href="./apps/vscode-extension/CHANGELOG.md"><img src="https://img.shields.io/badge/extension-1.2.1-blue" alt="Extension version 1.2.1"></a>
 </p>
 
 <p align="center"><a href="docs/ko/README.md">한국어</a></p>
 
 ## What is Vectra?
+
+> ⭐ **Stars are free, and they power the developer's coffee machine.** If Vectra helps you, hit the star button up top. The models will not run faster, but the maintainer will.
 
 Vectra works with local GGUF/Ollama models and cloud providers. The VS Code extension understands and edits your workspace with approval controls. The web app supports chat, research, attachments, OCR, charts, and downloadable files.
 

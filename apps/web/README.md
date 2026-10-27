@@ -2,7 +2,7 @@
 
 <h1 align="center">Vectra Web</h1>
 
-<p align="center">A local-first AI workspace in your browser.</p>
+<p align="center">An AI workspace in your browser.</p>
 
 <p align="center"><a href="../../docs/ko/web.md">한국어</a></p>
 

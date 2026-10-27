@@ -1,4 +1,4 @@
-// Beginner guide: Handles d oc um en te xt ra ct io nt oo l responsibilities for Vectra.
+// Beginner guide: Agent tool that extracts structured text from uploaded documents.
 import { z } from 'zod';
 import { formatDocumentTable, VectraDeepTool, VectraToolDefinition } from '@vectra/agent-core';
 

@@ -1,4 +1,4 @@
-// Beginner guide: Handles e vi de nc e responsibilities for Vectra.
+// Beginner guide: Names, merges, and summarises attachment evidence produced by document OCR.
 const CHILD_ASSET_SEPARATOR=' · ';
 const CHILD_ASSET_PATTERN=/(?: · | Â· )(?:page \d+|embedded image \d+|visual OCR)/i;
 

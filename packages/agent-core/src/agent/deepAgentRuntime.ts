@@ -1,4 +1,4 @@
-// Beginner guide: Handles d ee pa ge nt ru nt im e responsibilities for Vectra.
+// Beginner guide: Adapts a Vectra model provider and host tools to the Deep Agents runtime.
 import { AIMessage, BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import { BaseChatModel, BaseChatModelCallOptions, BindToolsInput } from '@langchain/core/language_models/chat_models';

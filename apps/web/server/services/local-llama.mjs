@@ -1,4 +1,4 @@
-// Beginner guide: Handles l oc al l la ma responsibilities for Vectra.
+// Beginner guide: Starts, monitors, and stops the local llama-server process.
 import { spawn, execFile } from 'node:child_process';
 import { access, readdir, stat } from 'node:fs/promises';
 import { dirname, basename, join, isAbsolute } from 'node:path';

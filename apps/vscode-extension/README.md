@@ -7,7 +7,7 @@
 <p align="center"><strong>Your code. Your models. Your approval.</strong></p>
 
 <p align="center">
-  A local-first coding agent for VS Code. Works with GGUF models through llama.cpp, Ollama, LM Studio, and OpenAI, Anthropic, or Gemini.
+  An AI coding agent for VS Code. Works with GGUF models through llama.cpp, Ollama, LM Studio, and OpenAI, Anthropic, or Gemini.
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
   · <a href="https://github.com/Laudarisd/vectra/issues">Issues</a>
 </p>
 
-<p align="center">Current release: <strong>1.2.0</strong></p>
+<p align="center">Current release: <strong>1.2.1</strong></p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Laudarisd/vectra/main/docs/assets/extension_gif.gif" alt="Vectra AI coding workflow" width="900">
@@ -165,4 +165,5 @@ All settings are under **Vectra** in the Settings editor.
 
 Found a problem or have an idea? Open an issue on [GitHub](https://github.com/Laudarisd/vectra/issues).
 
+If Vectra saved you from typing one more boilerplate file, a ⭐ on [GitHub](https://github.com/Laudarisd/vectra) costs nothing and makes the developer smile (and the models reportedly run 0% faster, but it still helps). 
 Vectra is proprietary software. See [LICENSE.txt](https://github.com/Laudarisd/vectra/blob/main/apps/vscode-extension/LICENSE.txt) for permitted use. Third-party models, providers, runtimes, and libraries remain subject to their own terms.

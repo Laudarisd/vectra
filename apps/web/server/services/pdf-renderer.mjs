@@ -1,4 +1,4 @@
-// Beginner guide: Handles p df r en de re r responsibilities for Vectra.
+// Beginner guide: Rasterises PDF pages to images for vision models and OCR.
 import { createCanvas } from '@napi-rs/canvas';
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { MAX_VISION_IMAGE_EDGE, MAX_VISION_IMAGE_PIXELS } from '../document-pipeline/config.mjs';

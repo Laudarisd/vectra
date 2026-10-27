@@ -1,4 +1,4 @@
-// Beginner guide: Handles c on cu rr en cy responsibilities for Vectra.
+// Beginner guide: A small semaphore that limits how many tasks run at once.
 /** Simple counting semaphore. Bounds how many gated calls run at once without
  * claiming anything about true parallelism in the underlying process. */
 export class Semaphore {

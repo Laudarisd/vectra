@@ -191,6 +191,15 @@ test('fallback actions distinguish Vectra workspace tools from Deep scratch tool
   assert.equal(scratch.tool_calls[0].name, 'read_file');
 });
 
+test('a final envelope whose message quotes a code block is unwrapped, not shown raw', async () => {
+  const message = ['Use this:', '', '```json', '{ "categories": ["AI"] }', '```', '', 'Tell me A or B.'].join('\n');
+  const provider = { async complete() { return JSON.stringify({ message, actions: [], done: true }); } };
+  const model = new VectraLangChainChatModel(provider, 'local-test').bindTools([]);
+  const response = await model.invoke([{ role: 'user', content: 'fix categories' }]);
+  assert.equal(response.content, message);
+  assert.equal(response.tool_calls.length, 0);
+});
+
 test('Deep Agents invokes Vectra host tools and returns its final answer', async () => {
   let calls = 0;
   const provider = {

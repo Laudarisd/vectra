@@ -1,4 +1,4 @@
-// Beginner guide: Handles d oc um en ts responsibilities for Vectra.
+// Beginner guide: Extracts plain text from PDF, PPTX, XLSX, RTF, and similar documents.
 import { execFile } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

@@ -1,4 +1,4 @@
-// Beginner guide: Handles c pu t op ol og y responsibilities for Vectra.
+// Beginner guide: Detects physical and logical CPU core layout for thread planning.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 

@@ -1,4 +1,4 @@
-// Beginner guide: Handles m od el c at al og responsibilities for Vectra.
+// Beginner guide: Curated list of recommended GGUF models with download metadata.
 /**
  * A small, hand-picked "known good" list — same source data as the VS Code
  * extension's ModelCatalog.ts, kept in sync by hand since this is a separate

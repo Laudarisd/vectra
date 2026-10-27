@@ -1,4 +1,4 @@
-// Beginner guide: Handles m od el d ow nl oa de r responsibilities for Vectra.
+// Beginner guide: Streams a model file to disk with progress reporting and cancellation.
 import { createWriteStream } from 'node:fs';
 import { rename, rm } from 'node:fs/promises';
 import { Readable, Transform } from 'node:stream';

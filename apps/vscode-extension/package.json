@@ -1,14 +1,15 @@
 {
   "name": "vectra-ai",
   "displayName": "Vectra AI",
-  "description": "A local-first AI coding agent for VS Code. Understand your repository, review edits, and run approved tools with GGUF, Ollama, or cloud models.",
-  "version": "1.2.0",
+  "description": "An AI coding agent for VS Code. Understand your repository, review edits, and run approved tools with GGUF, Ollama, or cloud models.",
+  "version": "1.2.1",
   "publisher": "laudarisd",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
+    "Chat",
     "Programming Languages",
     "Other",
     "Machine Learning"

@@ -628,13 +628,17 @@ function parseToolEnvelope(raw: string, tools: BindToolsInput[]): ParsedTurn {
   if (qwen.length) return { text: visibleModelText(raw), calls: qwen };
 
   const cleaned = stripInternalReasoning(raw);
-  const candidate = (cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? cleaned).trim();
+  const candidate = cleaned.trim();
+  // A fence inside the message field (the model quoting a code block) must not
+  // be mistaken for the envelope, so the bare reply is tried before any fence.
+  const fenced = (candidate.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? '').trim();
   let value: Record<string, unknown> | undefined;
   // Long file content regularly breaks a local model's JSON with literal
   // newlines/tabs inside string values; the repaired variant rescues exactly
   // that, so the requested write still runs instead of being dropped.
-  for (const attempt of [candidate, escapeControlCharactersInJsonStrings(candidate)]) {
-    try { value = JSON.parse(attempt) as Record<string, unknown>; break; } catch { /* try the repaired form, else natural final answer */ }
+  for (const attempt of [candidate, escapeControlCharactersInJsonStrings(candidate), fenced, escapeControlCharactersInJsonStrings(fenced)]) {
+    if (!attempt) continue;
+    try { value = JSON.parse(attempt) as Record<string, unknown>; break; } catch { /* try the next form, else natural final answer */ }
   }
   if (!value) {
     // A broken tool envelope must never reach the user as prose (it used to

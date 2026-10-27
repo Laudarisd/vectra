@@ -1,3 +1,4 @@
+// Beginner guide: Re-exports the shared local-model type definitions.
 export type {
   DiscoveredGgufModel,
   DiscoveredLocalModel,

@@ -1,4 +1,4 @@
-// Beginner guide: Handles s es si on responsibilities for Vectra.
+// Beginner guide: Shared message, todo, and session types for an agent run.
 // Shared state and lifecycle primitives for every Vectra agent session.
 export type AgentMessageRole = 'user' | 'assistant' | 'system' | 'tool';
 

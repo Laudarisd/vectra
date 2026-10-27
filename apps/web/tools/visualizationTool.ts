@@ -1,3 +1,4 @@
+// Beginner guide: Agent tool that builds an interactive chart from structured data.
 import { z } from 'zod';
 import { VectraDeepTool, VectraToolDefinition } from '@vectra/agent-core';
 

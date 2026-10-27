@@ -1,4 +1,4 @@
-// Beginner guide: Handles g pu d et ec t responsibilities for Vectra.
+// Beginner guide: Detects installed GPUs and their VRAM for local model planning.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 

@@ -1,4 +1,4 @@
-// Beginner guide: Handles l oc al d is co ve ry responsibilities for Vectra.
+// Beginner guide: Re-exports local runtime and model discovery from the shared core for the web server.
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);

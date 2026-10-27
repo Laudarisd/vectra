@@ -1,4 +1,4 @@
-// Beginner guide: Handles c at al og responsibilities for Vectra.
+// Beginner guide: Single source of truth for every Vectra tool definition.
 import { VectraToolDefinition } from './contracts';
 
 /** Canonical metadata for real Vectra host capabilities used by every UI. */

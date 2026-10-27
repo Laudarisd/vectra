@@ -1,4 +1,4 @@
-// Beginner guide: Handles h ug gi ng fa ce s ea rc h responsibilities for Vectra.
+// Beginner guide: Searches Hugging Face for GGUF models and resolves downloadable files.
 const SEARCH_TIMEOUT_MS = 15_000;
 const USER_AGENT = 'Mozilla/5.0 (compatible; Vectra/1.0; +https://github.com/Laudarisd/vectra)';
 

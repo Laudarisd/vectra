@@ -1,4 +1,4 @@
-// Beginner guide: Handles c on tr ac ts responsibilities for Vectra.
+// Beginner guide: Type contracts for tool definitions, risk levels, and surfaces.
 import type { z } from 'zod';
 
 export type VectraToolRisk = 'read' | 'write' | 'execute' | 'network' | 'coordination';
